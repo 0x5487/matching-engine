@@ -1,4 +1,4 @@
-module github.com/0x5487/trade-engine
+module github.com/0x5487/match-engine
 
 go 1.14
 
