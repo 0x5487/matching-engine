@@ -1,12 +1,12 @@
 version: "3"
 
 services:
-  app:
+  vscode:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        VARIANT: "1.17"
+        VARIANT: "1.18"
         NODE_VERSION: "lts/*"
 
     init: true
@@ -19,22 +19,17 @@ services:
     # Overrides default command so things don't shut down after the process ends.
     entrypoint: /usr/local/share/docker-init.sh
     command: sleep infinity
+    network_mode: host
 
-    # Uncomment the next four lines if you will use a ptrace-based debuggers like C++, Go, and Rust.
+    environment:
+      - DEBUG=1
+      # Uncomment the next four lines if you will use a ptrace-based debuggers like C++, Go, and Rust.
     cap_add:
       - SYS_PTRACE
     security_opt:
       - seccomp:unconfined
-
     # Uncomment the next line to use a non-root user for all processes.
     # user: vscode
 
     # Use "forwardPorts" in **devcontainer.json** to forward an app port locally.
     # (Adding the "ports" property to this file will not forward from a Codespace.)
-
-    networks:
-      - dev-network
-
-networks:
-  dev-network:
-    name: dev-network
