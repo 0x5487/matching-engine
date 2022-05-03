@@ -1,4 +1,4 @@
-module github.com/0x5487/match-engine
+module github.com/0x5487/matching-engine
 
 go 1.14
 

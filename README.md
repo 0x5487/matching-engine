@@ -1,6 +1,6 @@
-# match-engine
+# matching-engine
 
-a simple match-engine for fun
+a matching-engine for crypto exchange
 
 ## Feature
 
