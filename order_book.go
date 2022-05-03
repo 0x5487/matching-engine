@@ -9,18 +9,18 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-type OrderSide int8
+type Side int8
 
 const (
-	OrderSideDefault = 0
-	OrderSideBuy     = 1
-	OrderSideSell    = 2
+	Side_Default = 0
+	Side_Buy     = 1
+	Side_Sell    = 2
 )
 
 type Order struct {
 	ID        string          `json:"id"`
-	Side      OrderSide       `json:"side"`
-	Amount    decimal.Decimal `json:"amount"`
+	Side      Side            `json:"side"`
+	Size      decimal.Decimal `json:"size"`
 	Price     decimal.Decimal `json:"price"`
 	CreatedAt time.Time       `json:"created_at"`
 }
@@ -37,7 +37,7 @@ func (order *Order) ToJSON() []byte {
 type Trade struct {
 	TakerOrderID string          `json:"taker_order_id"`
 	MakerOrderID string          `json:"maker_order_id"`
-	Amount       decimal.Decimal `json:"amount"`
+	Size         decimal.Decimal `json:"Size"`
 	Price        decimal.Decimal `json:"price"`
 	CreatedAt    time.Time       `json:"created_at"`
 }
@@ -111,12 +111,12 @@ func (book *OrderBook) removeSellOrder(index int) {
 	book.SellOrders = append(book.SellOrders[:index], book.SellOrders[index+1:]...)
 }
 
-// ProcessLimitOrder an order and return the trades generated before adding the remaining amount to the market
+// ProcessLimitOrder an order and return the trades generated before adding the remaining Size to the market
 func (book *OrderBook) PlaceLimitOrder(order Order) []Trade {
 	book.mu.Lock()
 	defer book.mu.Unlock()
 
-	if order.Side == OrderSideBuy {
+	if order.Side == Side_Buy {
 		return book.processLimitBuy(order)
 	}
 	return book.processLimitSell(order)
@@ -141,24 +141,24 @@ func (book *OrderBook) processLimitBuy(order Order) []Trade {
 				break
 			}
 			// fill the entire order
-			if sellOrder.Amount.GreaterThanOrEqual(order.Amount) {
+			if sellOrder.Size.GreaterThanOrEqual(order.Size) {
 				trade := Trade{
 					order.ID,
 					sellOrder.ID,
-					order.Amount,
+					order.Size,
 					sellOrder.Price,
 					time.Now().UTC()}
 				trades = append(trades, trade)
-				sellOrder.Amount = sellOrder.Amount.Sub(order.Amount)
-				if sellOrder.Amount.IsZero() {
+				sellOrder.Size = sellOrder.Size.Sub(order.Size)
+				if sellOrder.Size.IsZero() {
 					book.removeSellOrder(i)
 				}
 				return trades
 			}
 			// fill a partial order and continue
-			if sellOrder.Amount.LessThan(order.Amount) {
-				trades = append(trades, Trade{order.ID, sellOrder.ID, sellOrder.Amount, sellOrder.Price, time.Now().UTC()})
-				order.Amount = order.Amount.Sub(sellOrder.Amount)
+			if sellOrder.Size.LessThan(order.Size) {
+				trades = append(trades, Trade{order.ID, sellOrder.ID, sellOrder.Size, sellOrder.Price, time.Now().UTC()})
+				order.Size = order.Size.Sub(sellOrder.Size)
 				book.removeSellOrder(i)
 				i--
 				continue
@@ -190,18 +190,18 @@ func (book *OrderBook) processLimitSell(order Order) []Trade {
 				break
 			}
 			// fill the entire order
-			if buyOrder.Amount.GreaterThanOrEqual(order.Amount) {
-				trades = append(trades, Trade{order.ID, buyOrder.ID, order.Amount, buyOrder.Price, time.Now().UTC()})
-				buyOrder.Amount = buyOrder.Amount.Sub(order.Amount)
-				if buyOrder.Amount.IsZero() {
+			if buyOrder.Size.GreaterThanOrEqual(order.Size) {
+				trades = append(trades, Trade{order.ID, buyOrder.ID, order.Size, buyOrder.Price, time.Now().UTC()})
+				buyOrder.Size = buyOrder.Size.Sub(order.Size)
+				if buyOrder.Size.IsZero() {
 					book.removeBuyOrder(i)
 				}
 				return trades
 			}
 			// fill a partial order and continue
-			if buyOrder.Amount.LessThan(order.Amount) {
-				trades = append(trades, Trade{order.ID, buyOrder.ID, buyOrder.Amount, buyOrder.Price, time.Now().UTC()})
-				order.Amount = order.Amount.Sub(buyOrder.Amount)
+			if buyOrder.Size.LessThan(order.Size) {
+				trades = append(trades, Trade{order.ID, buyOrder.ID, buyOrder.Size, buyOrder.Price, time.Now().UTC()})
+				order.Size = order.Size.Sub(buyOrder.Size)
 				book.removeBuyOrder(i)
 				i--
 				continue
@@ -218,7 +218,7 @@ func (book *OrderBook) PlaceMarketOrder(order Order) []Trade {
 	book.mu.Lock()
 	defer book.mu.Unlock()
 
-	if order.Side == OrderSideBuy {
+	if order.Side == Side_Buy {
 		return book.processMarketBuy(order)
 	}
 	return book.processMarketSell(order)
@@ -238,18 +238,18 @@ func (book *OrderBook) processMarketBuy(order Order) []Trade {
 	for i := 0; i < len(book.SellOrders); i++ {
 		sellOrder := book.SellOrders[i]
 		// fill the entire order
-		if sellOrder.Amount.GreaterThanOrEqual(order.Amount) {
-			trades = append(trades, Trade{order.ID, sellOrder.ID, order.Amount, sellOrder.Price, time.Now().UTC()})
-			sellOrder.Amount = sellOrder.Amount.Sub(order.Amount)
-			if sellOrder.Amount.IsZero() {
+		if sellOrder.Size.GreaterThanOrEqual(order.Size) {
+			trades = append(trades, Trade{order.ID, sellOrder.ID, order.Size, sellOrder.Price, time.Now().UTC()})
+			sellOrder.Size = sellOrder.Size.Sub(order.Size)
+			if sellOrder.Size.IsZero() {
 				book.removeSellOrder(i)
 			}
 			return trades
 		}
 		// fill a partial order and continue
-		if sellOrder.Amount.LessThan(order.Amount) {
-			trades = append(trades, Trade{order.ID, sellOrder.ID, sellOrder.Amount, sellOrder.Price, time.Now().UTC()})
-			order.Amount = order.Amount.Sub(sellOrder.Amount)
+		if sellOrder.Size.LessThan(order.Size) {
+			trades = append(trades, Trade{order.ID, sellOrder.ID, sellOrder.Size, sellOrder.Price, time.Now().UTC()})
+			order.Size = order.Size.Sub(sellOrder.Size)
 			book.removeSellOrder(i)
 			i--
 			continue
@@ -275,18 +275,18 @@ func (book *OrderBook) processMarketSell(order Order) []Trade {
 	for i := 0; i < len(book.BuyOrders); i++ {
 		buyOrder := book.BuyOrders[i]
 		// fill the entire order
-		if buyOrder.Amount.GreaterThanOrEqual(order.Amount) {
-			trades = append(trades, Trade{order.ID, buyOrder.ID, order.Amount, buyOrder.Price, time.Now().UTC()})
-			buyOrder.Amount = buyOrder.Amount.Sub(order.Amount)
-			if buyOrder.Amount.IsZero() {
+		if buyOrder.Size.GreaterThanOrEqual(order.Size) {
+			trades = append(trades, Trade{order.ID, buyOrder.ID, order.Size, buyOrder.Price, time.Now().UTC()})
+			buyOrder.Size = buyOrder.Size.Sub(order.Size)
+			if buyOrder.Size.IsZero() {
 				book.removeBuyOrder(i)
 			}
 			return trades
 		}
 		// fill a partial order and continue
-		if buyOrder.Amount.LessThan(order.Amount) {
-			trades = append(trades, Trade{order.ID, buyOrder.ID, buyOrder.Amount, buyOrder.Price, time.Now().UTC()})
-			order.Amount = order.Amount.Sub(buyOrder.Amount)
+		if buyOrder.Size.LessThan(order.Size) {
+			trades = append(trades, Trade{order.ID, buyOrder.ID, buyOrder.Size, buyOrder.Price, time.Now().UTC()})
+			order.Size = order.Size.Sub(buyOrder.Size)
 			book.removeBuyOrder(i)
 			i--
 			continue
