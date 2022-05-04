@@ -36,7 +36,7 @@ func TestBuyerQueue(t *testing.T) {
 		Size:  decimal.NewFromInt(100),
 	}, false)
 
-	assert.Equal(t, int64(4), q.Len())
+	assert.Equal(t, int64(4), q.orderCount())
 
 	ord := q.popHeadOrder()
 	assert.Equal(t, "301", ord.ID)
@@ -63,7 +63,7 @@ func TestBuyerQueue(t *testing.T) {
 	assert.Equal(t, "101", ord.ID)
 	assert.Equal(t, "10", ord.Price.String())
 
-	assert.Equal(t, int64(0), q.Len())
+	assert.Equal(t, int64(0), q.orderCount())
 }
 
 func TestSellerQueue(t *testing.T) {
@@ -92,7 +92,7 @@ func TestSellerQueue(t *testing.T) {
 		Size:  decimal.NewFromInt(100),
 	}, false)
 
-	assert.Equal(t, int64(4), q.Len())
+	assert.Equal(t, int64(4), q.orderCount())
 
 	ord := q.popHeadOrder()
 	assert.Equal(t, "101", ord.ID)
@@ -118,16 +118,15 @@ func TestSellerQueue(t *testing.T) {
 	assert.Equal(t, "301", ord.ID)
 	assert.Equal(t, "30", ord.Price.String())
 
-	assert.Equal(t, int64(0), q.Len())
+	assert.Equal(t, int64(0), q.orderCount())
 
 }
 
-func BenchmarkAddDepth(b *testing.B) {
-	n := decimal.NewFromInt(1000)
+func BenchmarkDepthAdd(b *testing.B) {
 	q := NewBuyerQueue()
 
 	for i := 0; i < b.N; i++ {
-		price := decimal.NewFromInt(int64(rand.Intn(1000000))).Div(n)
+		price := decimal.NewFromInt(int64(rand.Intn(100000000)))
 
 		id := strconv.Itoa(i)
 		q.addOrder(Order{
@@ -136,33 +135,17 @@ func BenchmarkAddDepth(b *testing.B) {
 			Side:      1,
 			CreatedAt: time.Now(),
 		}, false)
-
 	}
+
+	//b.Logf("after depth count: %d", q.depthCount())
 }
 
-func BenchmarkAddSize(b *testing.B) {
+func BenchmarkDepthRemove(b *testing.B) {
 	q := NewBuyerQueue()
-	price := decimal.NewFromInt(10)
 
 	for i := 0; i < b.N; i++ {
-		id := strconv.Itoa(i)
-		q.addOrder(Order{
-			ID:        id,
-			Price:     price,
-			Side:      1,
-			CreatedAt: time.Now(),
-		}, false)
+		price := decimal.NewFromInt(int64(rand.Intn(100000000)))
 
-	}
-
-	b.Logf("total counts: %d", q.Len())
-}
-
-func BenchmarkRemoveSize(b *testing.B) {
-	q := NewBuyerQueue()
-	price := decimal.NewFromInt(10)
-
-	for i := 0; i < 500000; i++ {
 		id := strconv.Itoa(i)
 		q.addOrder(Order{
 			ID:        id,
@@ -175,10 +158,57 @@ func BenchmarkRemoveSize(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		q.popHeadOrder()
-		if q.Len() == 0 {
-			return
+		if q.depthCount() == 0 {
+			b.StopTimer()
+			break
 		}
 	}
 
-	b.Logf("after total counts: %d", q.Len())
+	//b.Logf("after depth count: %d", q.depthCount())
+}
+
+func BenchmarkSizeAdd(b *testing.B) {
+	q := NewBuyerQueue()
+	price := decimal.NewFromInt(10)
+	size := decimal.NewFromInt(2)
+
+	for i := 0; i < b.N; i++ {
+		id := strconv.Itoa(i)
+		q.addOrder(Order{
+			ID:        id,
+			Price:     price,
+			Size:      size,
+			CreatedAt: time.Now(),
+		}, false)
+
+	}
+
+	//b.Logf("after total counts: %d", q.orderCount())
+}
+
+func BenchmarkSizeRemove(b *testing.B) {
+	q := NewBuyerQueue()
+	price := decimal.NewFromInt(10)
+	size := decimal.NewFromInt(2)
+
+	for i := 0; i < b.N; i++ {
+		id := strconv.Itoa(i)
+		q.addOrder(Order{
+			ID:        id,
+			Price:     price,
+			Size:      size,
+			CreatedAt: time.Now(),
+		}, false)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		q.popHeadOrder()
+		if q.orderCount() == 0 {
+			b.StopTimer()
+			break
+		}
+	}
+
+	//b.Logf("after total counts: %d", q.orderCount())
 }

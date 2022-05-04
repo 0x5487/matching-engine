@@ -11,6 +11,7 @@ import (
 type queue struct {
 	side        Side
 	totalOrders int64
+	depths      int64
 	depthList   *skiplist.SkipList
 	priceMap    map[string]*skiplist.Element
 	sizeMap     map[string]*list.Element
@@ -90,6 +91,7 @@ func (q *queue) addOrder(order Order, isFront bool) {
 		q.priceMap[order.Price.String()] = el
 
 		atomic.AddInt64(&q.totalOrders, 1)
+		atomic.AddInt64(&q.depths, 1)
 	}
 
 }
@@ -108,14 +110,14 @@ func (q *queue) removeOrder(order Order) {
 		if ok {
 			sizeList.Remove(orderElement)
 			delete(q.sizeMap, orderKey)
+			atomic.AddInt64(&q.totalOrders, -1)
 		}
 
 		if sizeList.Len() == 0 {
 			q.depthList.RemoveElement(skipElement)
 			delete(q.priceMap, order.Price.String())
+			atomic.AddInt64(&q.depths, -1)
 		}
-
-		atomic.AddInt64(&q.totalOrders, -1)
 	}
 }
 
@@ -138,6 +140,10 @@ func (q *queue) popHeadOrder() Order {
 	return ord
 }
 
-func (q *queue) Len() int64 {
+func (q *queue) orderCount() int64 {
 	return q.totalOrders
+}
+
+func (q *queue) depthCount() int64 {
+	return q.depths
 }

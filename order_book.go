@@ -17,9 +17,8 @@ const (
 )
 
 type Order struct {
-	ID        string `json:"id"`
-	Side      Side   `json:"side"`
-	Type      int8
+	ID        string          `json:"id"`
+	Side      Side            `json:"side"`
 	Size      decimal.Decimal `json:"size"`
 	Price     decimal.Decimal `json:"price"`
 	CreatedAt time.Time       `json:"created_at"`
@@ -53,36 +52,36 @@ func (trade *Trade) ToJSON() []byte {
 
 // OrderBook type
 type OrderBook struct {
-	BuyerQueue  *queue
-	SellerQueue *queue
-	mu          sync.Mutex
+	bidQueue *queue
+	askQueue *queue
+	mu       sync.Mutex
 }
 
 func NewOrderBook() *OrderBook {
 	return &OrderBook{
-		BuyerQueue:  NewBuyerQueue(),
-		SellerQueue: NewSellerQueue(),
+		bidQueue: NewBuyerQueue(),
+		askQueue: NewSellerQueue(),
 	}
 }
 
 // Add a buy order to the order book
 func (book *OrderBook) addBuyOrder(order Order) {
-	book.BuyerQueue.addOrder(order, false)
+	book.bidQueue.addOrder(order, false)
 }
 
 // Add a sell order to the order book
 func (book *OrderBook) addSellOrder(order Order) {
-	book.SellerQueue.addOrder(order, false)
+	book.askQueue.addOrder(order, false)
 }
 
 // Remove a buy order from the order book at a given index
 func (book *OrderBook) removeBuyOrder(order Order) {
-	book.BuyerQueue.removeOrder(order)
+	book.bidQueue.removeOrder(order)
 }
 
 // Remove a sell order from the order book at a given index
 func (book *OrderBook) removeSellOrder(order Order) {
-	book.SellerQueue.removeOrder(order)
+	book.askQueue.removeOrder(order)
 }
 
 // ProcessLimitOrder an order and return the trades generated before adding the remaining Size to the market
@@ -101,16 +100,16 @@ func (book *OrderBook) buyLimitOrder(order *Order) []Trade {
 	trades := []Trade{}
 
 	for {
-		tOrd := book.SellerQueue.popHeadOrder()
+		tOrd := book.askQueue.popHeadOrder()
 
 		if len(tOrd.ID) == 0 {
-			book.BuyerQueue.addOrder(*order, false)
+			book.bidQueue.addOrder(*order, false)
 			return trades
 		}
 
 		if order.Price.LessThan(tOrd.Price) {
-			book.BuyerQueue.addOrder(*order, false)
-			book.SellerQueue.addOrder(tOrd, false)
+			book.bidQueue.addOrder(*order, false)
+			book.askQueue.addOrder(tOrd, false)
 			return trades
 		}
 
@@ -134,7 +133,7 @@ func (book *OrderBook) buyLimitOrder(order *Order) []Trade {
 			}
 			trades = append(trades, trade)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
-			book.SellerQueue.addOrder(tOrd, true)
+			book.askQueue.addOrder(tOrd, true)
 
 			break
 		}
@@ -147,16 +146,16 @@ func (book *OrderBook) sellLimitOrder(order *Order) []Trade {
 	trades := []Trade{}
 
 	for {
-		tOrd := book.BuyerQueue.popHeadOrder()
+		tOrd := book.bidQueue.popHeadOrder()
 
 		if len(tOrd.ID) == 0 {
-			book.SellerQueue.addOrder(*order, false)
+			book.askQueue.addOrder(*order, false)
 			return trades
 		}
 
 		if order.Price.GreaterThan(tOrd.Price) {
-			book.SellerQueue.addOrder(*order, false)
-			book.BuyerQueue.addOrder(tOrd, false)
+			book.askQueue.addOrder(*order, false)
+			book.bidQueue.addOrder(tOrd, false)
 			return trades
 		}
 
@@ -180,7 +179,7 @@ func (book *OrderBook) sellLimitOrder(order *Order) []Trade {
 			}
 			trades = append(trades, trade)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
-			book.BuyerQueue.addOrder(tOrd, true)
+			book.bidQueue.addOrder(tOrd, true)
 
 			break
 		}
@@ -193,19 +192,17 @@ func (book *OrderBook) PlaceMarketOrder(order *Order) []Trade {
 	book.mu.Lock()
 	defer book.mu.Unlock()
 
-	targetQueue := book.BuyerQueue
+	targetQueue := book.bidQueue
 	if order.Side == Side_Buy {
-		targetQueue = book.SellerQueue
+		targetQueue = book.askQueue
 	}
 
-	if targetQueue.Len() == 0 {
-
+	if targetQueue.orderCount() == 0 {
 		if order.Side == Side_Buy {
-			book.BuyerQueue.addOrder(*order, false)
+			book.bidQueue.addOrder(*order, false)
 		} else {
-			book.SellerQueue.addOrder(*order, false)
+			book.askQueue.addOrder(*order, false)
 		}
-
 		return nil
 	}
 
