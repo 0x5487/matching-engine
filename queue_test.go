@@ -155,6 +155,8 @@ func BenchmarkDepthRemove(b *testing.B) {
 		}, false)
 	}
 
+	//b.Logf("before depth count: %d", q.depthCount())
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		q.popHeadOrder()
