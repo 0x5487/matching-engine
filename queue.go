@@ -2,6 +2,7 @@ package engine
 
 import (
 	"container/list"
+	"sync"
 	"sync/atomic"
 
 	"github.com/huandu/skiplist"
@@ -9,6 +10,7 @@ import (
 )
 
 type queue struct {
+	mu          sync.RWMutex
 	side        Side
 	totalOrders int64
 	depths      int64
@@ -58,6 +60,9 @@ func NewSellerQueue() *queue {
 }
 
 func (q *queue) addOrder(order Order, isFront bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	if order.ID == "" {
 		return
 	}
@@ -97,6 +102,9 @@ func (q *queue) addOrder(order Order, isFront bool) {
 }
 
 func (q *queue) removeOrder(order Order) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	if order.ID == "" {
 		return
 	}
@@ -122,6 +130,9 @@ func (q *queue) removeOrder(order Order) {
 }
 
 func (q *queue) getHeadOrder() Order {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
 	el := q.depthList.Front()
 	if el == nil {
 		return Order{}
@@ -141,9 +152,9 @@ func (q *queue) popHeadOrder() Order {
 }
 
 func (q *queue) orderCount() int64 {
-	return q.totalOrders
+	return atomic.LoadInt64(&q.totalOrders)
 }
 
 func (q *queue) depthCount() int64 {
-	return q.depths
+	return atomic.LoadInt64(&q.depths)
 }

@@ -86,9 +86,6 @@ func (book *OrderBook) removeSellOrder(order Order) {
 
 // ProcessLimitOrder an order and return the trades generated before adding the remaining Size to the market
 func (book *OrderBook) PlaceLimitOrder(order *Order) []Trade {
-	book.mu.Lock()
-	defer book.mu.Unlock()
-
 	if order.Side == Side_Buy {
 		return book.buyLimitOrder(order)
 	}
@@ -189,9 +186,6 @@ func (book *OrderBook) sellLimitOrder(order *Order) []Trade {
 }
 
 func (book *OrderBook) PlaceMarketOrder(order *Order) []Trade {
-	book.mu.Lock()
-	defer book.mu.Unlock()
-
 	targetQueue := book.bidQueue
 	if order.Side == Side_Buy {
 		targetQueue = book.askQueue

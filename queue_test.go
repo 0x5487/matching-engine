@@ -125,17 +125,34 @@ func TestSellerQueue(t *testing.T) {
 func BenchmarkDepthAdd(b *testing.B) {
 	q := NewBuyerQueue()
 
-	for i := 0; i < b.N; i++ {
-		price := decimal.NewFromInt(int64(rand.Intn(100000000)))
+	//runtime.GOMAXPROCS(8)
+	//b.SetParallelism(1000)
 
-		id := strconv.Itoa(i)
-		q.addOrder(Order{
-			ID:        id,
-			Price:     price,
-			Side:      1,
-			CreatedAt: time.Now(),
-		}, false)
-	}
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			id := rand.Intn(100000000)
+			price := decimal.NewFromInt(int64(id))
+
+			q.addOrder(Order{
+				ID:        strconv.Itoa(id),
+				Price:     price,
+				Side:      1,
+				CreatedAt: time.Now(),
+			}, false)
+		}
+	})
+
+	// for i := 0; i < b.N; i++ {
+	// 	id := rand.Intn(100000000)
+	// 	price := decimal.NewFromInt(int64(id))
+
+	// 	q.addOrder(Order{
+	// 		ID:        strconv.Itoa(id),
+	// 		Price:     price,
+	// 		Side:      1,
+	// 		CreatedAt: time.Now(),
+	// 	}, false)
+	// }
 
 	//b.Logf("after depth count: %d", q.depthCount())
 }
@@ -158,13 +175,24 @@ func BenchmarkDepthRemove(b *testing.B) {
 	//b.Logf("before depth count: %d", q.depthCount())
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		q.popHeadOrder()
-		if q.depthCount() == 0 {
-			b.StopTimer()
-			break
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			q.popHeadOrder()
+			if q.depthCount() == 0 {
+				b.StopTimer()
+				break
+			}
 		}
-	}
+	})
+
+	// for i := 0; i < b.N; i++ {
+	// 	q.popHeadOrder()
+	// 	if q.depthCount() == 0 {
+	// 		b.StopTimer()
+	// 		break
+	// 	}
+	// }
 
 	//b.Logf("after depth count: %d", q.depthCount())
 }
@@ -174,19 +202,95 @@ func BenchmarkSizeAdd(b *testing.B) {
 	price := decimal.NewFromInt(10)
 	size := decimal.NewFromInt(2)
 
-	for i := 0; i < b.N; i++ {
-		id := strconv.Itoa(i)
-		q.addOrder(Order{
-			ID:        id,
-			Price:     price,
-			Size:      size,
-			CreatedAt: time.Now(),
-		}, false)
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			id := rand.Intn(100000000)
 
-	}
+			q.addOrder(Order{
+				ID:        strconv.Itoa(id),
+				Price:     price,
+				Size:      size,
+				CreatedAt: time.Now(),
+			}, false)
+		}
+	})
+
+	// for i := 0; i < b.N; i++ {
+	// 	id := strconv.Itoa(i)
+	// 	q.addOrder(Order{
+	// 		ID:        id,
+	// 		Price:     price,
+	// 		Size:      size,
+	// 		CreatedAt: time.Now(),
+	// 	}, false)
+	// }
 
 	//b.Logf("after total counts: %d", q.orderCount())
 }
+
+// func BenchmarkMapAdd(b *testing.B) {
+// 	q := map[string]*Order{}
+
+// 	price := decimal.NewFromInt(10)
+// 	size := decimal.NewFromInt(2)
+
+// 	for i := 0; i < b.N; i++ {
+// 		id := strconv.Itoa(i)
+// 		q[id] = &Order{
+// 			ID:        id,
+// 			Price:     price,
+// 			Size:      size,
+// 			CreatedAt: time.Now(),
+// 		}
+// 	}
+// }
+
+// func BenchmarkSMapAdd(b *testing.B) {
+// 	q := sync.Map{}
+
+// 	price := decimal.NewFromInt(10)
+// 	size := decimal.NewFromInt(2)
+
+// 	for i := 0; i < b.N; i++ {
+// 		id := strconv.Itoa(i)
+
+// 		q.Store(id, &Order{
+// 			ID:        id,
+// 			Price:     price,
+// 			Size:      size,
+// 			CreatedAt: time.Now(),
+// 		})
+// 	}
+// }
+
+// func BenchmarkMapRead(b *testing.B) {
+// 	q := map[string]*Order{}
+
+// 	price := decimal.NewFromInt(10)
+// 	size := decimal.NewFromInt(2)
+
+// 	for i := 0; i < b.N; i++ {
+// 		id := strconv.Itoa(i)
+// 		q[id] = &Order{
+// 			ID:        id,
+// 			Price:     price,
+// 			Size:      size,
+// 			CreatedAt: time.Now(),
+// 		}
+// 	}
+
+// 	b.ResetTimer()
+
+// 	total := 0
+// 	for i := 0; i < b.N; i++ {
+// 		_, ok := q[strconv.Itoa(i)]
+// 		if ok {
+// 			total++
+// 		}
+// 	}
+
+// 	b.Logf("total: %d", total)
+// }
 
 func BenchmarkSizeRemove(b *testing.B) {
 	q := NewBuyerQueue()
@@ -204,13 +308,24 @@ func BenchmarkSizeRemove(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		q.popHeadOrder()
-		if q.orderCount() == 0 {
-			b.StopTimer()
-			break
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			q.popHeadOrder()
+			if q.orderCount() == 0 {
+				b.StopTimer()
+				break
+			}
 		}
-	}
+	})
+
+	// for i := 0; i < b.N; i++ {
+	// 	q.popHeadOrder()
+	// 	if q.orderCount() == 0 {
+	// 		b.StopTimer()
+	// 		break
+	// 	}
+	// }
 
 	//b.Logf("after total counts: %d", q.orderCount())
 }
