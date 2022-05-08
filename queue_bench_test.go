@@ -17,9 +17,8 @@ const (
 	step  = 200
 )
 
-var goprocs = runtime.GOMAXPROCS(0) // 8
-
 func BenchmarkDepthAdd(b *testing.B) {
+	goprocs := runtime.GOMAXPROCS(0)
 
 	for i := start; i < end; i += step {
 		q := NewBuyerQueue()
@@ -58,6 +57,7 @@ func BenchmarkDepthAdd(b *testing.B) {
 }
 
 func BenchmarkDepthRemove(b *testing.B) {
+	goprocs := runtime.GOMAXPROCS(0)
 
 	for i := start; i < end; i += step {
 		b.Run(fmt.Sprintf("goroutines-%d", i*goprocs), func(b *testing.B) {
@@ -101,6 +101,8 @@ func BenchmarkDepthRemove(b *testing.B) {
 }
 
 func BenchmarkSizeAdd(b *testing.B) {
+	goprocs := runtime.GOMAXPROCS(0)
+
 	price := decimal.NewFromInt(10)
 	size := decimal.NewFromInt(2)
 
@@ -202,6 +204,7 @@ func BenchmarkSizeAdd(b *testing.B) {
 // }
 
 func BenchmarkSizeRemove(b *testing.B) {
+	goprocs := runtime.GOMAXPROCS(0)
 
 	for i := start; i < end; i += step {
 		b.Run(fmt.Sprintf("goroutines-%d", i*goprocs), func(b *testing.B) {
