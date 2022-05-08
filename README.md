@@ -14,7 +14,7 @@ Device: Apple Mac Pro (M1)
 1. How many orders per second?
 
 ```shell
-$> go test -benchmem -bench . -benchtime=1000000x
+$> go test -benchmem -bench . -benchtime=1s
 goos: linux
 goarch: arm64
 pkg: github.com/0x5487/matching-engine
