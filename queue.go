@@ -59,7 +59,7 @@ func NewSellerQueue() *queue {
 	}
 }
 
-func (q *queue) addOrder(order Order, isFront bool) {
+func (q *queue) addOrder(order *Order, isFront bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -101,7 +101,7 @@ func (q *queue) addOrder(order Order, isFront bool) {
 
 }
 
-func (q *queue) removeOrder(order Order) {
+func (q *queue) removeOrder(order *Order) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -129,22 +129,22 @@ func (q *queue) removeOrder(order Order) {
 	}
 }
 
-func (q *queue) getHeadOrder() Order {
+func (q *queue) getHeadOrder() *Order {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
 	el := q.depthList.Front()
 	if el == nil {
-		return Order{}
+		return nil
 	}
 
-	return el.Value.(*list.List).Front().Value.(Order)
+	return el.Value.(*list.List).Front().Value.(*Order)
 }
 
-func (q *queue) popHeadOrder() Order {
+func (q *queue) popHeadOrder() *Order {
 	ord := q.getHeadOrder()
 
-	if len(ord.ID) > 0 {
+	if ord != nil {
 		q.removeOrder(ord)
 	}
 

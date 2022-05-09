@@ -6,3 +6,7 @@ benchmark_all_1s:
 
 benchmark_all_100w:
 	go test -benchmem -bench . -benchtime=1000000x
+
+
+lint:
+	golangci-lint run ./... -v

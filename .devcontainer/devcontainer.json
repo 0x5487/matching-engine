@@ -63,7 +63,7 @@
     // "bajdzis.vscode-database", // Supports connections to mysql or postgres, over SSL, socked
     "IBM.output-colorizer", // Colorize your output/test logs
     "mohsen1.prettify-json", // Prettify JSON data
-    "zxh404.vscode-proto3", // Supports Proto syntax
+    "zxh404.vscode-proto3" // Supports Proto syntax
     // "jrebocho.vscode-random", // Generates random values
     // "alefragnani.Bookmarks", // Manage bookmarks
     // "quicktype.quicktype", // Paste JSON as code

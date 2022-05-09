@@ -65,22 +65,22 @@ func NewOrderBook() *OrderBook {
 }
 
 // Add a buy order to the order book
-func (book *OrderBook) addBuyOrder(order Order) {
+func (book *OrderBook) addBuyOrder(order *Order) {
 	book.bidQueue.addOrder(order, false)
 }
 
 // Add a sell order to the order book
-func (book *OrderBook) addSellOrder(order Order) {
+func (book *OrderBook) addSellOrder(order *Order) {
 	book.askQueue.addOrder(order, false)
 }
 
 // Remove a buy order from the order book at a given index
-func (book *OrderBook) removeBuyOrder(order Order) {
+func (book *OrderBook) removeBuyOrder(order *Order) {
 	book.bidQueue.removeOrder(order)
 }
 
 // Remove a sell order from the order book at a given index
-func (book *OrderBook) removeSellOrder(order Order) {
+func (book *OrderBook) removeSellOrder(order *Order) {
 	book.askQueue.removeOrder(order)
 }
 
@@ -99,13 +99,13 @@ func (book *OrderBook) buyLimitOrder(order *Order) []Trade {
 	for {
 		tOrd := book.askQueue.popHeadOrder()
 
-		if len(tOrd.ID) == 0 {
-			book.bidQueue.addOrder(*order, false)
+		if tOrd == nil {
+			book.bidQueue.addOrder(order, false)
 			return trades
 		}
 
 		if order.Price.LessThan(tOrd.Price) {
-			book.bidQueue.addOrder(*order, false)
+			book.bidQueue.addOrder(order, false)
 			book.askQueue.addOrder(tOrd, false)
 			return trades
 		}
@@ -145,13 +145,13 @@ func (book *OrderBook) sellLimitOrder(order *Order) []Trade {
 	for {
 		tOrd := book.bidQueue.popHeadOrder()
 
-		if len(tOrd.ID) == 0 {
-			book.askQueue.addOrder(*order, false)
+		if tOrd == nil {
+			book.askQueue.addOrder(order, false)
 			return trades
 		}
 
 		if order.Price.GreaterThan(tOrd.Price) {
-			book.askQueue.addOrder(*order, false)
+			book.askQueue.addOrder(order, false)
 			book.bidQueue.addOrder(tOrd, false)
 			return trades
 		}
@@ -193,9 +193,9 @@ func (book *OrderBook) PlaceMarketOrder(order *Order) []Trade {
 
 	if targetQueue.orderCount() == 0 {
 		if order.Side == Side_Buy {
-			book.bidQueue.addOrder(*order, false)
+			book.bidQueue.addOrder(order, false)
 		} else {
-			book.askQueue.addOrder(*order, false)
+			book.askQueue.addOrder(order, false)
 		}
 		return nil
 	}
@@ -204,7 +204,7 @@ func (book *OrderBook) PlaceMarketOrder(order *Order) []Trade {
 
 	for {
 		tOrd := targetQueue.popHeadOrder()
-		if len(tOrd.ID) == 0 {
+		if tOrd == nil {
 			break
 		}
 

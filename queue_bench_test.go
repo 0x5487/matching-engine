@@ -30,7 +30,7 @@ func BenchmarkDepthAdd(b *testing.B) {
 					id := rand.Intn(100000000)
 					price := decimal.NewFromInt(int64(id))
 
-					q.addOrder(Order{
+					q.addOrder(&Order{
 						ID:        strconv.Itoa(id),
 						Price:     price,
 						Side:      1,
@@ -67,7 +67,7 @@ func BenchmarkDepthRemove(b *testing.B) {
 				price := decimal.NewFromInt(int64(rand.Intn(100000000)))
 
 				id := strconv.Itoa(i)
-				q.addOrder(Order{
+				q.addOrder(&Order{
 					ID:        id,
 					Price:     price,
 					Side:      1,
@@ -115,7 +115,7 @@ func BenchmarkSizeAdd(b *testing.B) {
 				for pb.Next() {
 					id := rand.Intn(100000000)
 
-					q.addOrder(Order{
+					q.addOrder(&Order{
 						ID:        strconv.Itoa(id),
 						Price:     price,
 						Size:      size,
@@ -214,7 +214,7 @@ func BenchmarkSizeRemove(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				id := strconv.Itoa(i)
-				q.addOrder(Order{
+				q.addOrder(&Order{
 					ID:        id,
 					Price:     price,
 					Size:      size,
