@@ -10,24 +10,24 @@ import (
 func TestBuyerQueue(t *testing.T) {
 	q := NewBuyerQueue()
 
-	q.addOrder(Order{
+	q.addOrder(&Order{
 		ID:    "101",
 		Price: decimal.NewFromInt(10),
 	}, false)
 
-	q.addOrder(Order{
+	q.addOrder(&Order{
 		ID:    "201",
 		Price: decimal.NewFromInt(20),
 		Size:  decimal.NewFromInt(10),
 	}, false)
 
-	q.addOrder(Order{
+	q.addOrder(&Order{
 		ID:    "301",
 		Price: decimal.NewFromInt(30),
 		Size:  decimal.NewFromInt(10),
 	}, false)
 
-	q.addOrder(Order{
+	q.addOrder(&Order{
 		ID:    "202",
 		Price: decimal.NewFromInt(20),
 		Size:  decimal.NewFromInt(100),
@@ -66,24 +66,24 @@ func TestBuyerQueue(t *testing.T) {
 func TestSellerQueue(t *testing.T) {
 	q := NewSellerQueue()
 
-	q.addOrder(Order{
+	q.addOrder(&Order{
 		ID:    "101",
 		Price: decimal.NewFromInt(10),
 	}, false)
 
-	q.addOrder(Order{
+	q.addOrder(&Order{
 		ID:    "201",
 		Price: decimal.NewFromInt(20),
 		Size:  decimal.NewFromInt(10),
 	}, false)
 
-	q.addOrder(Order{
+	q.addOrder(&Order{
 		ID:    "301",
 		Price: decimal.NewFromInt(30),
 		Size:  decimal.NewFromInt(10),
 	}, false)
 
-	q.addOrder(Order{
+	q.addOrder(&Order{
 		ID:    "202",
 		Price: decimal.NewFromInt(20),
 		Size:  decimal.NewFromInt(100),

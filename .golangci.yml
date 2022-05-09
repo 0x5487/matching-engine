@@ -1,0 +1,10 @@
+linters:
+  enable:
+    - gosec
+    - misspell
+    - sqlclosecheck
+    - gci
+    - errorlint
+    - exhaustive
+    - forcetypeassert
+    - gocritic
