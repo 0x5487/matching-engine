@@ -1,8 +1,6 @@
 package engine
 
 import (
-	"encoding/json"
-	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -24,15 +22,6 @@ type Order struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
-func (order *Order) FromJSON(msg []byte) error {
-	return json.Unmarshal(msg, order)
-}
-
-func (order *Order) ToJSON() []byte {
-	str, _ := json.Marshal(order)
-	return str
-}
-
 type Trade struct {
 	TakerOrderID string          `json:"taker_order_id"`
 	MakerOrderID string          `json:"maker_order_id"`
@@ -41,20 +30,10 @@ type Trade struct {
 	CreatedAt    time.Time       `json:"created_at"`
 }
 
-func (trade *Trade) FromJSON(msg []byte) error {
-	return json.Unmarshal(msg, trade)
-}
-
-func (trade *Trade) ToJSON() []byte {
-	str, _ := json.Marshal(trade)
-	return str
-}
-
 // OrderBook type
 type OrderBook struct {
 	bidQueue *queue
 	askQueue *queue
-	mu       sync.Mutex
 }
 
 func NewOrderBook() *OrderBook {
