@@ -2,6 +2,7 @@ package engine
 
 import (
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
@@ -269,4 +270,40 @@ func TestPlaceMarketBuyOrder(t *testing.T) {
 		trades = orderBook.PlaceMarketOrder(orderBuy)
 		assert.Equal(t, 3, len(trades))
 	})
+}
+
+func TestOrderBookUpdateEvents(t *testing.T) {
+	updateEventChan := make(chan *OrderBookUpdateEvent, 1000)
+
+	orderBook := NewOrderBook()
+	orderBook.RegisterUpdateEventChan(updateEventChan)
+
+	orderBuy1 := Order{
+		Price: decimal.NewFromInt(100),
+		Size:  decimal.NewFromInt(1),
+		Side:  Side_Buy,
+		ID:    "buy-1",
+	}
+	orderBook.PlaceLimitOrder(&orderBuy1)
+
+	orderSell1 := Order{
+		Price: decimal.NewFromInt(101),
+		Size:  decimal.NewFromInt(2),
+		Side:  Side_Sell,
+		ID:    "sell-1",
+	}
+	orderBook.PlaceLimitOrder(&orderSell1)
+
+	time.Sleep(1 * time.Second)
+
+	bookEvt := <-updateEventChan
+	assert.Equal(t, 1, len(bookEvt.Bids))
+	bidEvt := bookEvt.Bids[0]
+	assert.Equal(t, "100", bidEvt.Price)
+	assert.Equal(t, "1", bidEvt.Size)
+
+	assert.Equal(t, 1, len(bookEvt.Asks))
+	askEvt := bookEvt.Asks[0]
+	assert.Equal(t, "101", askEvt.Price)
+	assert.Equal(t, "2", askEvt.Size)
 }

@@ -15,11 +15,12 @@ const (
 )
 
 type Order struct {
-	ID        string          `json:"id"`
-	Side      Side            `json:"side"`
-	Size      decimal.Decimal `json:"size"`
-	Price     decimal.Decimal `json:"price"`
-	CreatedAt time.Time       `json:"created_at"`
+	ID          string          `json:"id"`
+	Side        Side            `json:"side"`
+	Price       decimal.Decimal `json:"price"`
+	Size        decimal.Decimal `json:"size"`
+	TimeInForce string          `json:"tif"`
+	CreatedAt   time.Time       `json:"created_at"`
 }
 
 type Trade struct {
@@ -30,10 +31,17 @@ type Trade struct {
 	CreatedAt    time.Time       `json:"created_at"`
 }
 
+type OrderBookUpdateEvent struct {
+	Bids []*UpdateEvent
+	Asks []*UpdateEvent
+	Time time.Time
+}
+
 // OrderBook type
 type OrderBook struct {
-	bidQueue *queue
-	askQueue *queue
+	bidQueue        *queue
+	askQueue        *queue
+	updateEventChan chan *OrderBookUpdateEvent
 }
 
 func NewOrderBook() *OrderBook {
@@ -216,4 +224,33 @@ func (book *OrderBook) PlaceMarketOrder(order *Order) []Trade {
 	}
 
 	return trades
+}
+
+func (book *OrderBook) RegisterUpdateEventChan(updateEventChan chan *OrderBookUpdateEvent) {
+	book.updateEventChan = updateEventChan
+
+	go func() {
+		updateEventPeriod := time.Duration(1) * time.Second
+		updateEventTicker := time.NewTicker(updateEventPeriod)
+
+		for {
+			select {
+			case <-updateEventTicker.C:
+				bidUpdateEvents := book.bidQueue.sinceLastUpdateEvents()
+				askUpdateEvents := book.askQueue.sinceLastUpdateEvents()
+
+				if len(bidUpdateEvents) == 0 && len(askUpdateEvents) == 0 {
+					continue
+				}
+
+				bookUpdateEvt := OrderBookUpdateEvent{
+					Bids: bidUpdateEvents,
+					Asks: askUpdateEvents,
+					Time: time.Now().UTC(),
+				}
+
+				book.updateEventChan <- &bookUpdateEvt
+			}
+		}
+	}()
 }
