@@ -14,12 +14,21 @@ const (
 	Side_Sell    = 2
 )
 
+type TimeInForce string
+
+const (
+	TimeInForce_GTC = "gtc"
+	TimeInForce_IOC = "ioc"
+	TimeInForce_FOK = "fok"
+)
+
 type Order struct {
 	ID          string          `json:"id"`
 	Side        Side            `json:"side"`
 	Price       decimal.Decimal `json:"price"`
 	Size        decimal.Decimal `json:"size"`
-	TimeInForce string          `json:"tif"`
+	TimeInForce TimeInForce     `json:"tif"`
+	PostOnly    bool            `json:"post_only"`
 	CreatedAt   time.Time       `json:"created_at"`
 }
 
@@ -51,50 +60,72 @@ func NewOrderBook() *OrderBook {
 	}
 }
 
-// Add a buy order to the order book
-func (book *OrderBook) addBuyOrder(order *Order) {
+// AddBuyOrder adds a buy order to the order book
+func (book *OrderBook) AddBuyOrder(order *Order) {
 	book.bidQueue.addOrder(order, false)
 }
 
-// Add a sell order to the order book
-func (book *OrderBook) addSellOrder(order *Order) {
+// AddSellOrder adds a sell order to the order book
+func (book *OrderBook) AddSellOrder(order *Order) {
 	book.askQueue.addOrder(order, false)
 }
 
-// Remove a buy order from the order book at a given index
-func (book *OrderBook) removeBuyOrder(order *Order) {
+// RemoveBuyOrder removes a buy order from the order book at a given index
+func (book *OrderBook) RemoveBuyOrder(order *Order) {
 	book.bidQueue.removeOrder(order)
 }
 
-// Remove a sell order from the order book at a given index
-func (book *OrderBook) removeSellOrder(order *Order) {
+// RemoveSellOrder removes a sell order from the order book at a given index
+func (book *OrderBook) RemoveSellOrder(order *Order) {
 	book.askQueue.removeOrder(order)
 }
 
-// ProcessLimitOrder an order and return the trades generated before adding the remaining Size to the market
-func (book *OrderBook) PlaceLimitOrder(order *Order) []Trade {
+// PlaceLimitOrder place an order and return the trades generated before adding the remaining Size to the market
+func (book *OrderBook) PlaceLimitOrder(order *Order) ([]*Trade, error) {
 	if order.Side == Side_Buy {
-		return book.buyLimitOrder(order)
+		return book.processLimitBuyOrder(order)
 	}
 
-	return book.sellLimitOrder(order)
+	return book.processLimitSellOrder(order)
 }
 
-func (book *OrderBook) buyLimitOrder(order *Order) []Trade {
-	trades := []Trade{}
+func (book *OrderBook) processLimitBuyOrder(order *Order) ([]*Trade, error) {
+	trades := []*Trade{}
 
 	for {
 		tOrd := book.askQueue.popHeadOrder()
 
 		if tOrd == nil {
-			book.bidQueue.addOrder(order, false)
-			return trades
+			switch order.TimeInForce {
+			case TimeInForce_GTC:
+				book.bidQueue.addOrder(order, false)
+				return trades, nil
+			case TimeInForce_IOC:
+				return trades, ErrCanceled
+			case TimeInForce_FOK:
+				return trades, ErrCanceled
+			}
 		}
 
 		if order.Price.LessThan(tOrd.Price) {
-			book.bidQueue.addOrder(order, false)
-			book.askQueue.addOrder(tOrd, false)
-			return trades
+			book.askQueue.addOrder(tOrd, true)
+
+			switch order.TimeInForce {
+			case TimeInForce_GTC:
+				book.bidQueue.addOrder(order, false)
+				return trades, nil
+			case TimeInForce_IOC:
+				return trades, ErrCanceled
+			case TimeInForce_FOK:
+				return trades, ErrCanceled
+			}
+		} else {
+
+			if order.PostOnly {
+				book.askQueue.addOrder(tOrd, true)
+				return trades, ErrCanceled
+			}
+
 		}
 
 		if order.Size.GreaterThan(tOrd.Size) {
@@ -105,7 +136,7 @@ func (book *OrderBook) buyLimitOrder(order *Order) []Trade {
 				Size:         tOrd.Size,
 				CreatedAt:    time.Now().UTC(),
 			}
-			trades = append(trades, trade)
+			trades = append(trades, &trade)
 			order.Size = order.Size.Sub(tOrd.Size)
 		} else {
 			trade := Trade{
@@ -115,7 +146,7 @@ func (book *OrderBook) buyLimitOrder(order *Order) []Trade {
 				Size:         tOrd.Size,
 				CreatedAt:    time.Now().UTC(),
 			}
-			trades = append(trades, trade)
+			trades = append(trades, &trade)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			book.askQueue.addOrder(tOrd, true)
 
@@ -123,24 +154,46 @@ func (book *OrderBook) buyLimitOrder(order *Order) []Trade {
 		}
 	}
 
-	return trades
+	return trades, nil
 }
 
-func (book *OrderBook) sellLimitOrder(order *Order) []Trade {
-	trades := []Trade{}
+func (book *OrderBook) processLimitSellOrder(order *Order) ([]*Trade, error) {
+	trades := []*Trade{}
 
 	for {
 		tOrd := book.bidQueue.popHeadOrder()
 
 		if tOrd == nil {
-			book.askQueue.addOrder(order, false)
-			return trades
+			switch order.TimeInForce {
+			case TimeInForce_GTC:
+				book.askQueue.addOrder(order, false)
+				return trades, nil
+			case TimeInForce_IOC:
+				return trades, ErrCanceled
+			case TimeInForce_FOK:
+				return trades, ErrCanceled
+			}
 		}
 
 		if order.Price.GreaterThan(tOrd.Price) {
-			book.askQueue.addOrder(order, false)
-			book.bidQueue.addOrder(tOrd, false)
-			return trades
+			book.bidQueue.addOrder(tOrd, true)
+
+			switch order.TimeInForce {
+			case TimeInForce_GTC:
+				book.askQueue.addOrder(order, false)
+				return trades, nil
+			case TimeInForce_IOC:
+				return trades, ErrCanceled
+			case TimeInForce_FOK:
+				return trades, ErrCanceled
+			}
+		} else {
+
+			if order.PostOnly {
+				book.bidQueue.addOrder(tOrd, true)
+				return trades, ErrCanceled
+			}
+
 		}
 
 		if order.Size.GreaterThan(tOrd.Size) {
@@ -151,7 +204,7 @@ func (book *OrderBook) sellLimitOrder(order *Order) []Trade {
 				Size:         tOrd.Size,
 				CreatedAt:    time.Now().UTC(),
 			}
-			trades = append(trades, trade)
+			trades = append(trades, &trade)
 			order.Size = order.Size.Sub(tOrd.Size)
 		} else {
 			trade := Trade{
@@ -161,7 +214,7 @@ func (book *OrderBook) sellLimitOrder(order *Order) []Trade {
 				Size:         tOrd.Size,
 				CreatedAt:    time.Now().UTC(),
 			}
-			trades = append(trades, trade)
+			trades = append(trades, &trade)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			book.bidQueue.addOrder(tOrd, true)
 
@@ -169,29 +222,27 @@ func (book *OrderBook) sellLimitOrder(order *Order) []Trade {
 		}
 	}
 
-	return trades
+	return trades, nil
 }
 
-func (book *OrderBook) PlaceMarketOrder(order *Order) []Trade {
+func (book *OrderBook) PlaceMarketOrder(order *Order) ([]*Trade, error) {
 	targetQueue := book.bidQueue
 	if order.Side == Side_Buy {
 		targetQueue = book.askQueue
 	}
 
 	if targetQueue.orderCount() == 0 {
-		if order.Side == Side_Buy {
-			book.bidQueue.addOrder(order, false)
-		} else {
-			book.askQueue.addOrder(order, false)
-		}
-		return nil
+		return nil, ErrCanceled
 	}
 
-	trades := []Trade{}
+	trades := []*Trade{}
 
 	for {
 		tOrd := targetQueue.popHeadOrder()
 		if tOrd == nil {
+			if order.Size.GreaterThan(decimal.Zero) {
+				return trades, ErrCanceled
+			}
 			break
 		}
 
@@ -203,7 +254,7 @@ func (book *OrderBook) PlaceMarketOrder(order *Order) []Trade {
 				Size:         tOrd.Size,
 				CreatedAt:    time.Now().UTC(),
 			}
-			trades = append(trades, trade)
+			trades = append(trades, &trade)
 
 			order.Size = order.Size.Sub(tOrd.Size)
 		} else {
@@ -214,7 +265,7 @@ func (book *OrderBook) PlaceMarketOrder(order *Order) []Trade {
 				Size:         tOrd.Size,
 				CreatedAt:    time.Now().UTC(),
 			}
-			trades = append(trades, trade)
+			trades = append(trades, &trade)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 
 			targetQueue.addOrder(tOrd, true)
@@ -223,7 +274,7 @@ func (book *OrderBook) PlaceMarketOrder(order *Order) []Trade {
 		}
 	}
 
-	return trades
+	return trades, nil
 }
 
 func (book *OrderBook) RegisterUpdateEventChan(updateEventChan chan *OrderBookUpdateEvent) {
@@ -234,23 +285,21 @@ func (book *OrderBook) RegisterUpdateEventChan(updateEventChan chan *OrderBookUp
 		updateEventTicker := time.NewTicker(updateEventPeriod)
 
 		for {
-			select {
-			case <-updateEventTicker.C:
-				bidUpdateEvents := book.bidQueue.sinceLastUpdateEvents()
-				askUpdateEvents := book.askQueue.sinceLastUpdateEvents()
+			<-updateEventTicker.C
+			bidUpdateEvents := book.bidQueue.sinceLastUpdateEvents()
+			askUpdateEvents := book.askQueue.sinceLastUpdateEvents()
 
-				if len(bidUpdateEvents) == 0 && len(askUpdateEvents) == 0 {
-					continue
-				}
-
-				bookUpdateEvt := OrderBookUpdateEvent{
-					Bids: bidUpdateEvents,
-					Asks: askUpdateEvents,
-					Time: time.Now().UTC(),
-				}
-
-				book.updateEventChan <- &bookUpdateEvt
+			if len(bidUpdateEvents) == 0 && len(askUpdateEvents) == 0 {
+				continue
 			}
+
+			bookUpdateEvt := OrderBookUpdateEvent{
+				Bids: bidUpdateEvents,
+				Asks: askUpdateEvents,
+				Time: time.Now().UTC(),
+			}
+
+			book.updateEventChan <- &bookUpdateEvt
 		}
 	}()
 }
