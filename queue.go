@@ -9,14 +9,25 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+type UpdateEvent struct {
+	Price string `json:"price"`
+	Size  string `json:"size"`
+}
+
+type priceUnit struct {
+	totalSize decimal.Decimal
+	list      *list.List
+}
+
 type queue struct {
-	mu          sync.RWMutex
-	side        Side
-	totalOrders int64
-	depths      int64
-	depthList   *skiplist.SkipList
-	priceMap    map[string]*skiplist.Element
-	sizeMap     map[string]*list.Element
+	mu             sync.RWMutex
+	side           Side
+	totalOrders    int64
+	depths         int64
+	depthList      *skiplist.SkipList
+	priceMap       map[string]*skiplist.Element
+	orderMap       map[string]*list.Element
+	updateEventMap *sync.Map
 }
 
 func NewBuyerQueue() *queue {
@@ -34,8 +45,9 @@ func NewBuyerQueue() *queue {
 
 			return 0
 		})),
-		priceMap: make(map[string]*skiplist.Element),
-		sizeMap:  make(map[string]*list.Element),
+		priceMap:       make(map[string]*skiplist.Element),
+		orderMap:       make(map[string]*list.Element),
+		updateEventMap: &sync.Map{},
 	}
 }
 
@@ -54,8 +66,9 @@ func NewSellerQueue() *queue {
 
 			return 0
 		})),
-		priceMap: make(map[string]*skiplist.Element),
-		sizeMap:  make(map[string]*list.Element),
+		priceMap:       make(map[string]*skiplist.Element),
+		orderMap:       make(map[string]*list.Element),
+		updateEventMap: &sync.Map{},
 	}
 }
 
@@ -71,28 +84,37 @@ func (q *queue) addOrder(order *Order, isFront bool) {
 
 	el, ok := q.priceMap[order.Price.String()]
 	if ok {
-		_, ok := q.sizeMap[orderKey]
+		_, ok := q.orderMap[orderKey]
 		if ok {
 			// duplicate order; ignore it at the moment
 			return
 		}
 
 		var orderElement *list.Element
+		unit := el.Value.(*priceUnit)
 		if isFront {
-			orderElement = el.Value.(*list.List).PushFront(order)
+			orderElement = unit.list.PushFront(order)
 		} else {
-			orderElement = el.Value.(*list.List).PushBack(order)
+			orderElement = unit.list.PushBack(order)
 		}
 
-		q.sizeMap[orderKey] = orderElement
+		unit.totalSize = unit.totalSize.Add(order.Size)
+		q.addUpdateEvent(order.Price.String(), unit.totalSize.String())
+		q.orderMap[orderKey] = orderElement
 
 		atomic.AddInt64(&q.totalOrders, 1)
 	} else {
-		newList := list.New()
-		orderElement := newList.PushFront(order)
-		q.sizeMap[orderKey] = orderElement
+		unit := priceUnit{
+			list: list.New(),
+		}
 
-		el := q.depthList.Set(order.Price, newList)
+		orderElement := unit.list.PushFront(order)
+		unit.totalSize = order.Size
+		q.addUpdateEvent(order.Price.String(), unit.totalSize.String())
+
+		q.orderMap[orderKey] = orderElement
+
+		el := q.depthList.Set(order.Price, &unit)
 		q.priceMap[order.Price.String()] = el
 
 		atomic.AddInt64(&q.totalOrders, 1)
@@ -111,17 +133,21 @@ func (q *queue) removeOrder(order *Order) {
 
 	skipElement, ok := q.priceMap[order.Price.String()]
 	if ok {
-		sizeList := skipElement.Value.(*list.List)
+		unit := skipElement.Value.(*priceUnit)
 
 		orderKey := order.Price.String() + "-" + order.ID
-		orderElement, ok := q.sizeMap[orderKey]
+		orderElement, ok := q.orderMap[orderKey]
 		if ok {
-			sizeList.Remove(orderElement)
-			delete(q.sizeMap, orderKey)
+			unit.list.Remove(orderElement)
+			unit.totalSize = unit.totalSize.Sub(order.Size)
+			q.addUpdateEvent(order.Price.String(), unit.totalSize.String())
+
+			delete(q.orderMap, orderKey)
 			atomic.AddInt64(&q.totalOrders, -1)
 		}
 
-		if sizeList.Len() == 0 {
+		if unit.list.Len() == 0 {
+			q.addUpdateEvent(order.Price.String(), unit.totalSize.String())
 			q.depthList.RemoveElement(skipElement)
 			delete(q.priceMap, order.Price.String())
 			atomic.AddInt64(&q.depths, -1)
@@ -138,7 +164,8 @@ func (q *queue) getHeadOrder() *Order {
 		return nil
 	}
 
-	return el.Value.(*list.List).Front().Value.(*Order)
+	unit := el.Value.(*priceUnit)
+	return unit.list.Front().Value.(*Order)
 }
 
 func (q *queue) popHeadOrder() *Order {
@@ -157,4 +184,23 @@ func (q *queue) orderCount() int64 {
 
 func (q *queue) depthCount() int64 {
 	return atomic.LoadInt64(&q.depths)
+}
+
+func (q *queue) addUpdateEvent(price, size string) {
+	q.updateEventMap.Store(price, size)
+}
+
+func (q *queue) sinceLastUpdateEvents() []*UpdateEvent {
+	events := []*UpdateEvent{}
+
+	q.updateEventMap.Range(func(key, value interface{}) bool {
+		events = append(events, &UpdateEvent{
+			Price: key.(string),
+			Size:  value.(string),
+		})
+		q.updateEventMap.Delete(key)
+		return true
+	})
+
+	return events
 }
