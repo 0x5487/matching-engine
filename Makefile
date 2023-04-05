@@ -10,3 +10,6 @@ benchmark_all_100w:
 
 lint:
 	golangci-lint run ./... -v
+
+test:
+	go test -race -coverprofile=cover.out -covermode=atomic ./...
