@@ -321,41 +321,41 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
 	})
 
-	// suite.Run("take all orders and finish as `cancel`", func() {
-	// 	suite.SetupTest()
+	suite.Run("take all orders and finish as `cancel`", func() {
+		suite.SetupTest()
 
-	// 	order := Order{
-	// 		ID:    "fok",
-	// 		Type:  OrderTypeFOK,
-	// 		Side:  SideSell,
-	// 		Price: decimal.NewFromInt(10),
-	// 		Size:  decimal.NewFromInt(4),
-	// 	}
+		order := Order{
+			ID:    "fok",
+			Type:  OrderTypeFOK,
+			Side:  SideSell,
+			Price: decimal.NewFromInt(10),
+			Size:  decimal.NewFromInt(4),
+		}
 
-	// 	trades, err := suite.orderbook.PlaceOrder(&order)
-	// 	suite.Error(err)
-	// 	suite.Len(trades, 3)
-	// 	suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
-	// 	suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
-	// })
+		trades, err := suite.orderbook.PlaceOrder(&order)
+		suite.Error(err)
+		suite.Len(trades, 0)
+		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
+		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
+	})
 
-	// suite.Run("take some orders and finish as `cancel`", func() {
-	// 	suite.SetupTest()
+	suite.Run("take some orders and finish as `cancel`", func() {
+		suite.SetupTest()
 
-	// 	order := Order{
-	// 		ID:    "ioc",
-	// 		Type:  OrderTypeFOK,
-	// 		Side:  SideBuy,
-	// 		Price: decimal.NewFromInt(115),
-	// 		Size:  decimal.NewFromInt(2),
-	// 	}
+		order := Order{
+			ID:    "ioc",
+			Type:  OrderTypeFOK,
+			Side:  SideBuy,
+			Price: decimal.NewFromInt(115),
+			Size:  decimal.NewFromInt(2),
+		}
 
-	// 	trades, err := suite.orderbook.PlaceOrder(&order)
-	// 	suite.Error(err)
-	// 	suite.Len(trades, 1)
-	// 	suite.Equal(int64(2), suite.orderbook.askQueue.depthCount())
-	// 	suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
-	// })
+		trades, err := suite.orderbook.PlaceOrder(&order)
+		suite.Error(err)
+		suite.Len(trades, 0)
+		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
+		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
+	})
 }
 
 func TestOrderBookUpdateEvents(t *testing.T) {

@@ -20,15 +20,14 @@ type priceUnit struct {
 }
 
 type queue struct {
-	mu              sync.RWMutex
-	side            Side
-	totalOrders     int64
-	depths          int64
-	depthList       *skiplist.SkipList
-	priceMap        map[string]*skiplist.Element
-	orderMap        map[string]*list.Element
-	updateEventMap  *sync.Map
-	availableVolume decimal.Decimal
+	mu             sync.RWMutex
+	side           Side
+	totalOrders    int64
+	depths         int64
+	depthList      *skiplist.SkipList
+	priceMap       map[string]*skiplist.Element
+	orderMap       map[string]*list.Element
+	updateEventMap *sync.Map
 }
 
 func NewBuyerQueue() *queue {
@@ -85,10 +84,6 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	if order.ID == "" {
-		return
-	}
-
 	orderKey := order.Price.String() + "-" + order.ID
 
 	el, ok := q.priceMap[order.Price.String()]
@@ -129,18 +124,11 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 		atomic.AddInt64(&q.totalOrders, 1)
 		atomic.AddInt64(&q.depths, 1)
 	}
-
-	q.availableVolume = order.Price.Mul(order.Size).Add(q.availableVolume)
-
 }
 
 func (q *queue) removeOrder(order *Order) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-
-	if order.ID == "" {
-		return
-	}
 
 	skipElement, ok := q.priceMap[order.Price.String()]
 	if ok {
@@ -164,7 +152,6 @@ func (q *queue) removeOrder(order *Order) {
 			atomic.AddInt64(&q.depths, -1)
 		}
 
-		q.availableVolume = q.availableVolume.Sub(order.Price.Mul(order.Size))
 	}
 }
 
