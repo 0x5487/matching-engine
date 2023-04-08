@@ -6,336 +6,356 @@ import (
 
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
 )
 
-func TestPlaceLimitedSellOrder(t *testing.T) {
-	t.Run("take all limited buy orders", func(t *testing.T) {
-		orderBook := NewOrderBook()
-
-		orderBuy1 := Order{
-			ID:          "buy-1",
-			Side:        Side_Buy,
-			Price:       decimal.NewFromInt(100),
-			Size:        decimal.NewFromInt(1),
-			TimeInForce: TimeInForce_GTC,
-			PostOnly:    true,
-		}
-		trades, err := orderBook.PlaceLimitOrder(&orderBuy1)
-		assert.Nil(t, err)
-		assert.Len(t, trades, 0)
-
-		orderSell1 := Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(100),
-			Side:        Side_Sell,
-			ID:          "sell-1",
-			TimeInForce: TimeInForce_IOC,
-		}
-		trades, err = orderBook.PlaceLimitOrder(&orderSell1)
-		assert.Nil(t, err)
-		assert.Len(t, trades, 1)
-	})
-
-	t.Run("place limited sell order", func(t *testing.T) {
-		orderBook := NewOrderBook()
-
-		orderBuy1 := Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(80),
-			Side:        Side_Buy,
-			ID:          "buy-1",
-			TimeInForce: TimeInForce_GTC,
-			PostOnly:    true,
-		}
-
-		trades, err := orderBook.PlaceLimitOrder(&orderBuy1)
-		assert.Nil(t, err)
-		assert.Equal(t, 0, len(trades))
-
-		orderBuy2 := Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(90),
-			Side:        Side_Buy,
-			ID:          "buy-2",
-			TimeInForce: TimeInForce_GTC,
-		}
-
-		trades, err = orderBook.PlaceLimitOrder(&orderBuy2)
-		assert.Nil(t, err)
-		assert.Equal(t, 0, len(trades))
-
-		orderBuy3 := Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(100),
-			Side:        Side_Buy,
-			ID:          "buy-3",
-			TimeInForce: TimeInForce_GTC,
-		}
-
-		trades, err = orderBook.PlaceLimitOrder(&orderBuy3)
-		assert.Nil(t, err)
-		assert.Equal(t, 0, len(trades))
-
-		orderSell1 := Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(150),
-			Side:        Side_Sell,
-			ID:          "sell-1",
-			PostOnly:    true,
-			TimeInForce: TimeInForce_GTC,
-		}
-		trades, err = orderBook.PlaceLimitOrder(&orderSell1)
-		assert.Nil(t, err)
-		assert.Equal(t, 0, len(trades))
-
-		orderSell2 := Order{
-			ID:          "sell-2",
-			Side:        Side_Sell,
-			Size:        decimal.NewFromInt(5),
-			Price:       decimal.NewFromInt(90),
-			TimeInForce: TimeInForce_IOC,
-		}
-		trades, err = orderBook.PlaceLimitOrder(&orderSell2)
-		assert.ErrorIs(t, err, ErrCanceled)
-		assert.Equal(t, 2, len(trades))
-	})
+type OrderBookTestSuite struct {
+	suite.Suite
+	orderbook *OrderBook
 }
 
-func TestPlaceLimitedBuyOrder(t *testing.T) {
-	t.Run("take all limited sell order", func(t *testing.T) {
-		orderBook := NewOrderBook()
+func TestOrderBookTestSuite(t *testing.T) {
 
-		orderSell1 := Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(100),
-			Side:        Side_Sell,
-			ID:          "sell-1",
-			TimeInForce: TimeInForce_GTC,
-			PostOnly:    false,
-		}
-		trades, err := orderBook.PlaceLimitOrder(&orderSell1)
-		assert.Nil(t, err)
-		assert.Equal(t, 0, len(trades))
+	orderBookTestSuite := OrderBookTestSuite{}
 
-		orderBuy1 := Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(100),
-			Side:        Side_Buy,
-			ID:          "buy-1",
-			TimeInForce: TimeInForce_GTC,
-			PostOnly:    true,
-		}
-		trades, err = orderBook.PlaceLimitOrder(&orderBuy1)
-		assert.Error(t, err, ErrCanceled)
-		assert.Len(t, trades, 0)
-
-		orderBuy2 := Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(100),
-			Side:        Side_Buy,
-			ID:          "buy-2",
-			TimeInForce: TimeInForce_GTC,
-			PostOnly:    false,
-		}
-		trades, err = orderBook.PlaceLimitOrder(&orderBuy2)
-		assert.Nil(t, err)
-		assert.Len(t, trades, 1)
-	})
-
-	t.Run("place limited buy order", func(t *testing.T) {
-		orderBook := NewOrderBook()
-
-		orderSell1 := Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(80),
-			Side:        Side_Sell,
-			ID:          "sell-1",
-			TimeInForce: TimeInForce_GTC,
-		}
-		trades, err := orderBook.PlaceLimitOrder(&orderSell1)
-		assert.Nil(t, err)
-		assert.Equal(t, 0, len(trades))
-
-		orderSell2 := Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(90),
-			Side:        Side_Sell,
-			ID:          "sell-2",
-			TimeInForce: TimeInForce_GTC,
-		}
-		trades, err = orderBook.PlaceLimitOrder(&orderSell2)
-		assert.Nil(t, err)
-		assert.Equal(t, 0, len(trades))
-
-		orderSell3 := Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(100),
-			Side:        Side_Sell,
-			ID:          "sell-3",
-			TimeInForce: TimeInForce_GTC,
-		}
-		trades, err = orderBook.PlaceLimitOrder(&orderSell3)
-		assert.Nil(t, err)
-		assert.Equal(t, 0, len(trades))
-
-		orderBuy1 := Order{
-			Size:        decimal.NewFromInt(5),
-			Price:       decimal.NewFromInt(30),
-			Side:        Side_Buy,
-			ID:          "buy-1",
-			TimeInForce: TimeInForce_GTC,
-		}
-		trades, err = orderBook.PlaceLimitOrder(&orderBuy1)
-		assert.Nil(t, err)
-		assert.Equal(t, 0, len(trades))
-
-		orderBuy2 := Order{
-			Size:        decimal.NewFromInt(5),
-			Price:       decimal.NewFromInt(95),
-			Side:        Side_Buy,
-			ID:          "buy-2",
-			TimeInForce: TimeInForce_IOC,
-		}
-		trades, err = orderBook.PlaceLimitOrder(&orderBuy2)
-		assert.ErrorIs(t, err, ErrCanceled)
-		assert.Equal(t, 2, len(trades))
-	})
+	suite.Run(t, &orderBookTestSuite)
 }
 
-func TestPlaceMarketSellOrder(t *testing.T) {
+func (suite *OrderBookTestSuite) SetupTest() {
 	orderBook := NewOrderBook()
 
-	t.Run("take all market buy order", func(t *testing.T) {
-		orderBuy1 := &Order{
-			ID:          "buy-1",
-			Side:        Side_Buy,
-			Price:       decimal.NewFromInt(90),
-			Size:        decimal.NewFromInt(1),
-			TimeInForce: TimeInForce_GTC,
-		}
-		trades, err := orderBook.PlaceLimitOrder(orderBuy1)
-		assert.Nil(t, err)
-		assert.Len(t, trades, 0)
+	orderBuy1 := Order{
+		ID:    "buy-1",
+		Type:  OrderTypeLimit,
+		Side:  SideBuy,
+		Size:  decimal.NewFromInt(1),
+		Price: decimal.NewFromInt(90),
+	}
 
-		orderSell1 := &Order{
-			ID:   "sell-1",
-			Side: Side_Sell,
-			Size: decimal.NewFromInt(1),
+	trades, err := orderBook.PlaceOrder(&orderBuy1)
+	suite.Nil(err)
+	suite.Equal(0, len(trades))
+
+	orderBuy2 := Order{
+		ID:    "buy-2",
+		Type:  OrderTypeLimit,
+		Side:  SideBuy,
+		Size:  decimal.NewFromInt(1),
+		Price: decimal.NewFromInt(80),
+	}
+
+	trades, err = orderBook.PlaceOrder(&orderBuy2)
+	suite.Nil(err)
+	suite.Equal(0, len(trades))
+
+	orderBuy3 := Order{
+		ID:    "buy-3",
+		Type:  OrderTypeLimit,
+		Side:  SideBuy,
+		Size:  decimal.NewFromInt(1),
+		Price: decimal.NewFromInt(70),
+	}
+
+	trades, err = orderBook.PlaceOrder(&orderBuy3)
+	suite.Nil(err)
+	suite.Equal(0, len(trades))
+
+	orderSell1 := Order{
+		ID:    "sell-1",
+		Type:  OrderTypeLimit,
+		Side:  SideSell,
+		Size:  decimal.NewFromInt(1),
+		Price: decimal.NewFromInt(110),
+	}
+	trades, err = orderBook.PlaceOrder(&orderSell1)
+	suite.Nil(err)
+	suite.Equal(0, len(trades))
+
+	orderSell2 := Order{
+		ID:    "sell-2",
+		Type:  OrderTypeLimit,
+		Side:  SideSell,
+		Size:  decimal.NewFromInt(1),
+		Price: decimal.NewFromInt(120),
+	}
+	trades, err = orderBook.PlaceOrder(&orderSell2)
+	suite.Nil(err)
+	suite.Equal(0, len(trades))
+
+	orderSell3 := Order{
+		ID:    "sell-3",
+		Type:  OrderTypeLimit,
+		Side:  SideSell,
+		Size:  decimal.NewFromInt(1),
+		Price: decimal.NewFromInt(130),
+	}
+	trades, err = orderBook.PlaceOrder(&orderSell3)
+	suite.Nil(err)
+	suite.Equal(0, len(trades))
+
+	suite.orderbook = orderBook
+}
+
+func (suite *OrderBookTestSuite) TestLimitOrders() {
+	suite.Run("take all orders", func() {
+		suite.SetupTest()
+
+		order := Order{
+			ID:    "buyAll",
+			Type:  OrderTypeLimit,
+			Side:  SideBuy,
+			Price: decimal.NewFromInt(1000),
+			Size:  decimal.NewFromInt(10),
 		}
 
-		trades, err = orderBook.PlaceMarketOrder(orderSell1)
-		assert.Nil(t, err)
-		assert.Equal(t, 1, len(trades))
+		trades, err := suite.orderbook.PlaceOrder(&order)
+		suite.Nil(err)
+		suite.Len(trades, 3)
+		suite.Equal(int64(0), suite.orderbook.askQueue.depthCount())
+		suite.Equal(int64(4), suite.orderbook.bidQueue.depthCount())
+
 	})
 
-	t.Run("place market sell order", func(t *testing.T) {
-		orderBuy1 := &Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(90),
-			Side:        Side_Buy,
-			ID:          "buy-1",
-			TimeInForce: TimeInForce_GTC,
+	suite.Run("take some orders", func() {
+		suite.SetupTest()
+
+		order := Order{
+			ID:    "mysell",
+			Type:  OrderTypeLimit,
+			Side:  SideSell,
+			Size:  decimal.NewFromInt(5),
+			Price: decimal.NewFromInt(75),
 		}
-		trades, err := orderBook.PlaceLimitOrder(orderBuy1)
-		assert.Nil(t, err)
-		assert.Len(t, trades, 0)
-
-		orderBuy2 := &Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(80),
-			Side:        Side_Buy,
-			ID:          "buy-2",
-			TimeInForce: TimeInForce_GTC,
-		}
-
-		trades, err = orderBook.PlaceLimitOrder(orderBuy2)
-		assert.Nil(t, err)
-		assert.Len(t, trades, 0)
-
-		orderSell := &Order{
-			Size: decimal.NewFromInt(10),
-			Side: Side_Sell,
-			ID:   "sell-1",
-		}
-
-		trades, err = orderBook.PlaceMarketOrder(orderSell)
-		assert.ErrorIs(t, err, ErrCanceled)
-		assert.Equal(t, 2, len(trades))
+		trades, err := suite.orderbook.PlaceOrder(&order)
+		suite.Nil(err)
+		suite.Equal(2, len(trades))
+		suite.Equal(int64(4), suite.orderbook.askQueue.depthCount())
+		suite.Equal(int64(1), suite.orderbook.bidQueue.depthCount())
 	})
 }
 
-func TestPlaceMarketBuyOrder(t *testing.T) {
-	orderBook := NewOrderBook()
+func (suite *OrderBookTestSuite) TestMarketOrder() {
+	suite.Run("take all orders", func() {
+		suite.SetupTest()
 
-	t.Run("take all market sell orders", func(t *testing.T) {
-		orderSell1 := &Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(90),
-			Side:        Side_Sell,
-			ID:          "sell-1",
-			TimeInForce: TimeInForce_GTC,
-		}
-		trades, err := orderBook.PlaceLimitOrder(orderSell1)
-		assert.Nil(t, err)
-		assert.Len(t, trades, 0)
-
-		orderBuy := &Order{
-			Size: decimal.NewFromInt(1),
-			Side: Side_Buy,
-			ID:   "buy-1",
+		order := Order{
+			ID:    "buyAll",
+			Type:  OrderTypeMarket,
+			Side:  SideBuy,
+			Price: decimal.NewFromInt(0),
+			Size:  decimal.NewFromInt(110).Add(decimal.NewFromInt(120)).Add(decimal.NewFromInt(130)),
 		}
 
-		trades, err = orderBook.PlaceMarketOrder(orderBuy)
-		assert.Nil(t, err)
-		assert.Equal(t, 1, len(trades))
+		trades, err := suite.orderbook.PlaceOrder(&order)
+		suite.Nil(err)
+		suite.Len(trades, 3)
+		suite.Equal(int64(0), suite.orderbook.askQueue.depthCount())
+		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
 	})
 
-	t.Run("place market buy order", func(t *testing.T) {
-		orderSell1 := &Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(90),
-			Side:        Side_Sell,
-			ID:          "sell-1",
-			TimeInForce: TimeInForce_GTC,
-		}
-		trades, err := orderBook.PlaceLimitOrder(orderSell1)
-		assert.Nil(t, err)
-		assert.Len(t, trades, 0)
+	suite.Run("take some orders", func() {
+		suite.SetupTest()
 
-		orderSell2 := &Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(80),
-			Side:        Side_Sell,
-			ID:          "sell-2",
-			TimeInForce: TimeInForce_GTC,
+		order := Order{
+			ID:    "mysell",
+			Type:  OrderTypeMarket,
+			Side:  SideSell,
+			Price: decimal.NewFromInt(0),
+			Size:  decimal.NewFromInt(90),
 		}
 
-		trades, err = orderBook.PlaceLimitOrder(orderSell2)
-		assert.Nil(t, err)
-		assert.Len(t, trades, 0)
-
-		orderSell3 := &Order{
-			Size:        decimal.NewFromInt(1),
-			Price:       decimal.NewFromInt(80),
-			Side:        Side_Sell,
-			ID:          "sell-3",
-			TimeInForce: TimeInForce_GTC,
-		}
-
-		trades, err = orderBook.PlaceLimitOrder(orderSell3)
-		assert.Nil(t, err)
-		assert.Len(t, trades, 0)
-
-		orderBuy := &Order{
-			Size: decimal.NewFromInt(10),
-			Side: Side_Buy,
-			ID:   "buy-1",
-		}
-
-		trades, err = orderBook.PlaceMarketOrder(orderBuy)
-		assert.ErrorIs(t, err, ErrCanceled)
-		assert.Equal(t, 3, len(trades))
+		trades, err := suite.orderbook.PlaceOrder(&order)
+		suite.Nil(err)
+		suite.Len(trades, 1)
+		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
+		suite.Equal(int64(2), suite.orderbook.bidQueue.depthCount())
 	})
+}
+
+func (suite *OrderBookTestSuite) TestPostOnlyOrder() {
+	suite.Run("place a post only order", func() {
+		suite.SetupTest()
+
+		buyAll := Order{
+			ID:    "post_only",
+			Type:  OrderTypePostOnly,
+			Side:  SideBuy,
+			Price: decimal.NewFromInt(100),
+			Size:  decimal.NewFromInt(1),
+		}
+
+		trades, err := suite.orderbook.PlaceOrder(&buyAll)
+		suite.Nil(err)
+		suite.Len(trades, 0)
+		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
+		suite.Equal(int64(4), suite.orderbook.bidQueue.depthCount())
+	})
+
+	suite.Run("fail to place a post only order", func() {
+		suite.SetupTest()
+
+		buyAll := Order{
+			ID:    "post_only",
+			Type:  OrderTypePostOnly,
+			Side:  SideBuy,
+			Price: decimal.NewFromInt(115),
+			Size:  decimal.NewFromInt(1),
+		}
+
+		trades, err := suite.orderbook.PlaceOrder(&buyAll)
+		suite.Error(err)
+		suite.Len(trades, 0)
+		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
+		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
+	})
+}
+
+func (suite *OrderBookTestSuite) TestIOCOrder() {
+	suite.Run("no match any orders", func() {
+		suite.SetupTest()
+
+		order := Order{
+			ID:    "ioc",
+			Type:  OrderTypeIOC,
+			Side:  SideBuy,
+			Price: decimal.NewFromInt(100),
+			Size:  decimal.NewFromInt(1),
+		}
+
+		trades, err := suite.orderbook.PlaceOrder(&order)
+		suite.Error(err)
+		suite.Len(trades, 0)
+		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
+		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
+	})
+
+	suite.Run("take all orders with no error", func() {
+		suite.SetupTest()
+
+		order := Order{
+			ID:    "ioc",
+			Type:  OrderTypeIOC,
+			Side:  SideBuy,
+			Price: decimal.NewFromInt(1000),
+			Size:  decimal.NewFromInt(3),
+		}
+
+		trades, err := suite.orderbook.PlaceOrder(&order)
+		suite.Nil(err)
+		suite.Len(trades, 3)
+		suite.Equal(int64(0), suite.orderbook.askQueue.depthCount())
+		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
+	})
+
+	suite.Run("take all orders and finish as `cancel`", func() {
+		suite.SetupTest()
+
+		order := Order{
+			ID:    "ioc",
+			Type:  OrderTypeIOC,
+			Side:  SideSell,
+			Price: decimal.NewFromInt(10),
+			Size:  decimal.NewFromInt(4),
+		}
+
+		trades, err := suite.orderbook.PlaceOrder(&order)
+		suite.Error(err)
+		suite.Len(trades, 3)
+		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
+		suite.Equal(int64(0), suite.orderbook.bidQueue.depthCount())
+	})
+
+	suite.Run("take some orders and finish as `cancel`", func() {
+		suite.SetupTest()
+
+		order := Order{
+			ID:    "ioc",
+			Type:  OrderTypeIOC,
+			Side:  SideBuy,
+			Price: decimal.NewFromInt(115),
+			Size:  decimal.NewFromInt(2),
+		}
+
+		trades, err := suite.orderbook.PlaceOrder(&order)
+		suite.Error(err)
+		suite.Len(trades, 1)
+		suite.Equal(int64(2), suite.orderbook.askQueue.depthCount())
+		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
+	})
+}
+
+func (suite *OrderBookTestSuite) TestFOKOrder() {
+	suite.Run("no match any orders", func() {
+		suite.SetupTest()
+
+		order := Order{
+			ID:    "fok",
+			Type:  OrderTypeFOK,
+			Side:  SideBuy,
+			Price: decimal.NewFromInt(100),
+			Size:  decimal.NewFromInt(1),
+		}
+
+		trades, err := suite.orderbook.PlaceOrder(&order)
+		suite.Error(err)
+		suite.Len(trades, 0)
+		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
+		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
+	})
+
+	suite.Run("take all orders with no error", func() {
+		suite.SetupTest()
+
+		order := Order{
+			ID:    "fok",
+			Type:  OrderTypeFOK,
+			Side:  SideBuy,
+			Price: decimal.NewFromInt(1000),
+			Size:  decimal.NewFromInt(3),
+		}
+
+		trades, err := suite.orderbook.PlaceOrder(&order)
+		suite.Nil(err)
+		suite.Len(trades, 3)
+		suite.Equal(int64(0), suite.orderbook.askQueue.depthCount())
+		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
+	})
+
+	// suite.Run("take all orders and finish as `cancel`", func() {
+	// 	suite.SetupTest()
+
+	// 	order := Order{
+	// 		ID:    "fok",
+	// 		Type:  OrderTypeFOK,
+	// 		Side:  SideSell,
+	// 		Price: decimal.NewFromInt(10),
+	// 		Size:  decimal.NewFromInt(4),
+	// 	}
+
+	// 	trades, err := suite.orderbook.PlaceOrder(&order)
+	// 	suite.Error(err)
+	// 	suite.Len(trades, 3)
+	// 	suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
+	// 	suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
+	// })
+
+	// suite.Run("take some orders and finish as `cancel`", func() {
+	// 	suite.SetupTest()
+
+	// 	order := Order{
+	// 		ID:    "ioc",
+	// 		Type:  OrderTypeFOK,
+	// 		Side:  SideBuy,
+	// 		Price: decimal.NewFromInt(115),
+	// 		Size:  decimal.NewFromInt(2),
+	// 	}
+
+	// 	trades, err := suite.orderbook.PlaceOrder(&order)
+	// 	suite.Error(err)
+	// 	suite.Len(trades, 1)
+	// 	suite.Equal(int64(2), suite.orderbook.askQueue.depthCount())
+	// 	suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
+	// })
 }
 
 func TestOrderBookUpdateEvents(t *testing.T) {
@@ -345,27 +365,28 @@ func TestOrderBookUpdateEvents(t *testing.T) {
 	orderBook.RegisterUpdateEventChan(updateEventChan)
 
 	orderBuy1 := Order{
-		Price:       decimal.NewFromInt(100),
-		Size:        decimal.NewFromInt(1),
-		Side:        Side_Buy,
-		ID:          "buy-1",
-		TimeInForce: TimeInForce_GTC,
+		ID:    "buy-1",
+		Type:  OrderTypeLimit,
+		Price: decimal.NewFromInt(100),
+		Size:  decimal.NewFromInt(1),
+		Side:  SideBuy,
 	}
-	orderBook.PlaceLimitOrder(&orderBuy1)
+	orderBook.PlaceOrder(&orderBuy1)
 
 	orderSell1 := Order{
-		Price:       decimal.NewFromInt(101),
-		Size:        decimal.NewFromInt(2),
-		Side:        Side_Sell,
-		ID:          "sell-1",
-		TimeInForce: TimeInForce_GTC,
+		ID:    "sell-1",
+		Type:  OrderTypeLimit,
+		Price: decimal.NewFromInt(101),
+		Size:  decimal.NewFromInt(2),
+		Side:  SideSell,
 	}
-	orderBook.PlaceLimitOrder(&orderSell1)
+	orderBook.PlaceOrder(&orderSell1)
 
 	time.Sleep(1 * time.Second)
 
 	bookEvt := <-updateEventChan
 	assert.Equal(t, 1, len(bookEvt.Bids))
+
 	bidEvt := bookEvt.Bids[0]
 	assert.Equal(t, "100", bidEvt.Price)
 	assert.Equal(t, "1", bidEvt.Size)

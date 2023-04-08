@@ -9,27 +9,28 @@ import (
 type Side int8
 
 const (
-	Side_Default = 0
-	Side_Buy     = 1
-	Side_Sell    = 2
+	SideDefault = 0
+	SideBuy     = 1
+	SideSell    = 2
 )
 
-type TimeInForce string
+type OrderType string
 
 const (
-	TimeInForce_GTC = "gtc"
-	TimeInForce_IOC = "ioc"
-	TimeInForce_FOK = "fok"
+	OrderTypeMarket   = "market"
+	OrderTypeLimit    = "limit"
+	OrderTypeFOK      = "fok"       // 全部成交或立即取消
+	OrderTypeIOC      = "ioc"       // 立即成交并取消剩余
+	OrderTypePostOnly = "post_only" // be maker order only
 )
 
 type Order struct {
-	ID          string          `json:"id"`
-	Side        Side            `json:"side"`
-	Price       decimal.Decimal `json:"price"`
-	Size        decimal.Decimal `json:"size"`
-	TimeInForce TimeInForce     `json:"tif"`
-	PostOnly    bool            `json:"post_only"`
-	CreatedAt   time.Time       `json:"created_at"`
+	ID        string          `json:"id"`
+	Side      Side            `json:"side"`
+	Price     decimal.Decimal `json:"price"`
+	Size      decimal.Decimal `json:"size"`
+	Type      OrderType       `json:"type"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
 type Trade struct {
@@ -62,12 +63,12 @@ func NewOrderBook() *OrderBook {
 
 // AddBuyOrder adds a buy order to the order book
 func (book *OrderBook) AddBuyOrder(order *Order) {
-	book.bidQueue.addOrder(order, false)
+	book.bidQueue.insertOrder(order, false)
 }
 
 // AddSellOrder adds a sell order to the order book
 func (book *OrderBook) AddSellOrder(order *Order) {
-	book.askQueue.addOrder(order, false)
+	book.askQueue.insertOrder(order, false)
 }
 
 // RemoveBuyOrder removes a buy order from the order book at a given index
@@ -80,173 +81,128 @@ func (book *OrderBook) RemoveSellOrder(order *Order) {
 	book.askQueue.removeOrder(order)
 }
 
-// PlaceLimitOrder place an order and return the trades generated before adding the remaining Size to the market
-func (book *OrderBook) PlaceLimitOrder(order *Order) ([]*Trade, error) {
-	if order.Side == Side_Buy {
-		return book.processLimitBuyOrder(order)
+func (book *OrderBook) PlaceOrder(order *Order) ([]*Trade, error) {
+	if len(order.Type) == 0 {
+		return nil, ErrInvalidParam
 	}
 
-	return book.processLimitSellOrder(order)
-}
-
-func (book *OrderBook) processLimitBuyOrder(order *Order) ([]*Trade, error) {
-	trades := []*Trade{}
-
-	for {
-		tOrd := book.askQueue.popHeadOrder()
-
-		if tOrd == nil {
-			switch order.TimeInForce {
-			case TimeInForce_GTC:
-				book.bidQueue.addOrder(order, false)
-				return trades, nil
-			case TimeInForce_IOC:
-				return trades, ErrCanceled
-			case TimeInForce_FOK:
-				return trades, ErrCanceled
-			}
-		}
-
-		if order.Price.LessThan(tOrd.Price) {
-			book.askQueue.addOrder(tOrd, true)
-
-			switch order.TimeInForce {
-			case TimeInForce_GTC:
-				book.bidQueue.addOrder(order, false)
-				return trades, nil
-			case TimeInForce_IOC:
-				return trades, ErrCanceled
-			case TimeInForce_FOK:
-				return trades, ErrCanceled
-			}
-		} else {
-
-			if order.PostOnly {
-				book.askQueue.addOrder(tOrd, true)
-				return trades, ErrCanceled
-			}
-
-		}
-
-		if order.Size.GreaterThan(tOrd.Size) {
-			trade := Trade{
-				TakerOrderID: order.ID,
-				MakerOrderID: tOrd.ID,
-				Price:        tOrd.Price,
-				Size:         tOrd.Size,
-				CreatedAt:    time.Now().UTC(),
-			}
-			trades = append(trades, &trade)
-			order.Size = order.Size.Sub(tOrd.Size)
-		} else {
-			trade := Trade{
-				TakerOrderID: order.ID,
-				MakerOrderID: tOrd.ID,
-				Price:        tOrd.Price,
-				Size:         tOrd.Size,
-				CreatedAt:    time.Now().UTC(),
-			}
-			trades = append(trades, &trade)
-			tOrd.Size = tOrd.Size.Sub(order.Size)
-			book.askQueue.addOrder(tOrd, true)
-
-			break
-		}
+	if order.Type == OrderTypeMarket {
+		return book.handleMarketOrder(order)
 	}
 
-	return trades, nil
+	return book.handleOrder(order)
 }
 
-func (book *OrderBook) processLimitSellOrder(order *Order) ([]*Trade, error) {
-	trades := []*Trade{}
+func (book *OrderBook) CancelOrder(order *Order) {
 
-	for {
-		tOrd := book.bidQueue.popHeadOrder()
-
-		if tOrd == nil {
-			switch order.TimeInForce {
-			case TimeInForce_GTC:
-				book.askQueue.addOrder(order, false)
-				return trades, nil
-			case TimeInForce_IOC:
-				return trades, ErrCanceled
-			case TimeInForce_FOK:
-				return trades, ErrCanceled
-			}
-		}
-
-		if order.Price.GreaterThan(tOrd.Price) {
-			book.bidQueue.addOrder(tOrd, true)
-
-			switch order.TimeInForce {
-			case TimeInForce_GTC:
-				book.askQueue.addOrder(order, false)
-				return trades, nil
-			case TimeInForce_IOC:
-				return trades, ErrCanceled
-			case TimeInForce_FOK:
-				return trades, ErrCanceled
-			}
-		} else {
-
-			if order.PostOnly {
-				book.bidQueue.addOrder(tOrd, true)
-				return trades, ErrCanceled
-			}
-
-		}
-
-		if order.Size.GreaterThan(tOrd.Size) {
-			trade := Trade{
-				TakerOrderID: order.ID,
-				MakerOrderID: tOrd.ID,
-				Price:        tOrd.Price,
-				Size:         tOrd.Size,
-				CreatedAt:    time.Now().UTC(),
-			}
-			trades = append(trades, &trade)
-			order.Size = order.Size.Sub(tOrd.Size)
-		} else {
-			trade := Trade{
-				TakerOrderID: order.ID,
-				MakerOrderID: tOrd.ID,
-				Price:        tOrd.Price,
-				Size:         tOrd.Size,
-				CreatedAt:    time.Now().UTC(),
-			}
-			trades = append(trades, &trade)
-			tOrd.Size = tOrd.Size.Sub(order.Size)
-			book.bidQueue.addOrder(tOrd, true)
-
-			break
-		}
-	}
-
-	return trades, nil
 }
 
-func (book *OrderBook) PlaceMarketOrder(order *Order) ([]*Trade, error) {
-	targetQueue := book.bidQueue
-	if order.Side == Side_Buy {
+func (book *OrderBook) handleOrder(order *Order) ([]*Trade, error) {
+	var myQueue, targetQueue *queue
+	if order.Side == SideBuy {
+		myQueue = book.bidQueue
 		targetQueue = book.askQueue
+	} else {
+		myQueue = book.askQueue
+		targetQueue = book.bidQueue
 	}
 
-	if targetQueue.orderCount() == 0 {
-		return nil, ErrCanceled
+	trades := []*Trade{}
+
+	// ensure available volumn can handle FOK order
+	if order.Type == OrderTypeFOK {
+		vol := order.Price.Mul(order.Size)
+		if targetQueue.availableVolume.LessThan(vol) {
+			return trades, ErrCanceled
+		}
+	}
+
+	for {
+		tOrd := targetQueue.popHeadOrder()
+
+		if tOrd == nil {
+			switch order.Type {
+			case OrderTypeLimit, OrderTypePostOnly:
+				myQueue.insertOrder(order, false)
+				return trades, nil
+			case OrderTypeIOC:
+				return trades, ErrCanceled
+			}
+		}
+
+		if order.Side == SideBuy && order.Price.LessThan(tOrd.Price) ||
+			order.Side == SideSell && order.Price.GreaterThan(tOrd.Price) {
+			targetQueue.insertOrder(tOrd, true)
+
+			switch order.Type {
+			case OrderTypeLimit, OrderTypePostOnly:
+				myQueue.insertOrder(order, false)
+				return trades, nil
+			case OrderTypeIOC:
+				return trades, ErrCanceled
+			case OrderTypeFOK:
+				targetQueue.addOrder(tOrd)
+				return trades, ErrCanceled
+			}
+		}
+
+		if order.Type == OrderTypePostOnly {
+			targetQueue.addOrder(tOrd)
+			return trades, ErrCanceled
+		}
+
+		if order.Size.GreaterThanOrEqual(tOrd.Size) {
+			trade := Trade{
+				TakerOrderID: order.ID,
+				MakerOrderID: tOrd.ID,
+				Price:        tOrd.Price,
+				Size:         tOrd.Size,
+				CreatedAt:    time.Now().UTC(),
+			}
+			trades = append(trades, &trade)
+			order.Size = order.Size.Sub(tOrd.Size)
+
+			if order.Size.Equal(decimal.Zero) {
+				break
+			}
+		} else {
+			trade := Trade{
+				TakerOrderID: order.ID,
+				MakerOrderID: tOrd.ID,
+				Price:        tOrd.Price,
+				Size:         order.Size,
+				CreatedAt:    time.Now().UTC(),
+			}
+			trades = append(trades, &trade)
+			tOrd.Size = tOrd.Size.Sub(order.Size)
+			targetQueue.insertOrder(tOrd, true)
+
+			break
+		}
+	}
+
+	return trades, nil
+}
+
+func (book *OrderBook) handleMarketOrder(order *Order) ([]*Trade, error) {
+	targetQueue := book.bidQueue
+	if order.Side == SideBuy {
+		targetQueue = book.askQueue
 	}
 
 	trades := []*Trade{}
 
 	for {
 		tOrd := targetQueue.popHeadOrder()
+
 		if tOrd == nil {
-			if order.Size.GreaterThan(decimal.Zero) {
-				return trades, ErrCanceled
-			}
-			break
+			return nil, ErrCanceled
 		}
 
-		if order.Size.GreaterThan(tOrd.Size) {
+		// 市價單的 size 是總額，不是數量
+		amount := tOrd.Price.Mul(tOrd.Size)
+
+		if order.Size.GreaterThanOrEqual(amount) {
 			trade := Trade{
 				TakerOrderID: order.ID,
 				MakerOrderID: tOrd.ID,
@@ -255,20 +211,24 @@ func (book *OrderBook) PlaceMarketOrder(order *Order) ([]*Trade, error) {
 				CreatedAt:    time.Now().UTC(),
 			}
 			trades = append(trades, &trade)
-
-			order.Size = order.Size.Sub(tOrd.Size)
+			order.Size = order.Size.Sub(amount)
+			if order.Size.Equal(decimal.Zero) {
+				break
+			}
 		} else {
+			tSize := order.Size.Div(tOrd.Price)
+
 			trade := Trade{
 				TakerOrderID: order.ID,
 				MakerOrderID: tOrd.ID,
 				Price:        tOrd.Price,
-				Size:         tOrd.Size,
+				Size:         tSize,
 				CreatedAt:    time.Now().UTC(),
 			}
 			trades = append(trades, &trade)
-			tOrd.Size = tOrd.Size.Sub(order.Size)
 
-			targetQueue.addOrder(tOrd, true)
+			tOrd.Size = tOrd.Size.Sub(tSize)
+			targetQueue.insertOrder(tOrd, true)
 
 			break
 		}
