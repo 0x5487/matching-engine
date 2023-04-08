@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## v0.4 (2023-04-08)
+
+- refactor: add OrderType field (`market`, `limit`, `ioc`, `post_only`)
+- refactor: add more testcase
+- fix: fix market order size issue
+
 ## v0.3 (2022-06-05)
 
 - add order book update event

@@ -20,19 +20,20 @@ type priceUnit struct {
 }
 
 type queue struct {
-	mu             sync.RWMutex
-	side           Side
-	totalOrders    int64
-	depths         int64
-	depthList      *skiplist.SkipList
-	priceMap       map[string]*skiplist.Element
-	orderMap       map[string]*list.Element
-	updateEventMap *sync.Map
+	mu              sync.RWMutex
+	side            Side
+	totalOrders     int64
+	depths          int64
+	depthList       *skiplist.SkipList
+	priceMap        map[string]*skiplist.Element
+	orderMap        map[string]*list.Element
+	updateEventMap  *sync.Map
+	availableVolume decimal.Decimal
 }
 
 func NewBuyerQueue() *queue {
 	return &queue{
-		side: Side_Buy,
+		side: SideBuy,
 		depthList: skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs interface{}) int {
 			d1 := lhs.(decimal.Decimal)
 			d2 := rhs.(decimal.Decimal)
@@ -53,7 +54,7 @@ func NewBuyerQueue() *queue {
 
 func NewSellerQueue() *queue {
 	return &queue{
-		side: Side_Sell,
+		side: SideSell,
 		depthList: skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs interface{}) int {
 			d1 := lhs.(decimal.Decimal)
 			d2 := rhs.(decimal.Decimal)
@@ -72,7 +73,15 @@ func NewSellerQueue() *queue {
 	}
 }
 
-func (q *queue) addOrder(order *Order, isFront bool) {
+func (q *queue) addOrder(order *Order) {
+	if order.Side == SideBuy {
+		q.insertOrder(order, false)
+	} else {
+		q.insertOrder(order, true)
+	}
+}
+
+func (q *queue) insertOrder(order *Order, isFront bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -121,6 +130,8 @@ func (q *queue) addOrder(order *Order, isFront bool) {
 		atomic.AddInt64(&q.depths, 1)
 	}
 
+	q.availableVolume = order.Price.Mul(order.Size).Add(q.availableVolume)
+
 }
 
 func (q *queue) removeOrder(order *Order) {
@@ -152,6 +163,8 @@ func (q *queue) removeOrder(order *Order) {
 			delete(q.priceMap, order.Price.String())
 			atomic.AddInt64(&q.depths, -1)
 		}
+
+		q.availableVolume = q.availableVolume.Sub(order.Price.Mul(order.Size))
 	}
 }
 

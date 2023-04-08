@@ -9,4 +9,4 @@ PostOnly is a type of order that is used to add liquidity to the crypto market. 
 
 * GTC: Good Till Cancelled. The order will remain valid until it is fully executed or manually cancelled by the trader12.
 * IOC: Immediate or Cancel. The order must be partially filled immediately at the order limit price or better, and the unfilled contracts will be cancelled. If the order cannot be fully filled immediately, the order will be also cancelled12.
-* FOK: Fill or Kill. The order must be immediately and fully executed at the order price or better, otherwise, it will be completely cancelled. Partially filled contracts are not allowed12.
+* FOK: Fill or Kill. An order to place a trade immediately and completely at a specified price (limit order); if the specified conditions cannot be met immediately, the order is cancelled. FOK orders are allowed only during open trading sessions, and are not allowed to be used with an Iceberg order or any market order type.

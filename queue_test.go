@@ -10,25 +10,25 @@ import (
 func TestBuyerQueue(t *testing.T) {
 	q := NewBuyerQueue()
 
-	q.addOrder(&Order{
+	q.insertOrder(&Order{
 		ID:    "101",
 		Price: decimal.NewFromInt(10),
 		Size:  decimal.NewFromInt(10),
 	}, false)
 
-	q.addOrder(&Order{
+	q.insertOrder(&Order{
 		ID:    "201",
 		Price: decimal.NewFromInt(20),
 		Size:  decimal.NewFromInt(10),
 	}, false)
 
-	q.addOrder(&Order{
+	q.insertOrder(&Order{
 		ID:    "301",
 		Price: decimal.NewFromInt(30),
 		Size:  decimal.NewFromInt(10),
 	}, false)
 
-	q.addOrder(&Order{
+	q.insertOrder(&Order{
 		ID:    "202",
 		Price: decimal.NewFromInt(20),
 		Size:  decimal.NewFromInt(100),
@@ -46,7 +46,7 @@ func TestBuyerQueue(t *testing.T) {
 	assert.Equal(t, "20", ord.Price.String())
 	assert.Equal(t, "10", ord.Size.String())
 	ord.Size = decimal.NewFromInt(2)
-	q.addOrder(ord, true)
+	q.insertOrder(ord, true)
 
 	ord = q.popHeadOrder()
 	assert.Equal(t, "201", ord.ID)
@@ -67,25 +67,25 @@ func TestBuyerQueue(t *testing.T) {
 func TestSellerQueue(t *testing.T) {
 	q := NewSellerQueue()
 
-	q.addOrder(&Order{
+	q.insertOrder(&Order{
 		ID:    "101",
 		Price: decimal.NewFromInt(10),
 		Size:  decimal.NewFromInt(10),
 	}, false)
 
-	q.addOrder(&Order{
+	q.insertOrder(&Order{
 		ID:    "201",
 		Price: decimal.NewFromInt(20),
 		Size:  decimal.NewFromInt(10),
 	}, false)
 
-	q.addOrder(&Order{
+	q.insertOrder(&Order{
 		ID:    "301",
 		Price: decimal.NewFromInt(30),
 		Size:  decimal.NewFromInt(10),
 	}, false)
 
-	q.addOrder(&Order{
+	q.insertOrder(&Order{
 		ID:    "202",
 		Price: decimal.NewFromInt(20),
 		Size:  decimal.NewFromInt(100),
@@ -102,7 +102,7 @@ func TestSellerQueue(t *testing.T) {
 	assert.Equal(t, "20", ord.Price.String())
 	assert.Equal(t, "10", ord.Size.String())
 	ord.Size = decimal.NewFromInt(2)
-	q.addOrder(ord, true)
+	q.insertOrder(ord, true)
 
 	ord = q.popHeadOrder()
 	assert.Equal(t, "201", ord.ID)
@@ -124,19 +124,19 @@ func TestSellerQueue(t *testing.T) {
 func TestUpdateEvents(t *testing.T) {
 	q := NewBuyerQueue()
 
-	q.addOrder(&Order{
+	q.insertOrder(&Order{
 		ID:    "101",
 		Price: decimal.NewFromInt(10),
 		Size:  decimal.NewFromInt(1),
 	}, false)
 
-	q.addOrder(&Order{
+	q.insertOrder(&Order{
 		ID:    "102",
 		Price: decimal.NewFromInt(10),
 		Size:  decimal.NewFromInt(2),
 	}, false)
 
-	q.addOrder(&Order{
+	q.insertOrder(&Order{
 		ID:    "201",
 		Price: decimal.NewFromInt(20),
 		Size:  decimal.NewFromInt(5),
