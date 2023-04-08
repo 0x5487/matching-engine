@@ -2,7 +2,7 @@
 
 ## v0.4 (2023-04-08)
 
-- refactor: add OrderType field (`market`, `limit`, `ioc`, `post_only`)
+- refactor: add OrderType field (`market`, `limit`, `ioc`, `post_only`, `fok`)
 - refactor: add more testcase
 - fix: fix market order size issue
 

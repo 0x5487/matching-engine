@@ -82,7 +82,7 @@ func (book *OrderBook) RemoveSellOrder(order *Order) {
 }
 
 func (book *OrderBook) PlaceOrder(order *Order) ([]*Trade, error) {
-	if len(order.Type) == 0 {
+	if len(order.Type) == 0 || len(order.ID) == 0 {
 		return nil, ErrInvalidParam
 	}
 
@@ -109,11 +109,35 @@ func (book *OrderBook) handleOrder(order *Order) ([]*Trade, error) {
 
 	trades := []*Trade{}
 
-	// ensure available volumn can handle FOK order
+	// ensure the order book can handle FOK order
 	if order.Type == OrderTypeFOK {
-		vol := order.Price.Mul(order.Size)
-		if targetQueue.availableVolume.LessThan(vol) {
-			return trades, ErrCanceled
+
+		el := targetQueue.depthList.Front()
+		orignalOrderSize := order.Size
+
+		for {
+			if el == nil {
+				return trades, ErrCanceled
+			}
+
+			unit := el.Value.(*priceUnit)
+			tOrd := unit.list.Front().Value.(*Order)
+
+			if order.Side == SideBuy && order.Price.GreaterThanOrEqual(tOrd.Price) && order.Size.GreaterThanOrEqual(unit.totalSize) ||
+				order.Side == SideSell && order.Price.LessThanOrEqual(tOrd.Price) && order.Size.GreaterThanOrEqual(unit.totalSize) {
+				order.Size = order.Size.Sub(tOrd.Size)
+
+				if order.Size.Equal(decimal.Zero) {
+					order.Size = orignalOrderSize
+					break
+				}
+			}
+
+			if order.Size.LessThan(decimal.Zero) {
+				return trades, ErrCanceled
+			}
+
+			el = el.Next()
 		}
 	}
 
@@ -139,9 +163,6 @@ func (book *OrderBook) handleOrder(order *Order) ([]*Trade, error) {
 				myQueue.insertOrder(order, false)
 				return trades, nil
 			case OrderTypeIOC:
-				return trades, ErrCanceled
-			case OrderTypeFOK:
-				targetQueue.addOrder(tOrd)
 				return trades, ErrCanceled
 			}
 		}
