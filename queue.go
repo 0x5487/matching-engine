@@ -32,7 +32,7 @@ type queue struct {
 
 func NewBuyerQueue() *queue {
 	return &queue{
-		side: SideBuy,
+		side: Buy,
 		depthList: skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs interface{}) int {
 			d1 := lhs.(decimal.Decimal)
 			d2 := rhs.(decimal.Decimal)
@@ -53,7 +53,7 @@ func NewBuyerQueue() *queue {
 
 func NewSellerQueue() *queue {
 	return &queue{
-		side: SideSell,
+		side: Sell,
 		depthList: skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs interface{}) int {
 			d1 := lhs.(decimal.Decimal)
 			d2 := rhs.(decimal.Decimal)
@@ -73,7 +73,7 @@ func NewSellerQueue() *queue {
 }
 
 func (q *queue) addOrder(order *Order) {
-	if order.Side == SideBuy {
+	if order.Side == Buy {
 		q.insertOrder(order, false)
 	} else {
 		q.insertOrder(order, true)
@@ -99,12 +99,6 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 
 	el, ok := q.priceMap[order.Price.String()]
 	if ok {
-		_, ok := q.orderMap[order.ID]
-		if ok {
-			// duplicate order; ignore it at the moment
-			return
-		}
-
 		var orderElement *list.Element
 		unit := el.Value.(*priceUnit)
 		if isFront {

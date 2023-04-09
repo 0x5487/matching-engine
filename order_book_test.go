@@ -26,8 +26,8 @@ func (suite *OrderBookTestSuite) SetupTest() {
 
 	orderBuy1 := Order{
 		ID:    "buy-1",
-		Type:  OrderTypeLimit,
-		Side:  SideBuy,
+		Type:  Limit,
+		Side:  Buy,
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(90),
 	}
@@ -38,8 +38,8 @@ func (suite *OrderBookTestSuite) SetupTest() {
 
 	orderBuy2 := Order{
 		ID:    "buy-2",
-		Type:  OrderTypeLimit,
-		Side:  SideBuy,
+		Type:  Limit,
+		Side:  Buy,
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(80),
 	}
@@ -50,8 +50,8 @@ func (suite *OrderBookTestSuite) SetupTest() {
 
 	orderBuy3 := Order{
 		ID:    "buy-3",
-		Type:  OrderTypeLimit,
-		Side:  SideBuy,
+		Type:  Limit,
+		Side:  Buy,
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(70),
 	}
@@ -62,8 +62,8 @@ func (suite *OrderBookTestSuite) SetupTest() {
 
 	orderSell1 := Order{
 		ID:    "sell-1",
-		Type:  OrderTypeLimit,
-		Side:  SideSell,
+		Type:  Limit,
+		Side:  Sell,
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(110),
 	}
@@ -73,8 +73,8 @@ func (suite *OrderBookTestSuite) SetupTest() {
 
 	orderSell2 := Order{
 		ID:    "sell-2",
-		Type:  OrderTypeLimit,
-		Side:  SideSell,
+		Type:  Limit,
+		Side:  Sell,
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(120),
 	}
@@ -84,8 +84,8 @@ func (suite *OrderBookTestSuite) SetupTest() {
 
 	orderSell3 := Order{
 		ID:    "sell-3",
-		Type:  OrderTypeLimit,
-		Side:  SideSell,
+		Type:  Limit,
+		Side:  Sell,
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(130),
 	}
@@ -102,8 +102,8 @@ func (suite *OrderBookTestSuite) TestLimitOrders() {
 
 		order := Order{
 			ID:    "buyAll",
-			Type:  OrderTypeLimit,
-			Side:  SideBuy,
+			Type:  Limit,
+			Side:  Buy,
 			Price: decimal.NewFromInt(1000),
 			Size:  decimal.NewFromInt(10),
 		}
@@ -121,8 +121,8 @@ func (suite *OrderBookTestSuite) TestLimitOrders() {
 
 		order := Order{
 			ID:    "mysell",
-			Type:  OrderTypeLimit,
-			Side:  SideSell,
+			Type:  Limit,
+			Side:  Sell,
 			Size:  decimal.NewFromInt(5),
 			Price: decimal.NewFromInt(75),
 		}
@@ -140,8 +140,8 @@ func (suite *OrderBookTestSuite) TestMarketOrder() {
 
 		order := Order{
 			ID:    "buyAll",
-			Type:  OrderTypeMarket,
-			Side:  SideBuy,
+			Type:  Market,
+			Side:  Buy,
 			Price: decimal.NewFromInt(0),
 			Size:  decimal.NewFromInt(110).Add(decimal.NewFromInt(120)).Add(decimal.NewFromInt(130)),
 		}
@@ -158,8 +158,8 @@ func (suite *OrderBookTestSuite) TestMarketOrder() {
 
 		order := Order{
 			ID:    "mysell",
-			Type:  OrderTypeMarket,
-			Side:  SideSell,
+			Type:  Market,
+			Side:  Sell,
 			Price: decimal.NewFromInt(0),
 			Size:  decimal.NewFromInt(90),
 		}
@@ -178,8 +178,8 @@ func (suite *OrderBookTestSuite) TestPostOnlyOrder() {
 
 		buyAll := Order{
 			ID:    "post_only",
-			Type:  OrderTypePostOnly,
-			Side:  SideBuy,
+			Type:  PostOnly,
+			Side:  Buy,
 			Price: decimal.NewFromInt(100),
 			Size:  decimal.NewFromInt(1),
 		}
@@ -196,8 +196,8 @@ func (suite *OrderBookTestSuite) TestPostOnlyOrder() {
 
 		buyAll := Order{
 			ID:    "post_only",
-			Type:  OrderTypePostOnly,
-			Side:  SideBuy,
+			Type:  PostOnly,
+			Side:  Buy,
 			Price: decimal.NewFromInt(115),
 			Size:  decimal.NewFromInt(1),
 		}
@@ -216,8 +216,8 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 
 		order := Order{
 			ID:    "ioc",
-			Type:  OrderTypeIOC,
-			Side:  SideBuy,
+			Type:  IOC,
+			Side:  Buy,
 			Price: decimal.NewFromInt(100),
 			Size:  decimal.NewFromInt(1),
 		}
@@ -234,8 +234,8 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 
 		order := Order{
 			ID:    "ioc",
-			Type:  OrderTypeIOC,
-			Side:  SideBuy,
+			Type:  IOC,
+			Side:  Buy,
 			Price: decimal.NewFromInt(1000),
 			Size:  decimal.NewFromInt(3),
 		}
@@ -252,8 +252,8 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 
 		order := Order{
 			ID:    "ioc",
-			Type:  OrderTypeIOC,
-			Side:  SideSell,
+			Type:  IOC,
+			Side:  Sell,
 			Price: decimal.NewFromInt(10),
 			Size:  decimal.NewFromInt(4),
 		}
@@ -270,8 +270,8 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 
 		order := Order{
 			ID:    "ioc",
-			Type:  OrderTypeIOC,
-			Side:  SideBuy,
+			Type:  IOC,
+			Side:  Buy,
 			Price: decimal.NewFromInt(115),
 			Size:  decimal.NewFromInt(2),
 		}
@@ -290,8 +290,8 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 
 		order := Order{
 			ID:    "fok",
-			Type:  OrderTypeFOK,
-			Side:  SideBuy,
+			Type:  FOK,
+			Side:  Buy,
 			Price: decimal.NewFromInt(100),
 			Size:  decimal.NewFromInt(1),
 		}
@@ -308,8 +308,8 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 
 		order := Order{
 			ID:    "fok",
-			Type:  OrderTypeFOK,
-			Side:  SideBuy,
+			Type:  FOK,
+			Side:  Buy,
 			Price: decimal.NewFromInt(1000),
 			Size:  decimal.NewFromInt(3),
 		}
@@ -326,8 +326,8 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 
 		order := Order{
 			ID:    "fok",
-			Type:  OrderTypeFOK,
-			Side:  SideSell,
+			Type:  FOK,
+			Side:  Sell,
 			Price: decimal.NewFromInt(10),
 			Size:  decimal.NewFromInt(4),
 		}
@@ -344,8 +344,8 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 
 		order := Order{
 			ID:    "ioc",
-			Type:  OrderTypeFOK,
-			Side:  SideBuy,
+			Type:  FOK,
+			Side:  Buy,
 			Price: decimal.NewFromInt(115),
 			Size:  decimal.NewFromInt(2),
 		}
@@ -364,6 +364,9 @@ func (suite *OrderBookTestSuite) TestCancelOrder() {
 
 	suite.orderbook.CancelOrder("buy-1")
 	suite.Equal(int64(2), suite.orderbook.bidQueue.depthCount())
+
+	suite.orderbook.CancelOrder("aaaaaa")
+	suite.Equal(int64(2), suite.orderbook.bidQueue.depthCount())
 }
 
 func TestOrderBookUpdateEvents(t *testing.T) {
@@ -374,19 +377,19 @@ func TestOrderBookUpdateEvents(t *testing.T) {
 
 	orderBuy1 := Order{
 		ID:    "buy-1",
-		Type:  OrderTypeLimit,
+		Type:  Limit,
 		Price: decimal.NewFromInt(100),
 		Size:  decimal.NewFromInt(1),
-		Side:  SideBuy,
+		Side:  Buy,
 	}
 	orderBook.PlaceOrder(&orderBuy1)
 
 	orderSell1 := Order{
 		ID:    "sell-1",
-		Type:  OrderTypeLimit,
+		Type:  Limit,
 		Price: decimal.NewFromInt(101),
 		Size:  decimal.NewFromInt(2),
-		Side:  SideSell,
+		Side:  Sell,
 	}
 	orderBook.PlaceOrder(&orderSell1)
 

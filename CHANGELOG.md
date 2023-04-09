@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## next
+
+- refactor: rename `OrderType`, `Side` constants
+- refactor: benchmark test
+
 ## v0.4.1 (2023-04-09)
 
 - feature: New matching engine which manages multiple order books.
