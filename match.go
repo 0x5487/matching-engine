@@ -1,6 +1,8 @@
 package match
 
-import "sync"
+import (
+	"sync"
+)
 
 type MatchingEngine struct {
 	orderbooks sync.Map
@@ -10,22 +12,23 @@ func NewMatchingEngine() *MatchingEngine {
 	return &MatchingEngine{}
 }
 
-func (engine *MatchingEngine) PlaceOrder(order *Order) ([]*Trade, error) {
-	if len(order.Type) == 0 || len(order.ID) == 0 {
-		return nil, ErrInvalidParam
-	}
-
+func (engine *MatchingEngine) PlaceOrder(order *Order) error {
 	orderbook := engine.orderBook(order.MarketID)
 	return orderbook.PlaceOrder(order)
 }
 
-func (engine *MatchingEngine) CancelOrder(marketID string, orderID string) {
+func (engine *MatchingEngine) CancelOrder(marketID string, orderID string) error {
 	orderbook := engine.orderBook(marketID)
-	orderbook.CancelOrder(orderID)
+	return orderbook.CancelOrder(orderID)
 }
 
 func (engine *MatchingEngine) orderBook(marketID string) *OrderBook {
-	book, _ := engine.orderbooks.LoadOrStore(marketID, NewOrderBook())
+	book, ok := engine.orderbooks.Load(marketID)
+	if !ok {
+		newbook := NewOrderBook()
+		book, _ = engine.orderbooks.LoadOrStore(marketID, newbook)
+		go newbook.Start()
+	}
 
 	orderbook, _ := book.(*OrderBook)
 	return orderbook

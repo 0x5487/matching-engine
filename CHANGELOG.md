@@ -2,6 +2,7 @@
 
 ## next
 
+- fefactor: change orderbook to async
 - refactor: rename `OrderType`, `Side` constants
 - refactor: benchmark test
 

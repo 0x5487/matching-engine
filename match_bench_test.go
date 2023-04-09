@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"math/rand"
 	"runtime"
-	"strconv"
+	"sync/atomic"
 	"testing"
 
+	"github.com/rs/xid"
 	"github.com/shopspring/decimal"
 )
 
@@ -17,7 +18,9 @@ const (
 )
 
 func BenchmarkPlaceOrders(b *testing.B) {
-	goprocs := runtime.GOMAXPROCS(0)
+	goprocs := runtime.GOMAXPROCS(2)
+
+	var errCount int64
 
 	for i := start; i < end; i += step {
 		engine := NewMatchingEngine()
@@ -29,7 +32,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 					id := rand.Intn(1000-1) + 1
 
 					order := Order{
-						ID:       strconv.Itoa(i),
+						ID:       xid.New().String(),
 						MarketID: "BTC-USDT",
 						Type:     Limit,
 						Side:     Buy,
@@ -37,9 +40,16 @@ func BenchmarkPlaceOrders(b *testing.B) {
 						Size:     decimal.NewFromInt(1),
 					}
 
-					engine.PlaceOrder(&order)
+					err := engine.PlaceOrder(&order)
+					if err != nil {
+						atomic.AddInt64(&errCount, int64(1))
+					}
 				}
 			})
 		})
+
+		bid := engine.orderBook("BTC-USDT").bidQueue
+		b.Logf("order count: %d", bid.orderCount())
+		b.Logf("error count: %d", errCount)
 	}
 }
