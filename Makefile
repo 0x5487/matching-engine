@@ -1,11 +1,11 @@
 .PHONY: test
 
-benchmark_1s:
-	go test -v -benchmem -bench . -benchtime=1s
+bench_1s:
+	go test -v -run=none -benchmem -bench . -benchtime=1s
 
 
-benchmark_1w:
-	go test -benchmem -bench . -benchtime=10000x
+bench_1w:
+	go test -v -run=none -benchmem -bench . -benchtime=10000x
 
 
 lint:

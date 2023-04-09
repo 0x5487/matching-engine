@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	start = 10   // actual = start  * goprocs
+	start = 2000 // actual = start  * goprocs
 	end   = 3000 // actual = end    * goprocs
 	step  = 200
 )
@@ -29,7 +29,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 			b.SetParallelism(i)
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					id := rand.Intn(1000-1) + 1
+					id := rand.Intn(1001-1) + 1
 
 					order := Order{
 						ID:       xid.New().String(),
@@ -50,6 +50,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 
 		bid := engine.orderBook("BTC-USDT").bidQueue
 		b.Logf("order count: %d", bid.orderCount())
+		b.Logf("depth count: %d", bid.depthCount())
 		b.Logf("error count: %d", errCount)
 	}
 }
