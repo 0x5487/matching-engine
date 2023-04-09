@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## v0.4.1 (2023-04-09)
+
+- feature: New matching engine which manages multiple order books.
+- feature: add `CancelOrder` function to orderbook
+
 ## v0.4 (2023-04-08)
 
 - refactor: add OrderType field (`market`, `limit`, `ioc`, `post_only`, `fok`)

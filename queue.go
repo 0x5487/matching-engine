@@ -1,4 +1,4 @@
-package engine
+package match
 
 import (
 	"container/list"
@@ -80,15 +80,26 @@ func (q *queue) addOrder(order *Order) {
 	}
 }
 
+func (q *queue) order(id string) *Order {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	el, ok := q.orderMap[id]
+	if ok {
+		order := el.Value.(*Order)
+		return order
+	}
+
+	return nil
+}
+
 func (q *queue) insertOrder(order *Order, isFront bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	orderKey := order.Price.String() + "-" + order.ID
-
 	el, ok := q.priceMap[order.Price.String()]
 	if ok {
-		_, ok := q.orderMap[orderKey]
+		_, ok := q.orderMap[order.ID]
 		if ok {
 			// duplicate order; ignore it at the moment
 			return
@@ -104,7 +115,7 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 
 		unit.totalSize = unit.totalSize.Add(order.Size)
 		q.addUpdateEvent(order.Price.String(), unit.totalSize.String())
-		q.orderMap[orderKey] = orderElement
+		q.orderMap[order.ID] = orderElement
 
 		atomic.AddInt64(&q.totalOrders, 1)
 	} else {
@@ -116,7 +127,7 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 		unit.totalSize = order.Size
 		q.addUpdateEvent(order.Price.String(), unit.totalSize.String())
 
-		q.orderMap[orderKey] = orderElement
+		q.orderMap[order.ID] = orderElement
 
 		el := q.depthList.Set(order.Price, &unit)
 		q.priceMap[order.Price.String()] = el
@@ -126,22 +137,22 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 	}
 }
 
-func (q *queue) removeOrder(order *Order) {
+func (q *queue) removeOrder(price decimal.Decimal, id string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	skipElement, ok := q.priceMap[order.Price.String()]
+	skipElement, ok := q.priceMap[price.String()]
 	if ok {
 		unit := skipElement.Value.(*priceUnit)
 
-		orderKey := order.Price.String() + "-" + order.ID
-		orderElement, ok := q.orderMap[orderKey]
+		orderElement, ok := q.orderMap[id]
+		order := orderElement.Value.(*Order)
 		if ok {
 			unit.list.Remove(orderElement)
 			unit.totalSize = unit.totalSize.Sub(order.Size)
 			q.addUpdateEvent(order.Price.String(), unit.totalSize.String())
 
-			delete(q.orderMap, orderKey)
+			delete(q.orderMap, id)
 			atomic.AddInt64(&q.totalOrders, -1)
 		}
 
@@ -172,7 +183,7 @@ func (q *queue) popHeadOrder() *Order {
 	ord := q.getHeadOrder()
 
 	if ord != nil {
-		q.removeOrder(ord)
+		q.removeOrder(ord.Price, ord.ID)
 	}
 
 	return ord

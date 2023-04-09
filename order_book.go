@@ -1,4 +1,4 @@
-package engine
+package match
 
 import (
 	"time"
@@ -26,6 +26,7 @@ const (
 
 type Order struct {
 	ID        string          `json:"id"`
+	MarketID  string          `json:"market_id"`
 	Side      Side            `json:"side"`
 	Price     decimal.Decimal `json:"price"`
 	Size      decimal.Decimal `json:"size"`
@@ -61,26 +62,6 @@ func NewOrderBook() *OrderBook {
 	}
 }
 
-// AddBuyOrder adds a buy order to the order book
-func (book *OrderBook) AddBuyOrder(order *Order) {
-	book.bidQueue.insertOrder(order, false)
-}
-
-// AddSellOrder adds a sell order to the order book
-func (book *OrderBook) AddSellOrder(order *Order) {
-	book.askQueue.insertOrder(order, false)
-}
-
-// RemoveBuyOrder removes a buy order from the order book at a given index
-func (book *OrderBook) RemoveBuyOrder(order *Order) {
-	book.bidQueue.removeOrder(order)
-}
-
-// RemoveSellOrder removes a sell order from the order book at a given index
-func (book *OrderBook) RemoveSellOrder(order *Order) {
-	book.askQueue.removeOrder(order)
-}
-
 func (book *OrderBook) PlaceOrder(order *Order) ([]*Trade, error) {
 	if len(order.Type) == 0 || len(order.ID) == 0 {
 		return nil, ErrInvalidParam
@@ -93,8 +74,20 @@ func (book *OrderBook) PlaceOrder(order *Order) ([]*Trade, error) {
 	return book.handleOrder(order)
 }
 
-func (book *OrderBook) CancelOrder(order *Order) {
+func (book *OrderBook) CancelOrder(id string) {
+	order := book.askQueue.order(id)
+	if order != nil {
+		book.askQueue.removeOrder(order.Price, id)
+		return
+	}
 
+	order = book.bidQueue.order(id)
+	if order != nil {
+		book.bidQueue.removeOrder(order.Price, id)
+		return
+	}
+
+	return
 }
 
 func (book *OrderBook) handleOrder(order *Order) ([]*Trade, error) {
