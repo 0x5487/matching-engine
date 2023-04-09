@@ -28,8 +28,8 @@ func (suite *MatchingEngineTestSuite) TestPlaceOrders() {
 	order1 := Order{
 		ID:       "order1",
 		MarketID: market1,
-		Type:     OrderTypeLimit,
-		Side:     SideBuy,
+		Type:     Limit,
+		Side:     Buy,
 		Price:    decimal.NewFromInt(100),
 		Size:     decimal.NewFromInt(2),
 	}
@@ -44,8 +44,8 @@ func (suite *MatchingEngineTestSuite) TestPlaceOrders() {
 	order2 := Order{
 		ID:       "order2",
 		MarketID: market2,
-		Type:     OrderTypeLimit,
-		Side:     SideSell,
+		Type:     Limit,
+		Side:     Sell,
 		Price:    decimal.NewFromInt(110),
 		Size:     decimal.NewFromInt(2),
 	}
@@ -64,8 +64,8 @@ func (suite *MatchingEngineTestSuite) TestCancelOrder() {
 	order1 := Order{
 		ID:       "order1",
 		MarketID: market1,
-		Type:     OrderTypeLimit,
-		Side:     SideBuy,
+		Type:     Limit,
+		Side:     Buy,
 		Price:    decimal.NewFromInt(100),
 		Size:     decimal.NewFromInt(2),
 	}
@@ -76,8 +76,8 @@ func (suite *MatchingEngineTestSuite) TestCancelOrder() {
 	order2 := Order{
 		ID:       "order2",
 		MarketID: market1,
-		Type:     OrderTypeLimit,
-		Side:     SideSell,
+		Type:     Limit,
+		Side:     Sell,
 		Price:    decimal.NewFromInt(110),
 		Size:     decimal.NewFromInt(2),
 	}

@@ -9,19 +9,18 @@ import (
 type Side int8
 
 const (
-	SideDefault = 0
-	SideBuy     = 1
-	SideSell    = 2
+	Buy  Side = 1
+	Sell Side = 2
 )
 
 type OrderType string
 
 const (
-	OrderTypeMarket   = "market"
-	OrderTypeLimit    = "limit"
-	OrderTypeFOK      = "fok"       // 全部成交或立即取消
-	OrderTypeIOC      = "ioc"       // 立即成交并取消剩余
-	OrderTypePostOnly = "post_only" // be maker order only
+	Market   OrderType = "market"
+	Limit    OrderType = "limit"
+	FOK      OrderType = "fok"       // 全部成交或立即取消
+	IOC      OrderType = "ioc"       // 立即成交并取消剩余
+	PostOnly OrderType = "post_only" // be maker order only
 )
 
 type Order struct {
@@ -67,7 +66,7 @@ func (book *OrderBook) PlaceOrder(order *Order) ([]*Trade, error) {
 		return nil, ErrInvalidParam
 	}
 
-	if order.Type == OrderTypeMarket {
+	if order.Type == Market {
 		return book.handleMarketOrder(order)
 	}
 
@@ -86,13 +85,11 @@ func (book *OrderBook) CancelOrder(id string) {
 		book.bidQueue.removeOrder(order.Price, id)
 		return
 	}
-
-	return
 }
 
 func (book *OrderBook) handleOrder(order *Order) ([]*Trade, error) {
 	var myQueue, targetQueue *queue
-	if order.Side == SideBuy {
+	if order.Side == Buy {
 		myQueue = book.bidQueue
 		targetQueue = book.askQueue
 	} else {
@@ -103,7 +100,7 @@ func (book *OrderBook) handleOrder(order *Order) ([]*Trade, error) {
 	trades := []*Trade{}
 
 	// ensure the order book can handle FOK order
-	if order.Type == OrderTypeFOK {
+	if order.Type == FOK {
 
 		el := targetQueue.depthList.Front()
 		orignalOrderSize := order.Size
@@ -116,8 +113,8 @@ func (book *OrderBook) handleOrder(order *Order) ([]*Trade, error) {
 			unit := el.Value.(*priceUnit)
 			tOrd := unit.list.Front().Value.(*Order)
 
-			if order.Side == SideBuy && order.Price.GreaterThanOrEqual(tOrd.Price) && order.Size.GreaterThanOrEqual(unit.totalSize) ||
-				order.Side == SideSell && order.Price.LessThanOrEqual(tOrd.Price) && order.Size.GreaterThanOrEqual(unit.totalSize) {
+			if order.Side == Buy && order.Price.GreaterThanOrEqual(tOrd.Price) && order.Size.GreaterThanOrEqual(unit.totalSize) ||
+				order.Side == Sell && order.Price.LessThanOrEqual(tOrd.Price) && order.Size.GreaterThanOrEqual(unit.totalSize) {
 				order.Size = order.Size.Sub(tOrd.Size)
 
 				if order.Size.Equal(decimal.Zero) {
@@ -139,28 +136,28 @@ func (book *OrderBook) handleOrder(order *Order) ([]*Trade, error) {
 
 		if tOrd == nil {
 			switch order.Type {
-			case OrderTypeLimit, OrderTypePostOnly:
+			case Limit, PostOnly:
 				myQueue.insertOrder(order, false)
 				return trades, nil
-			case OrderTypeIOC:
+			case IOC:
 				return trades, ErrCanceled
 			}
 		}
 
-		if order.Side == SideBuy && order.Price.LessThan(tOrd.Price) ||
-			order.Side == SideSell && order.Price.GreaterThan(tOrd.Price) {
+		if order.Side == Buy && order.Price.LessThan(tOrd.Price) ||
+			order.Side == Sell && order.Price.GreaterThan(tOrd.Price) {
 			targetQueue.insertOrder(tOrd, true)
 
 			switch order.Type {
-			case OrderTypeLimit, OrderTypePostOnly:
+			case Limit, PostOnly:
 				myQueue.insertOrder(order, false)
 				return trades, nil
-			case OrderTypeIOC:
+			case IOC:
 				return trades, ErrCanceled
 			}
 		}
 
-		if order.Type == OrderTypePostOnly {
+		if order.Type == PostOnly {
 			targetQueue.addOrder(tOrd)
 			return trades, ErrCanceled
 		}
@@ -200,7 +197,7 @@ func (book *OrderBook) handleOrder(order *Order) ([]*Trade, error) {
 
 func (book *OrderBook) handleMarketOrder(order *Order) ([]*Trade, error) {
 	targetQueue := book.bidQueue
-	if order.Side == SideBuy {
+	if order.Side == Buy {
 		targetQueue = book.askQueue
 	}
 
