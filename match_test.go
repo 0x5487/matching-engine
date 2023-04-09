@@ -2,6 +2,7 @@ package match
 
 import (
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/suite"
@@ -34,8 +35,10 @@ func (suite *MatchingEngineTestSuite) TestPlaceOrders() {
 		Size:     decimal.NewFromInt(2),
 	}
 
-	_, err := suite.engine.PlaceOrder(&order1)
+	err := suite.engine.PlaceOrder(&order1)
 	suite.NoError(err)
+
+	time.Sleep(50 * time.Millisecond)
 	orderbook := suite.engine.orderBook(market1)
 	suite.Equal(int64(1), orderbook.bidQueue.orderCount())
 
@@ -50,8 +53,10 @@ func (suite *MatchingEngineTestSuite) TestPlaceOrders() {
 		Size:     decimal.NewFromInt(2),
 	}
 
-	_, err = suite.engine.PlaceOrder(&order2)
+	err = suite.engine.PlaceOrder(&order2)
 	suite.NoError(err)
+
+	time.Sleep(50 * time.Millisecond)
 	orderbook = suite.engine.orderBook(market2)
 	suite.Equal(int64(1), orderbook.askQueue.orderCount())
 }
@@ -70,7 +75,7 @@ func (suite *MatchingEngineTestSuite) TestCancelOrder() {
 		Size:     decimal.NewFromInt(2),
 	}
 
-	_, err := suite.engine.PlaceOrder(&order1)
+	err := suite.engine.PlaceOrder(&order1)
 	suite.NoError(err)
 
 	order2 := Order{
@@ -82,10 +87,15 @@ func (suite *MatchingEngineTestSuite) TestCancelOrder() {
 		Size:     decimal.NewFromInt(2),
 	}
 
-	_, err = suite.engine.PlaceOrder(&order2)
+	err = suite.engine.PlaceOrder(&order2)
 	suite.NoError(err)
 
-	suite.engine.CancelOrder(market1, order1.ID)
+	time.Sleep(50 * time.Millisecond)
+
+	err = suite.engine.CancelOrder(market1, order1.ID)
+	suite.NoError(err)
+
+	time.Sleep(50 * time.Millisecond)
 
 	// validate
 	orderbook := suite.engine.orderBook(market1)

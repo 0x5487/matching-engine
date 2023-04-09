@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -23,6 +22,7 @@ func TestOrderBookTestSuite(t *testing.T) {
 
 func (suite *OrderBookTestSuite) SetupTest() {
 	orderBook := NewOrderBook()
+	go orderBook.Start()
 
 	orderBuy1 := Order{
 		ID:    "buy-1",
@@ -32,9 +32,8 @@ func (suite *OrderBookTestSuite) SetupTest() {
 		Price: decimal.NewFromInt(90),
 	}
 
-	trades, err := orderBook.PlaceOrder(&orderBuy1)
-	suite.Nil(err)
-	suite.Equal(0, len(trades))
+	err := orderBook.PlaceOrder(&orderBuy1)
+	suite.NoError(err)
 
 	orderBuy2 := Order{
 		ID:    "buy-2",
@@ -44,9 +43,8 @@ func (suite *OrderBookTestSuite) SetupTest() {
 		Price: decimal.NewFromInt(80),
 	}
 
-	trades, err = orderBook.PlaceOrder(&orderBuy2)
-	suite.Nil(err)
-	suite.Equal(0, len(trades))
+	err = orderBook.PlaceOrder(&orderBuy2)
+	suite.NoError(err)
 
 	orderBuy3 := Order{
 		ID:    "buy-3",
@@ -56,9 +54,8 @@ func (suite *OrderBookTestSuite) SetupTest() {
 		Price: decimal.NewFromInt(70),
 	}
 
-	trades, err = orderBook.PlaceOrder(&orderBuy3)
-	suite.Nil(err)
-	suite.Equal(0, len(trades))
+	err = orderBook.PlaceOrder(&orderBuy3)
+	suite.NoError(err)
 
 	orderSell1 := Order{
 		ID:    "sell-1",
@@ -67,9 +64,8 @@ func (suite *OrderBookTestSuite) SetupTest() {
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(110),
 	}
-	trades, err = orderBook.PlaceOrder(&orderSell1)
-	suite.Nil(err)
-	suite.Equal(0, len(trades))
+	err = orderBook.PlaceOrder(&orderSell1)
+	suite.NoError(err)
 
 	orderSell2 := Order{
 		ID:    "sell-2",
@@ -78,9 +74,8 @@ func (suite *OrderBookTestSuite) SetupTest() {
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(120),
 	}
-	trades, err = orderBook.PlaceOrder(&orderSell2)
-	suite.Nil(err)
-	suite.Equal(0, len(trades))
+	err = orderBook.PlaceOrder(&orderSell2)
+	suite.NoError(err)
 
 	orderSell3 := Order{
 		ID:    "sell-3",
@@ -89,11 +84,11 @@ func (suite *OrderBookTestSuite) SetupTest() {
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(130),
 	}
-	trades, err = orderBook.PlaceOrder(&orderSell3)
-	suite.Nil(err)
-	suite.Equal(0, len(trades))
+	err = orderBook.PlaceOrder(&orderSell3)
+	suite.NoError(err)
 
 	suite.orderbook = orderBook
+	time.Sleep(50 * time.Millisecond)
 }
 
 func (suite *OrderBookTestSuite) TestLimitOrders() {
@@ -108,9 +103,12 @@ func (suite *OrderBookTestSuite) TestLimitOrders() {
 			Size:  decimal.NewFromInt(10),
 		}
 
-		trades, err := suite.orderbook.PlaceOrder(&order)
-		suite.Nil(err)
-		suite.Len(trades, 3)
+		err := suite.orderbook.PlaceOrder(&order)
+		suite.NoError(err)
+
+		time.Sleep(50 * time.Millisecond)
+
+		suite.Len(suite.orderbook.tradeChan, 3)
 		suite.Equal(int64(0), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(4), suite.orderbook.bidQueue.depthCount())
 
@@ -126,9 +124,11 @@ func (suite *OrderBookTestSuite) TestLimitOrders() {
 			Size:  decimal.NewFromInt(5),
 			Price: decimal.NewFromInt(75),
 		}
-		trades, err := suite.orderbook.PlaceOrder(&order)
-		suite.Nil(err)
-		suite.Equal(2, len(trades))
+		err := suite.orderbook.PlaceOrder(&order)
+		suite.NoError(err)
+
+		time.Sleep(50 * time.Millisecond)
+		suite.Len(suite.orderbook.tradeChan, 2)
 		suite.Equal(int64(4), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(1), suite.orderbook.bidQueue.depthCount())
 	})
@@ -146,9 +146,11 @@ func (suite *OrderBookTestSuite) TestMarketOrder() {
 			Size:  decimal.NewFromInt(110).Add(decimal.NewFromInt(120)).Add(decimal.NewFromInt(130)),
 		}
 
-		trades, err := suite.orderbook.PlaceOrder(&order)
-		suite.Nil(err)
-		suite.Len(trades, 3)
+		err := suite.orderbook.PlaceOrder(&order)
+		suite.NoError(err)
+
+		time.Sleep(50 * time.Millisecond)
+		suite.Len(suite.orderbook.tradeChan, 3)
 		suite.Equal(int64(0), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
 	})
@@ -164,9 +166,11 @@ func (suite *OrderBookTestSuite) TestMarketOrder() {
 			Size:  decimal.NewFromInt(90),
 		}
 
-		trades, err := suite.orderbook.PlaceOrder(&order)
-		suite.Nil(err)
-		suite.Len(trades, 1)
+		err := suite.orderbook.PlaceOrder(&order)
+		suite.NoError(err)
+
+		time.Sleep(50 * time.Millisecond)
+		suite.Len(suite.orderbook.tradeChan, 1)
 		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(2), suite.orderbook.bidQueue.depthCount())
 	})
@@ -184,9 +188,11 @@ func (suite *OrderBookTestSuite) TestPostOnlyOrder() {
 			Size:  decimal.NewFromInt(1),
 		}
 
-		trades, err := suite.orderbook.PlaceOrder(&buyAll)
-		suite.Nil(err)
-		suite.Len(trades, 0)
+		err := suite.orderbook.PlaceOrder(&buyAll)
+		suite.NoError(err)
+
+		time.Sleep(50 * time.Millisecond)
+		suite.Len(suite.orderbook.tradeChan, 0)
 		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(4), suite.orderbook.bidQueue.depthCount())
 	})
@@ -202,9 +208,13 @@ func (suite *OrderBookTestSuite) TestPostOnlyOrder() {
 			Size:  decimal.NewFromInt(1),
 		}
 
-		trades, err := suite.orderbook.PlaceOrder(&buyAll)
-		suite.Error(err)
-		suite.Len(trades, 0)
+		err := suite.orderbook.PlaceOrder(&buyAll)
+		suite.NoError(err)
+		time.Sleep(50 * time.Millisecond)
+
+		suite.Len(suite.orderbook.tradeChan, 1)
+		trade := <-suite.orderbook.tradeChan
+		suite.Equal(true, trade.IsCancel)
 		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
 	})
@@ -222,9 +232,13 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 			Size:  decimal.NewFromInt(1),
 		}
 
-		trades, err := suite.orderbook.PlaceOrder(&order)
-		suite.Error(err)
-		suite.Len(trades, 0)
+		err := suite.orderbook.PlaceOrder(&order)
+		suite.NoError(err)
+
+		time.Sleep(50 * time.Millisecond)
+		suite.Len(suite.orderbook.tradeChan, 1)
+		trade := <-suite.orderbook.tradeChan
+		suite.Equal(true, trade.IsCancel)
 		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
 	})
@@ -240,9 +254,11 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 			Size:  decimal.NewFromInt(3),
 		}
 
-		trades, err := suite.orderbook.PlaceOrder(&order)
-		suite.Nil(err)
-		suite.Len(trades, 3)
+		err := suite.orderbook.PlaceOrder(&order)
+		suite.NoError(err)
+
+		time.Sleep(50 * time.Millisecond)
+		suite.Len(suite.orderbook.tradeChan, 3)
 		suite.Equal(int64(0), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
 	})
@@ -258,9 +274,11 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 			Size:  decimal.NewFromInt(4),
 		}
 
-		trades, err := suite.orderbook.PlaceOrder(&order)
-		suite.Error(err)
-		suite.Len(trades, 3)
+		err := suite.orderbook.PlaceOrder(&order)
+		suite.NoError(err)
+
+		time.Sleep(50 * time.Millisecond)
+		suite.Len(suite.orderbook.tradeChan, 4)
 		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(0), suite.orderbook.bidQueue.depthCount())
 	})
@@ -276,9 +294,11 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 			Size:  decimal.NewFromInt(2),
 		}
 
-		trades, err := suite.orderbook.PlaceOrder(&order)
-		suite.Error(err)
-		suite.Len(trades, 1)
+		err := suite.orderbook.PlaceOrder(&order)
+		suite.NoError(err)
+
+		time.Sleep(50 * time.Millisecond)
+		suite.Len(suite.orderbook.tradeChan, 2)
 		suite.Equal(int64(2), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
 	})
@@ -296,9 +316,13 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 			Size:  decimal.NewFromInt(1),
 		}
 
-		trades, err := suite.orderbook.PlaceOrder(&order)
-		suite.Error(err)
-		suite.Len(trades, 0)
+		err := suite.orderbook.PlaceOrder(&order)
+		suite.NoError(err)
+		time.Sleep(50 * time.Millisecond)
+
+		suite.Len(suite.orderbook.tradeChan, 1)
+		trade := <-suite.orderbook.tradeChan
+		suite.Equal(true, trade.IsCancel)
 		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
 	})
@@ -314,9 +338,11 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 			Size:  decimal.NewFromInt(3),
 		}
 
-		trades, err := suite.orderbook.PlaceOrder(&order)
-		suite.Nil(err)
-		suite.Len(trades, 3)
+		err := suite.orderbook.PlaceOrder(&order)
+		suite.NoError(err)
+
+		time.Sleep(50 * time.Millisecond)
+		suite.Len(suite.orderbook.tradeChan, 3)
 		suite.Equal(int64(0), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
 	})
@@ -332,9 +358,13 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 			Size:  decimal.NewFromInt(4),
 		}
 
-		trades, err := suite.orderbook.PlaceOrder(&order)
-		suite.Error(err)
-		suite.Len(trades, 0)
+		err := suite.orderbook.PlaceOrder(&order)
+		suite.NoError(err)
+		time.Sleep(50 * time.Millisecond)
+
+		suite.Len(suite.orderbook.tradeChan, 1)
+		trade := <-suite.orderbook.tradeChan
+		suite.Equal(true, trade.IsCancel)
 		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
 	})
@@ -350,9 +380,13 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 			Size:  decimal.NewFromInt(2),
 		}
 
-		trades, err := suite.orderbook.PlaceOrder(&order)
-		suite.Error(err)
-		suite.Len(trades, 0)
+		err := suite.orderbook.PlaceOrder(&order)
+		suite.NoError(err)
+		time.Sleep(50 * time.Millisecond)
+
+		suite.Len(suite.orderbook.tradeChan, 1)
+		trade := <-suite.orderbook.tradeChan
+		suite.Equal(true, trade.IsCancel)
 		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
 	})
@@ -360,50 +394,14 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 
 func (suite *OrderBookTestSuite) TestCancelOrder() {
 	suite.orderbook.CancelOrder("sell-1")
+	time.Sleep(50 * time.Millisecond)
 	suite.Equal(int64(2), suite.orderbook.askQueue.depthCount())
 
 	suite.orderbook.CancelOrder("buy-1")
+	time.Sleep(50 * time.Millisecond)
 	suite.Equal(int64(2), suite.orderbook.bidQueue.depthCount())
 
 	suite.orderbook.CancelOrder("aaaaaa")
+	time.Sleep(50 * time.Millisecond)
 	suite.Equal(int64(2), suite.orderbook.bidQueue.depthCount())
-}
-
-func TestOrderBookUpdateEvents(t *testing.T) {
-	updateEventChan := make(chan *OrderBookUpdateEvent, 1000)
-
-	orderBook := NewOrderBook()
-	orderBook.RegisterUpdateEventChan(updateEventChan)
-
-	orderBuy1 := Order{
-		ID:    "buy-1",
-		Type:  Limit,
-		Price: decimal.NewFromInt(100),
-		Size:  decimal.NewFromInt(1),
-		Side:  Buy,
-	}
-	orderBook.PlaceOrder(&orderBuy1)
-
-	orderSell1 := Order{
-		ID:    "sell-1",
-		Type:  Limit,
-		Price: decimal.NewFromInt(101),
-		Size:  decimal.NewFromInt(2),
-		Side:  Sell,
-	}
-	orderBook.PlaceOrder(&orderSell1)
-
-	time.Sleep(1 * time.Second)
-
-	bookEvt := <-updateEventChan
-	assert.Equal(t, 1, len(bookEvt.Bids))
-
-	bidEvt := bookEvt.Bids[0]
-	assert.Equal(t, "100", bidEvt.Price)
-	assert.Equal(t, "1", bidEvt.Size)
-
-	assert.Equal(t, 1, len(bookEvt.Asks))
-	askEvt := bookEvt.Asks[0]
-	assert.Equal(t, "101", askEvt.Price)
-	assert.Equal(t, "2", askEvt.Size)
 }
