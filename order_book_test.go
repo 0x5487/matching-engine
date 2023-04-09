@@ -1,4 +1,4 @@
-package engine
+package match
 
 import (
 	"testing"
@@ -356,6 +356,14 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 		suite.Equal(int64(3), suite.orderbook.askQueue.depthCount())
 		suite.Equal(int64(3), suite.orderbook.bidQueue.depthCount())
 	})
+}
+
+func (suite *OrderBookTestSuite) TestCancelOrder() {
+	suite.orderbook.CancelOrder("sell-1")
+	suite.Equal(int64(2), suite.orderbook.askQueue.depthCount())
+
+	suite.orderbook.CancelOrder("buy-1")
+	suite.Equal(int64(2), suite.orderbook.bidQueue.depthCount())
 }
 
 func TestOrderBookUpdateEvents(t *testing.T) {
