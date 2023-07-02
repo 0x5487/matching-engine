@@ -21,7 +21,8 @@ func TestOrderBookTestSuite(t *testing.T) {
 }
 
 func (suite *OrderBookTestSuite) SetupTest() {
-	orderBook := NewOrderBook()
+	tradeChan := make(chan *Trade, 1000)
+	orderBook := NewOrderBook(tradeChan)
 	go orderBook.Start()
 
 	orderBuy1 := Order{
@@ -32,7 +33,7 @@ func (suite *OrderBookTestSuite) SetupTest() {
 		Price: decimal.NewFromInt(90),
 	}
 
-	err := orderBook.PlaceOrder(&orderBuy1)
+	err := orderBook.AddOrder(&orderBuy1)
 	suite.NoError(err)
 
 	orderBuy2 := Order{
@@ -43,7 +44,7 @@ func (suite *OrderBookTestSuite) SetupTest() {
 		Price: decimal.NewFromInt(80),
 	}
 
-	err = orderBook.PlaceOrder(&orderBuy2)
+	err = orderBook.AddOrder(&orderBuy2)
 	suite.NoError(err)
 
 	orderBuy3 := Order{
@@ -54,7 +55,7 @@ func (suite *OrderBookTestSuite) SetupTest() {
 		Price: decimal.NewFromInt(70),
 	}
 
-	err = orderBook.PlaceOrder(&orderBuy3)
+	err = orderBook.AddOrder(&orderBuy3)
 	suite.NoError(err)
 
 	orderSell1 := Order{
@@ -64,7 +65,7 @@ func (suite *OrderBookTestSuite) SetupTest() {
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(110),
 	}
-	err = orderBook.PlaceOrder(&orderSell1)
+	err = orderBook.AddOrder(&orderSell1)
 	suite.NoError(err)
 
 	orderSell2 := Order{
@@ -74,7 +75,7 @@ func (suite *OrderBookTestSuite) SetupTest() {
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(120),
 	}
-	err = orderBook.PlaceOrder(&orderSell2)
+	err = orderBook.AddOrder(&orderSell2)
 	suite.NoError(err)
 
 	orderSell3 := Order{
@@ -84,7 +85,7 @@ func (suite *OrderBookTestSuite) SetupTest() {
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(130),
 	}
-	err = orderBook.PlaceOrder(&orderSell3)
+	err = orderBook.AddOrder(&orderSell3)
 	suite.NoError(err)
 
 	suite.orderbook = orderBook
@@ -103,7 +104,7 @@ func (suite *OrderBookTestSuite) TestLimitOrders() {
 			Size:  decimal.NewFromInt(10),
 		}
 
-		err := suite.orderbook.PlaceOrder(&order)
+		err := suite.orderbook.AddOrder(&order)
 		suite.NoError(err)
 
 		time.Sleep(50 * time.Millisecond)
@@ -124,7 +125,7 @@ func (suite *OrderBookTestSuite) TestLimitOrders() {
 			Size:  decimal.NewFromInt(5),
 			Price: decimal.NewFromInt(75),
 		}
-		err := suite.orderbook.PlaceOrder(&order)
+		err := suite.orderbook.AddOrder(&order)
 		suite.NoError(err)
 
 		time.Sleep(50 * time.Millisecond)
@@ -146,7 +147,7 @@ func (suite *OrderBookTestSuite) TestMarketOrder() {
 			Size:  decimal.NewFromInt(110).Add(decimal.NewFromInt(120)).Add(decimal.NewFromInt(130)),
 		}
 
-		err := suite.orderbook.PlaceOrder(&order)
+		err := suite.orderbook.AddOrder(&order)
 		suite.NoError(err)
 
 		time.Sleep(50 * time.Millisecond)
@@ -166,7 +167,7 @@ func (suite *OrderBookTestSuite) TestMarketOrder() {
 			Size:  decimal.NewFromInt(90),
 		}
 
-		err := suite.orderbook.PlaceOrder(&order)
+		err := suite.orderbook.AddOrder(&order)
 		suite.NoError(err)
 
 		time.Sleep(50 * time.Millisecond)
@@ -188,7 +189,7 @@ func (suite *OrderBookTestSuite) TestPostOnlyOrder() {
 			Size:  decimal.NewFromInt(1),
 		}
 
-		err := suite.orderbook.PlaceOrder(&buyAll)
+		err := suite.orderbook.AddOrder(&buyAll)
 		suite.NoError(err)
 
 		time.Sleep(50 * time.Millisecond)
@@ -208,7 +209,7 @@ func (suite *OrderBookTestSuite) TestPostOnlyOrder() {
 			Size:  decimal.NewFromInt(1),
 		}
 
-		err := suite.orderbook.PlaceOrder(&buyAll)
+		err := suite.orderbook.AddOrder(&buyAll)
 		suite.NoError(err)
 		time.Sleep(50 * time.Millisecond)
 
@@ -232,7 +233,7 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 			Size:  decimal.NewFromInt(1),
 		}
 
-		err := suite.orderbook.PlaceOrder(&order)
+		err := suite.orderbook.AddOrder(&order)
 		suite.NoError(err)
 
 		time.Sleep(50 * time.Millisecond)
@@ -254,7 +255,7 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 			Size:  decimal.NewFromInt(3),
 		}
 
-		err := suite.orderbook.PlaceOrder(&order)
+		err := suite.orderbook.AddOrder(&order)
 		suite.NoError(err)
 
 		time.Sleep(50 * time.Millisecond)
@@ -274,7 +275,7 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 			Size:  decimal.NewFromInt(4),
 		}
 
-		err := suite.orderbook.PlaceOrder(&order)
+		err := suite.orderbook.AddOrder(&order)
 		suite.NoError(err)
 
 		time.Sleep(50 * time.Millisecond)
@@ -294,7 +295,7 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 			Size:  decimal.NewFromInt(2),
 		}
 
-		err := suite.orderbook.PlaceOrder(&order)
+		err := suite.orderbook.AddOrder(&order)
 		suite.NoError(err)
 
 		time.Sleep(50 * time.Millisecond)
@@ -316,7 +317,7 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 			Size:  decimal.NewFromInt(1),
 		}
 
-		err := suite.orderbook.PlaceOrder(&order)
+		err := suite.orderbook.AddOrder(&order)
 		suite.NoError(err)
 		time.Sleep(50 * time.Millisecond)
 
@@ -338,7 +339,7 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 			Size:  decimal.NewFromInt(3),
 		}
 
-		err := suite.orderbook.PlaceOrder(&order)
+		err := suite.orderbook.AddOrder(&order)
 		suite.NoError(err)
 
 		time.Sleep(50 * time.Millisecond)
@@ -358,7 +359,7 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 			Size:  decimal.NewFromInt(4),
 		}
 
-		err := suite.orderbook.PlaceOrder(&order)
+		err := suite.orderbook.AddOrder(&order)
 		suite.NoError(err)
 		time.Sleep(50 * time.Millisecond)
 
@@ -380,7 +381,7 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 			Size:  decimal.NewFromInt(2),
 		}
 
-		err := suite.orderbook.PlaceOrder(&order)
+		err := suite.orderbook.AddOrder(&order)
 		suite.NoError(err)
 		time.Sleep(50 * time.Millisecond)
 

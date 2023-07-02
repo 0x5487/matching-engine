@@ -23,7 +23,8 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	var errCount int64
 
 	for i := start; i < end; i += step {
-		engine := NewMatchingEngine()
+		tradeChan := make(chan *Trade, 1000000)
+		engine := NewMatchingEngine(tradeChan)
 
 		b.Run(fmt.Sprintf("goroutines-%d", i*goprocs), func(b *testing.B) {
 			b.SetParallelism(i)
@@ -48,7 +49,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 			})
 		})
 
-		bid := engine.orderBook("BTC-USDT").bidQueue
+		bid := engine.OrderBook("BTC-USDT").bidQueue
 		b.Logf("order count: %d", bid.orderCount())
 		b.Logf("depth count: %d", bid.depthCount())
 		b.Logf("error count: %d", errCount)

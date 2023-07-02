@@ -19,14 +19,20 @@ type priceUnit struct {
 	list      *list.List
 }
 
+type DepthItem struct {
+	ID    uint32
+	Price decimal.Decimal
+	Size  decimal.Decimal
+}
+
 type queue struct {
 	mu          sync.RWMutex
 	side        Side
 	totalOrders int64
 	depths      int64
 	depthList   *skiplist.SkipList
-	priceMap    map[string]*skiplist.Element
-	orderMap    map[string]*list.Element
+	priceList   map[string]*skiplist.Element
+	orders      map[string]*list.Element
 }
 
 func NewBuyerQueue() *queue {
@@ -44,8 +50,8 @@ func NewBuyerQueue() *queue {
 
 			return 0
 		})),
-		priceMap: make(map[string]*skiplist.Element),
-		orderMap: make(map[string]*list.Element),
+		priceList: make(map[string]*skiplist.Element),
+		orders:    make(map[string]*list.Element),
 	}
 }
 
@@ -64,8 +70,8 @@ func NewSellerQueue() *queue {
 
 			return 0
 		})),
-		priceMap: make(map[string]*skiplist.Element),
-		orderMap: make(map[string]*list.Element),
+		priceList: make(map[string]*skiplist.Element),
+		orders:    make(map[string]*list.Element),
 	}
 }
 
@@ -81,7 +87,7 @@ func (q *queue) order(id string) *Order {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
-	el, ok := q.orderMap[id]
+	el, ok := q.orders[id]
 	if ok {
 		order := el.Value.(*Order)
 		return order
@@ -94,7 +100,7 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	el, ok := q.priceMap[order.Price.String()]
+	el, ok := q.priceList[order.Price.String()]
 	if ok {
 		var orderElement *list.Element
 		unit := el.Value.(*priceUnit)
@@ -105,7 +111,7 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 		}
 
 		unit.totalSize = unit.totalSize.Add(order.Size)
-		q.orderMap[order.ID] = orderElement
+		q.orders[order.ID] = orderElement
 
 		atomic.AddInt64(&q.totalOrders, 1)
 	} else {
@@ -116,10 +122,10 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 		orderElement := unit.list.PushFront(order)
 		unit.totalSize = order.Size
 
-		q.orderMap[order.ID] = orderElement
+		q.orders[order.ID] = orderElement
 
 		el := q.depthList.Set(order.Price, &unit)
-		q.priceMap[order.Price.String()] = el
+		q.priceList[order.Price.String()] = el
 
 		atomic.AddInt64(&q.totalOrders, 1)
 		atomic.AddInt64(&q.depths, 1)
@@ -130,22 +136,22 @@ func (q *queue) removeOrder(price decimal.Decimal, id string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	skipElement, ok := q.priceMap[price.String()]
+	skipElement, ok := q.priceList[price.String()]
 	if ok {
 		unit := skipElement.Value.(*priceUnit)
 
-		orderElement, ok := q.orderMap[id]
+		orderElement, ok := q.orders[id]
 		order := orderElement.Value.(*Order)
 		if ok {
 			unit.list.Remove(orderElement)
 			unit.totalSize = unit.totalSize.Sub(order.Size)
-			delete(q.orderMap, id)
+			delete(q.orders, id)
 			atomic.AddInt64(&q.totalOrders, -1)
 		}
 
 		if unit.list.Len() == 0 {
 			q.depthList.RemoveElement(skipElement)
-			delete(q.priceMap, order.Price.String())
+			delete(q.priceList, order.Price.String())
 			atomic.AddInt64(&q.depths, -1)
 		}
 
@@ -181,4 +187,30 @@ func (q *queue) orderCount() int64 {
 
 func (q *queue) depthCount() int64 {
 	return atomic.LoadInt64(&q.depths)
+}
+
+func (q *queue) depth(limit uint32) []*DepthItem {
+	result := make([]*DepthItem, 0, limit)
+
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	el := q.depthList.Front()
+
+	var i uint32 = 1
+	for i < limit && el != nil {
+		unit := el.Value.(*priceUnit)
+		order := unit.list.Front().Value.(*Order)
+		d := DepthItem{
+			ID:    i,
+			Price: order.Price,
+			Size:  unit.totalSize,
+		}
+
+		result = append(result, &d)
+
+		el = el.Next()
+	}
+
+	return result
 }

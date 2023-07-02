@@ -56,6 +56,11 @@ type OrderBookUpdateEvent struct {
 	Time time.Time
 }
 
+type Depth struct {
+	Asks []*DepthItem
+	Bids []*DepthItem
+}
+
 // OrderBook type
 type OrderBook struct {
 	bidQueue        *queue
@@ -66,17 +71,17 @@ type OrderBook struct {
 	updateEventChan chan *OrderBookUpdateEvent
 }
 
-func NewOrderBook() *OrderBook {
+func NewOrderBook(tradeChan chan *Trade) *OrderBook {
 	return &OrderBook{
 		bidQueue:   NewBuyerQueue(),
 		askQueue:   NewSellerQueue(),
-		orderChan:  make(chan *Order, 1000000),
-		cancelChan: make(chan string, 1000000),
-		tradeChan:  make(chan *Trade, 1000000),
+		orderChan:  make(chan *Order, 100000),
+		cancelChan: make(chan string, 100000),
+		tradeChan:  tradeChan,
 	}
 }
 
-func (book *OrderBook) PlaceOrder(order *Order) error {
+func (book *OrderBook) AddOrder(order *Order) error {
 	if len(order.Type) == 0 || len(order.ID) == 0 {
 		return ErrInvalidParam
 	}
@@ -102,18 +107,25 @@ func (book *OrderBook) CancelOrder(id string) error {
 	}
 }
 
+func (book *OrderBook) Depth(limit uint32) *Depth {
+	return &Depth{
+		Asks: book.askQueue.depth(limit),
+		Bids: book.bidQueue.depth(limit),
+	}
+}
+
 func (book *OrderBook) Start() error {
 	for {
 		select {
 		case order := <-book.orderChan:
-			book.placeOrder(order)
+			book.addOrder(order)
 		case orderID := <-book.cancelChan:
 			book.cancelOrder(orderID)
 		}
 	}
 }
 
-func (book *OrderBook) placeOrder(order *Order) {
+func (book *OrderBook) addOrder(order *Order) {
 	var trades []*Trade
 
 	switch order.Type {
@@ -388,5 +400,3 @@ func (book *OrderBook) handleMarketOrder(order *Order) ([]*Trade, error) {
 
 	return trades, nil
 }
-
-

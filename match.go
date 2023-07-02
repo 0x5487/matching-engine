@@ -6,26 +6,29 @@ import (
 
 type MatchingEngine struct {
 	orderbooks sync.Map
+	tradeChan  chan *Trade
 }
 
-func NewMatchingEngine() *MatchingEngine {
-	return &MatchingEngine{}
+func NewMatchingEngine(tradeChan chan *Trade) *MatchingEngine {
+	return &MatchingEngine{
+		tradeChan: tradeChan,
+	}
 }
 
 func (engine *MatchingEngine) PlaceOrder(order *Order) error {
-	orderbook := engine.orderBook(order.MarketID)
-	return orderbook.PlaceOrder(order)
+	orderbook := engine.OrderBook(order.MarketID)
+	return orderbook.AddOrder(order)
 }
 
 func (engine *MatchingEngine) CancelOrder(marketID string, orderID string) error {
-	orderbook := engine.orderBook(marketID)
+	orderbook := engine.OrderBook(marketID)
 	return orderbook.CancelOrder(orderID)
 }
 
-func (engine *MatchingEngine) orderBook(marketID string) *OrderBook {
-	book, ok := engine.orderbooks.Load(marketID)
-	if !ok {
-		newbook := NewOrderBook()
+func (engine *MatchingEngine) OrderBook(marketID string) *OrderBook {
+	book, found := engine.orderbooks.Load(marketID)
+	if !found {
+		newbook := NewOrderBook(engine.tradeChan)
 		book, _ = engine.orderbooks.LoadOrStore(marketID, newbook)
 		go newbook.Start()
 	}

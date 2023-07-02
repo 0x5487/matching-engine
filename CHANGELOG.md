@@ -1,9 +1,12 @@
 # CHANGELOG
 
-## next
+## v0.5.0 (2023-07-02)
 
-- fefactor: change orderbook to async
+- feature: get orderbook's depth
+- refactor: change orderbook to async
 - refactor: rename `OrderType`, `Side` constants
+- refactor: rename `PlaceOrder` to `AddOrder` in orderbook
+- refactor: allow `tradeChan` pass from outside when engine is created
 - refactor: benchmark test
 
 ## v0.4.1 (2023-04-09)
