@@ -41,7 +41,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 						Size:     decimal.NewFromInt(1),
 					}
 
-					err := engine.PlaceOrder(&order)
+					err := engine.AddOrder(&order)
 					if err != nil {
 						atomic.AddInt64(&errCount, int64(1))
 					}

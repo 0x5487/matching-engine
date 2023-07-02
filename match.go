@@ -15,7 +15,7 @@ func NewMatchingEngine(tradeChan chan *Trade) *MatchingEngine {
 	}
 }
 
-func (engine *MatchingEngine) PlaceOrder(order *Order) error {
+func (engine *MatchingEngine) AddOrder(order *Order) error {
 	orderbook := engine.OrderBook(order.MarketID)
 	return orderbook.AddOrder(order)
 }
