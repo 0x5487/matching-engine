@@ -14,15 +14,16 @@ type MatchingEngineTestSuite struct {
 }
 
 func TestMatchingEngineTestSuite(t *testing.T) {
-
+	tradeChan := make(chan *Trade, 1000)
 	matchingEngineTestSuite := MatchingEngineTestSuite{
-		engine: NewMatchingEngine(),
+		engine: NewMatchingEngine(tradeChan),
 	}
 	suite.Run(t, &matchingEngineTestSuite)
 }
 
 func (suite *MatchingEngineTestSuite) TestPlaceOrders() {
-	suite.engine = NewMatchingEngine()
+	tradeChan := make(chan *Trade, 1000)
+	suite.engine = NewMatchingEngine(tradeChan)
 
 	// market1
 	market1 := "BTC-USDT"
@@ -39,7 +40,7 @@ func (suite *MatchingEngineTestSuite) TestPlaceOrders() {
 	suite.NoError(err)
 
 	time.Sleep(50 * time.Millisecond)
-	orderbook := suite.engine.orderBook(market1)
+	orderbook := suite.engine.OrderBook(market1)
 	suite.Equal(int64(1), orderbook.bidQueue.orderCount())
 
 	// market2
@@ -57,12 +58,13 @@ func (suite *MatchingEngineTestSuite) TestPlaceOrders() {
 	suite.NoError(err)
 
 	time.Sleep(50 * time.Millisecond)
-	orderbook = suite.engine.orderBook(market2)
+	orderbook = suite.engine.OrderBook(market2)
 	suite.Equal(int64(1), orderbook.askQueue.orderCount())
 }
 
 func (suite *MatchingEngineTestSuite) TestCancelOrder() {
-	suite.engine = NewMatchingEngine()
+	tradeChan := make(chan *Trade, 1000)
+	suite.engine = NewMatchingEngine(tradeChan)
 
 	market1 := "BTC-USDT"
 
@@ -98,7 +100,7 @@ func (suite *MatchingEngineTestSuite) TestCancelOrder() {
 	time.Sleep(50 * time.Millisecond)
 
 	// validate
-	orderbook := suite.engine.orderBook(market1)
+	orderbook := suite.engine.OrderBook(market1)
 	suite.Equal(int64(0), orderbook.bidQueue.orderCount())
 	suite.Equal(int64(1), orderbook.askQueue.orderCount())
 }
