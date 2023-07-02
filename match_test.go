@@ -36,7 +36,7 @@ func (suite *MatchingEngineTestSuite) TestPlaceOrders() {
 		Size:     decimal.NewFromInt(2),
 	}
 
-	err := suite.engine.PlaceOrder(&order1)
+	err := suite.engine.AddOrder(&order1)
 	suite.NoError(err)
 
 	time.Sleep(50 * time.Millisecond)
@@ -54,7 +54,7 @@ func (suite *MatchingEngineTestSuite) TestPlaceOrders() {
 		Size:     decimal.NewFromInt(2),
 	}
 
-	err = suite.engine.PlaceOrder(&order2)
+	err = suite.engine.AddOrder(&order2)
 	suite.NoError(err)
 
 	time.Sleep(50 * time.Millisecond)
@@ -77,7 +77,7 @@ func (suite *MatchingEngineTestSuite) TestCancelOrder() {
 		Size:     decimal.NewFromInt(2),
 	}
 
-	err := suite.engine.PlaceOrder(&order1)
+	err := suite.engine.AddOrder(&order1)
 	suite.NoError(err)
 
 	order2 := Order{
@@ -89,7 +89,7 @@ func (suite *MatchingEngineTestSuite) TestCancelOrder() {
 		Size:     decimal.NewFromInt(2),
 	}
 
-	err = suite.engine.PlaceOrder(&order2)
+	err = suite.engine.AddOrder(&order2)
 	suite.NoError(err)
 
 	time.Sleep(50 * time.Millisecond)
