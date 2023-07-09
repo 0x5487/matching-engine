@@ -18,7 +18,7 @@ const (
 )
 
 func BenchmarkPlaceOrders(b *testing.B) {
-	goprocs := runtime.GOMAXPROCS(2)
+	goprocs := runtime.GOMAXPROCS(1)
 
 	var errCount int64
 
