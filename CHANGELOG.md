@@ -1,5 +1,7 @@
 # CHANGELOG
 
+## Next
+
 ## v0.5.0 (2023-07-02)
 
 - feature: get orderbook's depth
