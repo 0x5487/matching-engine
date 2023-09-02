@@ -406,3 +406,11 @@ func (suite *OrderBookTestSuite) TestCancelOrder() {
 	time.Sleep(50 * time.Millisecond)
 	suite.Equal(int64(2), suite.orderbook.bidQueue.depthCount())
 }
+
+func (suite *OrderBookTestSuite) TestDepth() {
+	result, err := suite.orderbook.Depth(5)
+	suite.NoError(err)
+
+	suite.Len(result.Asks, 3)
+	suite.Len(result.Bids, 3)
+}
