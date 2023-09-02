@@ -7,7 +7,7 @@ a matching-engine for crypto exchange
 1. order type (`market`, `limit`, `ioc`, `post_only`, `fok`)
 1. engine supports multiple markets
 1. high-speed. (all in memory)
-1. order book update events
+1. query order book depth
 
 ## Get Started
 
@@ -25,9 +25,9 @@ a matching-engine for crypto exchange
   Size:     decimal.NewFromInt(2),
  }
 
- _, err := suite.engine.PlaceOrder(&order1)
+ _, err := suite.engine.AddOrder(&order1)
 ```
 
 ## Benchmark
 
-Please refer to [doc](./doc/benchmark/v0.5.0.md)
+Please refer to [doc](./doc/benchmark/bench.md)

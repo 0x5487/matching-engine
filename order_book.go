@@ -3,6 +3,7 @@ package match
 import (
 	"time"
 
+	"github.com/nite-coder/blackbear/pkg/cast"
 	"github.com/shopspring/decimal"
 )
 
@@ -50,6 +51,17 @@ type Trade struct {
 	CreatedAt      time.Time       `json:"created_at"`
 }
 
+type Response struct {
+	Error error
+	Data  any
+}
+
+type Message struct {
+	Action  string
+	Payload any
+	Resp    chan *Response
+}
+
 type OrderBookUpdateEvent struct {
 	Bids []*UpdateEvent
 	Asks []*UpdateEvent
@@ -68,6 +80,7 @@ type OrderBook struct {
 	orderChan       chan *Order
 	cancelChan      chan string
 	tradeChan       chan *Trade
+	depthChan       chan *Message
 	updateEventChan chan *OrderBookUpdateEvent
 }
 
@@ -75,8 +88,9 @@ func NewOrderBook(tradeChan chan *Trade) *OrderBook {
 	return &OrderBook{
 		bidQueue:   NewBuyerQueue(),
 		askQueue:   NewSellerQueue(),
-		orderChan:  make(chan *Order, 100000),
-		cancelChan: make(chan string, 100000),
+		orderChan:  make(chan *Order, 10000),
+		cancelChan: make(chan string, 10000),
+		depthChan:  make(chan *Message, 10000),
 		tradeChan:  tradeChan,
 	}
 }
@@ -107,10 +121,34 @@ func (book *OrderBook) CancelOrder(id string) error {
 	}
 }
 
-func (book *OrderBook) Depth(limit uint32) *Depth {
-	return &Depth{
-		Asks: book.askQueue.depth(limit),
-		Bids: book.bidQueue.depth(limit),
+func (book *OrderBook) Depth(limit uint32) (*Depth, error) {
+	if limit == 0 {
+		return nil, ErrInvalidParam
+	}
+
+	msg := &Message{
+		Action:  "depth",
+		Payload: limit,
+		Resp:    make(chan *Response),
+	}
+
+	select {
+	case book.depthChan <- msg:
+		resp := <-msg.Resp
+		if resp.Error != nil {
+			return nil, resp.Error
+		}
+
+		if resp.Data != nil {
+			result, ok := resp.Data.(*Depth)
+			if ok {
+				return result, nil
+			}
+		}
+
+		return nil, nil
+	case <-time.After(time.Second):
+		return nil, ErrTimeout
 	}
 }
 
@@ -121,6 +159,15 @@ func (book *OrderBook) Start() error {
 			book.addOrder(order)
 		case orderID := <-book.cancelChan:
 			book.cancelOrder(orderID)
+		case msg := <-book.depthChan:
+			limit, _ := cast.ToUint32(msg.Payload)
+			result := book.depth(limit)
+			resp := Response{
+				Error: nil,
+				Data:  result,
+			}
+
+			msg.Resp <- &resp
 		}
 	}
 }
@@ -153,6 +200,13 @@ func (book *OrderBook) cancelOrder(id string) {
 	if order != nil {
 		book.bidQueue.removeOrder(order.Price, id)
 		return
+	}
+}
+
+func (book *OrderBook) depth(limit uint32) *Depth {
+	return &Depth{
+		Asks: book.askQueue.depth(limit),
+		Bids: book.bidQueue.depth(limit),
 	}
 }
 

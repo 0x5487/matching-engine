@@ -1,6 +1,8 @@
 # CHANGELOG
 
-## Next
+## v0.5.1 (2023-09-02)
+
+- refactor: remove all mutex lock
 
 ## v0.5.0 (2023-07-02)
 

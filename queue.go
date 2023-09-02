@@ -2,7 +2,6 @@ package match
 
 import (
 	"container/list"
-	"sync"
 	"sync/atomic"
 
 	"github.com/huandu/skiplist"
@@ -26,7 +25,6 @@ type DepthItem struct {
 }
 
 type queue struct {
-	mu          sync.RWMutex
 	side        Side
 	totalOrders int64
 	depths      int64
@@ -84,9 +82,6 @@ func (q *queue) addOrder(order *Order) {
 }
 
 func (q *queue) order(id string) *Order {
-	q.mu.RLock()
-	defer q.mu.RUnlock()
-
 	el, ok := q.orders[id]
 	if ok {
 		order := el.Value.(*Order)
@@ -97,9 +92,6 @@ func (q *queue) order(id string) *Order {
 }
 
 func (q *queue) insertOrder(order *Order, isFront bool) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
 	el, ok := q.priceList[order.Price.String()]
 	if ok {
 		var orderElement *list.Element
@@ -133,9 +125,6 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 }
 
 func (q *queue) removeOrder(price decimal.Decimal, id string) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
 	skipElement, ok := q.priceList[price.String()]
 	if ok {
 		unit := skipElement.Value.(*priceUnit)
@@ -159,9 +148,6 @@ func (q *queue) removeOrder(price decimal.Decimal, id string) {
 }
 
 func (q *queue) getHeadOrder() *Order {
-	q.mu.RLock()
-	defer q.mu.RUnlock()
-
 	el := q.depthList.Front()
 	if el == nil {
 		return nil
@@ -191,9 +177,6 @@ func (q *queue) depthCount() int64 {
 
 func (q *queue) depth(limit uint32) []*DepthItem {
 	result := make([]*DepthItem, 0, limit)
-
-	q.mu.RLock()
-	defer q.mu.RUnlock()
 
 	el := q.depthList.Front()
 
