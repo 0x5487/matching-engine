@@ -1,8 +1,13 @@
 # CHANGELOG
 
+## v0.6.0 (2023-10-20)
+
+- feature: PublishTrader 
+- refactor: test case can run parallel
+
 ## v0.5.1 (2023-09-02)
 
-- refactor: remove all mutex lock
+- refactor: remove all mutex loc
 
 ## v0.5.0 (2023-07-02)
 
