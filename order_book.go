@@ -1,6 +1,7 @@
 package match
 
 import (
+	"context"
 	"time"
 
 	"github.com/nite-coder/blackbear/pkg/cast"
@@ -75,27 +76,26 @@ type Depth struct {
 
 // OrderBook type
 type OrderBook struct {
-	bidQueue        *queue
-	askQueue        *queue
-	orderChan       chan *Order
-	cancelChan      chan string
-	tradeChan       chan *Trade
-	depthChan       chan *Message
-	updateEventChan chan *OrderBookUpdateEvent
+	bidQueue      *queue
+	askQueue      *queue
+	orderChan     chan *Order
+	cancelChan    chan string
+	depthChan     chan *Message
+	publishTrader PublishTrader
 }
 
-func NewOrderBook(tradeChan chan *Trade) *OrderBook {
+func NewOrderBook(publishTrader PublishTrader) *OrderBook {
 	return &OrderBook{
-		bidQueue:   NewBuyerQueue(),
-		askQueue:   NewSellerQueue(),
-		orderChan:  make(chan *Order, 10000),
-		cancelChan: make(chan string, 10000),
-		depthChan:  make(chan *Message, 10000),
-		tradeChan:  tradeChan,
+		bidQueue:      NewBuyerQueue(),
+		askQueue:      NewSellerQueue(),
+		orderChan:     make(chan *Order, 1000000),
+		cancelChan:    make(chan string, 1000000),
+		depthChan:     make(chan *Message, 1000000),
+		publishTrader: publishTrader,
 	}
 }
 
-func (book *OrderBook) AddOrder(order *Order) error {
+func (book *OrderBook) AddOrder(ctx context.Context, order *Order) error {
 	if len(order.Type) == 0 || len(order.ID) == 0 {
 		return ErrInvalidParam
 	}
@@ -103,12 +103,12 @@ func (book *OrderBook) AddOrder(order *Order) error {
 	select {
 	case book.orderChan <- order:
 		return nil
-	case <-time.After(time.Second):
+	case <-ctx.Done():
 		return ErrTimeout
 	}
 }
 
-func (book *OrderBook) CancelOrder(id string) error {
+func (book *OrderBook) CancelOrder(ctx context.Context, id string) error {
 	if len(id) == 0 {
 		return nil
 	}
@@ -116,7 +116,7 @@ func (book *OrderBook) CancelOrder(id string) error {
 	select {
 	case book.cancelChan <- id:
 		return nil
-	case <-time.After(time.Second):
+	case <-ctx.Done():
 		return ErrTimeout
 	}
 }
@@ -176,16 +176,14 @@ func (book *OrderBook) addOrder(order *Order) {
 	var trades []*Trade
 
 	switch order.Type {
+	case Limit, FOK, IOC, PostOnly, Cancel:
+		trades, _ = book.handleOrder(order)
 	case Market:
 		trades, _ = book.handleMarketOrder(order)
-	default:
-		trades, _ = book.handleOrder(order)
 	}
 
 	if len(trades) > 0 {
-		for _, trade := range trades {
-			book.tradeChan <- trade
-		}
+		book.publishTrader.PublishTrades(trades...)
 	}
 }
 
@@ -247,8 +245,8 @@ func (book *OrderBook) handleOrder(order *Order) ([]*Trade, error) {
 				return trades, nil
 			}
 
-			unit := el.Value.(*priceUnit)
-			tOrd := unit.list.Front().Value.(*Order)
+			unit, _ := el.Value.(*priceUnit)
+			tOrd, _ := unit.list.Front().Value.(*Order)
 
 			if order.Side == Buy && order.Price.GreaterThanOrEqual(tOrd.Price) && order.Size.GreaterThanOrEqual(unit.totalSize) ||
 				order.Side == Sell && order.Price.LessThanOrEqual(tOrd.Price) && order.Size.GreaterThanOrEqual(unit.totalSize) {
@@ -417,7 +415,7 @@ func (book *OrderBook) handleMarketOrder(order *Order) ([]*Trade, error) {
 			return trades, nil
 		}
 
-		// 市價單的 size 是總額，不是數量
+		// The size of the market order is the total amount, not the quantity.
 		amount := tOrd.Price.Mul(tOrd.Size)
 
 		if order.Size.GreaterThanOrEqual(amount) {

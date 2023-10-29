@@ -12,11 +12,12 @@ a matching-engine for crypto exchange
 ## Get Started
 
 ```Go
- suite.engine = NewMatchingEngine()
+ publishTrader := NewMemoryPublishTrader() // save trade into memory, if you want to pulish the trade to MQ, you can implement the interface
+ engine := NewMatchingEngine(publishTrader)
 
  // market1
  market1 := "BTC-USDT"
- order1 := Order{
+ order1 := &Order{
   ID:       "order1",
   MarketID: market1,
   Type:     Limit,
@@ -25,7 +26,7 @@ a matching-engine for crypto exchange
   Size:     decimal.NewFromInt(2),
  }
 
- _, err := suite.engine.AddOrder(&order1)
+ _, err := suite.engine.AddOrder(order1)
 ```
 
 ## Benchmark

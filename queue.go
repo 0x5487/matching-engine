@@ -37,8 +37,8 @@ func NewBuyerQueue() *queue {
 	return &queue{
 		side: Buy,
 		depthList: skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs interface{}) int {
-			d1 := lhs.(decimal.Decimal)
-			d2 := rhs.(decimal.Decimal)
+			d1, _ := lhs.(decimal.Decimal)
+			d2, _ := rhs.(decimal.Decimal)
 
 			if d1.LessThan(d2) {
 				return 1
@@ -57,8 +57,8 @@ func NewSellerQueue() *queue {
 	return &queue{
 		side: Sell,
 		depthList: skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs interface{}) int {
-			d1 := lhs.(decimal.Decimal)
-			d2 := rhs.(decimal.Decimal)
+			d1, _ := lhs.(decimal.Decimal)
+			d2, _ := rhs.(decimal.Decimal)
 
 			if d1.GreaterThan(d2) {
 				return 1
@@ -84,7 +84,7 @@ func (q *queue) addOrder(order *Order) {
 func (q *queue) order(id string) *Order {
 	el, ok := q.orders[id]
 	if ok {
-		order := el.Value.(*Order)
+		order, _ := el.Value.(*Order)
 		return order
 	}
 
@@ -95,7 +95,7 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 	el, ok := q.priceList[order.Price.String()]
 	if ok {
 		var orderElement *list.Element
-		unit := el.Value.(*priceUnit)
+		unit, _ := el.Value.(*priceUnit)
 		if isFront {
 			orderElement = unit.list.PushFront(order)
 		} else {
@@ -127,10 +127,10 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 func (q *queue) removeOrder(price decimal.Decimal, id string) {
 	skipElement, ok := q.priceList[price.String()]
 	if ok {
-		unit := skipElement.Value.(*priceUnit)
+		unit, _ := skipElement.Value.(*priceUnit)
 
 		orderElement, ok := q.orders[id]
-		order := orderElement.Value.(*Order)
+		order, _ := orderElement.Value.(*Order)
 		if ok {
 			unit.list.Remove(orderElement)
 			unit.totalSize = unit.totalSize.Sub(order.Size)
@@ -153,8 +153,9 @@ func (q *queue) getHeadOrder() *Order {
 		return nil
 	}
 
-	unit := el.Value.(*priceUnit)
-	return unit.list.Front().Value.(*Order)
+	unit, _ := el.Value.(*priceUnit)
+	order, _ := unit.list.Front().Value.(*Order)
+	return order
 }
 
 func (q *queue) popHeadOrder() *Order {
@@ -182,8 +183,8 @@ func (q *queue) depth(limit uint32) []*DepthItem {
 
 	var i uint32 = 1
 	for i < limit && el != nil {
-		unit := el.Value.(*priceUnit)
-		order := unit.list.Front().Value.(*Order)
+		unit, _ := el.Value.(*priceUnit)
+		order, _ := unit.list.Front().Value.(*Order)
 		d := DepthItem{
 			ID:    i,
 			Price: order.Price,
