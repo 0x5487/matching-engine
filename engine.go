@@ -1,36 +1,39 @@
 package match
 
 import (
+	"context"
 	"sync"
 )
 
 type MatchingEngine struct {
-	orderbooks sync.Map
-	tradeChan  chan *Trade
+	orderbooks    sync.Map
+	publishTrader PublishTrader
 }
 
-func NewMatchingEngine(tradeChan chan *Trade) *MatchingEngine {
+func NewMatchingEngine(publishTrader PublishTrader) *MatchingEngine {
 	return &MatchingEngine{
-		tradeChan: tradeChan,
+		publishTrader: publishTrader,
 	}
 }
 
-func (engine *MatchingEngine) AddOrder(order *Order) error {
+func (engine *MatchingEngine) AddOrder(ctx context.Context, order *Order) error {
 	orderbook := engine.OrderBook(order.MarketID)
-	return orderbook.AddOrder(order)
+	return orderbook.AddOrder(ctx, order)
 }
 
-func (engine *MatchingEngine) CancelOrder(marketID string, orderID string) error {
+func (engine *MatchingEngine) CancelOrder(ctx context.Context, marketID string, orderID string) error {
 	orderbook := engine.OrderBook(marketID)
-	return orderbook.CancelOrder(orderID)
+	return orderbook.CancelOrder(ctx, orderID)
 }
 
 func (engine *MatchingEngine) OrderBook(marketID string) *OrderBook {
 	book, found := engine.orderbooks.Load(marketID)
 	if !found {
-		newbook := NewOrderBook(engine.tradeChan)
+		newbook := NewOrderBook(engine.publishTrader)
 		book, _ = engine.orderbooks.LoadOrStore(marketID, newbook)
-		go newbook.Start()
+		go func() {
+			_ = newbook.Start()
+		}()
 	}
 
 	orderbook, _ := book.(*OrderBook)

@@ -1,8 +1,10 @@
 package match
 
 import (
+	"context"
+	"crypto/rand"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"runtime"
 	"sync/atomic"
 	"testing"
@@ -20,28 +22,30 @@ const (
 func BenchmarkPlaceOrders(b *testing.B) {
 	goprocs := runtime.GOMAXPROCS(1)
 
-	var errCount int64
-
 	for i := start; i < end; i += step {
-		tradeChan := make(chan *Trade, 1000000)
-		engine := NewMatchingEngine(tradeChan)
+		ctx := context.Background()
+		var errCount int64
+
+		publishTrader := NewDiscardPublishTrader()
+		engine := NewMatchingEngine(publishTrader)
 
 		b.Run(fmt.Sprintf("goroutines-%d", i*goprocs), func(b *testing.B) {
 			b.SetParallelism(i)
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					id := rand.Intn(1001-1) + 1
+					n, _ := rand.Int(rand.Reader, big.NewInt(1000))
+					id := n.Int64() + 1
 
-					order := Order{
+					order := &Order{
 						ID:       xid.New().String(),
 						MarketID: "BTC-USDT",
 						Type:     Limit,
 						Side:     Buy,
-						Price:    decimal.NewFromInt(int64(id)),
+						Price:    decimal.NewFromInt(id),
 						Size:     decimal.NewFromInt(1),
 					}
 
-					err := engine.AddOrder(&order)
+					err := engine.AddOrder(ctx, order)
 					if err != nil {
 						atomic.AddInt64(&errCount, int64(1))
 					}
