@@ -20,7 +20,7 @@ const (
 )
 
 func BenchmarkPlaceOrders(b *testing.B) {
-	goprocs := runtime.GOMAXPROCS(1)
+	goprocs := runtime.GOMAXPROCS(0)
 
 	for i := start; i < end; i += step {
 		ctx := context.Background()
