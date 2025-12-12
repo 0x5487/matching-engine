@@ -8,12 +8,13 @@
 			// Update the VARIANT arg to pick a version of Go: 1, 1.19, 1.18
 			// Append -bullseye or -buster to pin to an OS version.
 			// Use -bullseye variants on local arm64/Apple Silicon.
-			"VARIANT": "1.21-bullseye",
+			"VARIANT": "1.25-bookworm",
 			// Options
 			"NODE_VERSION": "none"
 		}
 	},
 	"runArgs": [
+		"--net=host",
 		"--cap-add=SYS_PTRACE",
 		"--security-opt",
 		"seccomp=unconfined"
@@ -36,7 +37,7 @@
 				"[go]": {
 					"editor.formatOnSave": true,
 					"editor.codeActionsOnSave": {
-						"source.organizeImports": true
+						"source.organizeImports": "explicit"
 					},
 					// Optional: Disable snippets, as they conflict with completion ranking.
 					"editor.snippetSuggestions": "none"
@@ -44,7 +45,7 @@
 				"[go.mod]": {
 					"editor.formatOnSave": true,
 					"editor.codeActionsOnSave": {
-						"source.organizeImports": true
+						"source.organizeImports": "explicit"
 					}
 				},
 				"gopls": {
@@ -80,7 +81,8 @@
 				"IBM.output-colorizer", // Colorize your output/test logs
 				"mohsen1.prettify-json", // Prettify JSON data
 				"zxh404.vscode-proto3", // Supports Proto syntax
-				"codeium.codeium"
+				"rooveterinaryinc.roo-cline",
+				"takumii.markdowntable"
 				// "jrebocho.vscode-random", // Generates random values
 				// "alefragnani.Bookmarks", // Manage bookmarks
 				// "quicktype.quicktype", // Paste JSON as code
@@ -95,6 +97,16 @@
 	// Comment out to connect as root instead. More info: https://aka.ms/vscode-remote/containers/non-root.
 	"remoteUser": "vscode",
 	"features": {
-		"docker-from-docker": "20.10"
+		"ghcr.io/rio/features/k3d:1": {},
+		"ghcr.io/devcontainers-extra/features/kubectl-asdf:2": {},
+		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+			"moby": true,
+			"installDockerBuildx": true,
+			"version": "latest",
+			"dockerDashComposeVersion": "v2"
+		}
+		// "ghcr.io/devcontainers/features/node:1": {
+		// 	"version": "latest"
+		// }
 	}
 }
