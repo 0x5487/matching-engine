@@ -33,15 +33,15 @@ func BenchmarkPlaceOrders(b *testing.B) {
 			b.SetParallelism(i)
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					n, _ := rand.Int(rand.Reader, big.NewInt(1000))
-					id := n.Int64() + 1
+					n, _ := rand.Int(rand.Reader, big.NewInt(100000))
+					price := n.Int64() + 1
 
 					order := &Order{
 						ID:       xid.New().String(),
 						MarketID: "BTC-USDT",
 						Type:     Limit,
 						Side:     Buy,
-						Price:    decimal.NewFromInt(id),
+						Price:    decimal.NewFromInt(price),
 						Size:     decimal.NewFromInt(1),
 					}
 
