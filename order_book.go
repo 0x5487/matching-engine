@@ -180,31 +180,41 @@ func CalculateDepthChange(log *BookLog) DepthChange {
 
 // OrderBook type
 type OrderBook struct {
-	id            atomic.Uint64
-	bidQueue      *queue
-	askQueue      *queue
-	orderChan     chan *Order
-	amendChan     chan *AmendRequest
-	cancelChan    chan string
-	depthChan     chan *Message
-	publishTrader PublishTrader
+	id               atomic.Uint64
+	isShutdown       atomic.Bool
+	bidQueue         *queue
+	askQueue         *queue
+	orderChan        chan *Order
+	amendChan        chan *AmendRequest
+	cancelChan       chan string
+	depthChan        chan *Message
+	done             chan struct{}
+	shutdownComplete chan struct{}
+	publishTrader    PublishTrader
 }
 
 // NewOrderBook creates a new order book instance.
 func NewOrderBook(publishTrader PublishTrader) *OrderBook {
 	return &OrderBook{
-		bidQueue:      NewBuyerQueue(),
-		askQueue:      NewSellerQueue(),
-		orderChan:     make(chan *Order, 10000),
-		amendChan:     make(chan *AmendRequest, 10000),
-		cancelChan:    make(chan string, 10000),
-		depthChan:     make(chan *Message, 100),
-		publishTrader: publishTrader,
+		bidQueue:         NewBuyerQueue(),
+		askQueue:         NewSellerQueue(),
+		orderChan:        make(chan *Order, 10000),
+		amendChan:        make(chan *AmendRequest, 10000),
+		cancelChan:       make(chan string, 10000),
+		depthChan:        make(chan *Message, 100),
+		done:             make(chan struct{}),
+		shutdownComplete: make(chan struct{}),
+		publishTrader:    publishTrader,
 	}
 }
 
 // AddOrder submits an order to the order book asynchronously.
+// Returns ErrShutdown if the order book is shutting down.
 func (book *OrderBook) AddOrder(ctx context.Context, order *Order) error {
+	if book.isShutdown.Load() {
+		return ErrShutdown
+	}
+
 	if len(order.Type) == 0 || len(order.ID) == 0 {
 		return ErrInvalidParam
 	}
@@ -278,9 +288,12 @@ func (book *OrderBook) Depth(limit uint32) (*Depth, error) {
 }
 
 // Start starts the order book loop to process orders, cancellations, and depth requests.
+// Returns nil when Shutdown() is called and all pending orders are drained.
 func (book *OrderBook) Start() error {
 	for {
 		select {
+		case <-book.done:
+			return book.drain()
 		case order := <-book.orderChan:
 			book.addOrder(order)
 		case req := <-book.amendChan:
@@ -296,6 +309,41 @@ func (book *OrderBook) Start() error {
 			}
 
 			msg.Resp <- &resp
+		}
+	}
+}
+
+// Shutdown signals the order book to stop accepting new orders and waits for all pending orders to be processed.
+// The method blocks until all orders are drained or the context is cancelled/timed out.
+// Returns nil if shutdown completed successfully, or ctx.Err() if the context was cancelled.
+func (book *OrderBook) Shutdown(ctx context.Context) error {
+	if book.isShutdown.CompareAndSwap(false, true) {
+		close(book.done)
+	}
+
+	select {
+	case <-book.shutdownComplete:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// drain processes all remaining orders in the channels before returning.
+func (book *OrderBook) drain() error {
+	defer close(book.shutdownComplete)
+
+	for {
+		select {
+		case order := <-book.orderChan:
+			book.addOrder(order)
+		case req := <-book.amendChan:
+			book.amendOrder(req)
+		case orderID := <-book.cancelChan:
+			book.cancelOrder(orderID)
+		default:
+			// All channels empty, shutdown complete
+			return nil
 		}
 	}
 }
