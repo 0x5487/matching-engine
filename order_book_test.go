@@ -480,6 +480,174 @@ func TestFOKOrder(t *testing.T) {
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
+
+	// Test FOK with multiple orders at same price level
+	t.Run("multiple orders at same price level", func(t *testing.T) {
+		publishTrader := NewMemoryPublishTrader()
+		orderBook := NewOrderBook(publishTrader)
+		go func() {
+			_ = orderBook.Start()
+		}()
+
+		// Setup: Place 2 orders at price 110
+		// Order1: size=3, Order2: size=2, totalSize=5
+		err := orderBook.AddOrder(ctx, &Order{
+			ID:     "sell-1",
+			Type:   Limit,
+			Side:   Sell,
+			Size:   decimal.NewFromInt(3),
+			Price:  decimal.NewFromInt(110),
+			UserID: 201,
+		})
+		assert.NoError(t, err)
+
+		err = orderBook.AddOrder(ctx, &Order{
+			ID:     "sell-2",
+			Type:   Limit,
+			Side:   Sell,
+			Size:   decimal.NewFromInt(2),
+			Price:  decimal.NewFromInt(110),
+			UserID: 202,
+		})
+		assert.NoError(t, err)
+
+		time.Sleep(50 * time.Millisecond)
+
+		// FOK Buy: Price=115, Size=5
+		// Expected: Should fully match since total size at price 110 is exactly 5
+		fokOrder := &Order{
+			ID:     "fok-buy",
+			Type:   FOK,
+			Side:   Buy,
+			Price:  decimal.NewFromInt(115),
+			Size:   decimal.NewFromInt(5),
+			UserID: 301,
+		}
+
+		err = orderBook.AddOrder(ctx, fokOrder)
+		assert.NoError(t, err)
+		time.Sleep(100 * time.Millisecond)
+
+		memoryPublishTrader, _ := orderBook.publishTrader.(*MemoryPublishTrader)
+		logCount := memoryPublishTrader.Count()
+
+		// Expected: 2 (setup) + 2 (matches) = 4 logs
+		assert.Equal(t, 4, logCount, "Expected 2 setup + 2 match logs")
+
+		if logCount >= 4 {
+			log1 := memoryPublishTrader.Get(2)
+			log2 := memoryPublishTrader.Get(3)
+			assert.Equal(t, LogTypeMatch, log1.Type, "Third log should be Match")
+			assert.Equal(t, LogTypeMatch, log2.Type, "Fourth log should be Match")
+		}
+
+		assert.Equal(t, int64(0), orderBook.askQueue.depthCount(), "All sell orders should be matched")
+	})
+
+	// Test FOK crossing multiple price levels
+	t.Run("cross multiple price levels", func(t *testing.T) {
+		publishTrader := NewMemoryPublishTrader()
+		orderBook := NewOrderBook(publishTrader)
+		go func() {
+			_ = orderBook.Start()
+		}()
+
+		// Setup:
+		// Price 110: 1 order, size=2
+		// Price 120: 1 order, size=3
+		// Total available = 5
+		err := orderBook.AddOrder(ctx, &Order{
+			ID:     "sell-1",
+			Type:   Limit,
+			Side:   Sell,
+			Size:   decimal.NewFromInt(2),
+			Price:  decimal.NewFromInt(110),
+			UserID: 201,
+		})
+		assert.NoError(t, err)
+
+		err = orderBook.AddOrder(ctx, &Order{
+			ID:     "sell-2",
+			Type:   Limit,
+			Side:   Sell,
+			Size:   decimal.NewFromInt(3),
+			Price:  decimal.NewFromInt(120),
+			UserID: 202,
+		})
+		assert.NoError(t, err)
+
+		time.Sleep(50 * time.Millisecond)
+
+		// FOK Buy: Price=125, Size=5
+		// Expected: Should fully match (consume 2 at 110 + 3 at 120 = 5)
+		fokOrder := &Order{
+			ID:     "fok-buy",
+			Type:   FOK,
+			Side:   Buy,
+			Price:  decimal.NewFromInt(125),
+			Size:   decimal.NewFromInt(5),
+			UserID: 301,
+		}
+
+		err = orderBook.AddOrder(ctx, fokOrder)
+		assert.NoError(t, err)
+		time.Sleep(100 * time.Millisecond)
+
+		memoryPublishTrader, _ := orderBook.publishTrader.(*MemoryPublishTrader)
+		logCount := memoryPublishTrader.Count()
+
+		// Expected: 2 setup + 2 matches = 4
+		assert.Equal(t, 4, logCount, "Expected 2 setup + 2 match logs")
+
+		assert.Equal(t, int64(0), orderBook.askQueue.depthCount(), "All sell orders should be matched")
+	})
+
+	// Test FOK with exact size match at price level
+	t.Run("exact size match at price level", func(t *testing.T) {
+		publishTrader := NewMemoryPublishTrader()
+		orderBook := NewOrderBook(publishTrader)
+		go func() {
+			_ = orderBook.Start()
+		}()
+
+		// Setup: 3 orders at price 110, each size=1, totalSize=3
+		for i := 1; i <= 3; i++ {
+			err := orderBook.AddOrder(ctx, &Order{
+				ID:     "sell-" + decimal.NewFromInt(int64(i)).String(),
+				Type:   Limit,
+				Side:   Sell,
+				Size:   decimal.NewFromInt(1),
+				Price:  decimal.NewFromInt(110),
+				UserID: int64(200 + i),
+			})
+			assert.NoError(t, err)
+		}
+
+		time.Sleep(50 * time.Millisecond)
+
+		// FOK Buy: Price=115, Size=3
+		// Expected: Should fully match
+		fokOrder := &Order{
+			ID:     "fok-buy",
+			Type:   FOK,
+			Side:   Buy,
+			Price:  decimal.NewFromInt(115),
+			Size:   decimal.NewFromInt(3),
+			UserID: 301,
+		}
+
+		err := orderBook.AddOrder(ctx, fokOrder)
+		assert.NoError(t, err)
+		time.Sleep(100 * time.Millisecond)
+
+		memoryPublishTrader, _ := orderBook.publishTrader.(*MemoryPublishTrader)
+		logCount := memoryPublishTrader.Count()
+
+		// Expected: 3 setup + 3 matches = 6
+		assert.Equal(t, 6, logCount, "Expected 3 setup + 3 match logs")
+
+		assert.Equal(t, int64(0), orderBook.askQueue.depthCount(), "All sell orders should be matched")
+	})
 }
 
 func TestCancelOrder(t *testing.T) {

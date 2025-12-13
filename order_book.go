@@ -672,11 +672,13 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 
 	logs := []*BookLog{}
 
+	// Phase 1: Validate if the order can be fully filled
 	el := targetQueue.depthList.Front()
-	orignalOrderSize := order.Size
+	remainingSize := order.Size
 
-	for {
+	for remainingSize.GreaterThan(decimal.Zero) {
 		if el == nil {
+			// Not enough liquidity to fill the entire order
 			log := acquireBookLog()
 			log.Type = LogTypeReject
 			log.MarketID = order.MarketID
@@ -694,17 +696,10 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 		unit, _ := el.Value.(*priceUnit)
 		tOrd, _ := unit.list.Front().Value.(*Order)
 
-		if order.Side == Buy && order.Price.GreaterThanOrEqual(tOrd.Price) && order.Size.GreaterThanOrEqual(unit.totalSize) ||
-			order.Side == Sell && order.Price.LessThanOrEqual(tOrd.Price) && order.Size.GreaterThanOrEqual(unit.totalSize) {
-			order.Size = order.Size.Sub(tOrd.Size)
-
-			if order.Size.Equal(decimal.Zero) {
-				order.Size = orignalOrderSize
-				break
-			}
-		}
-
-		if order.Size.LessThan(decimal.Zero) {
+		// Check if the price is acceptable
+		if order.Side == Buy && order.Price.LessThan(tOrd.Price) ||
+			order.Side == Sell && order.Price.GreaterThan(tOrd.Price) {
+			// Price is not acceptable, reject the order
 			log := acquireBookLog()
 			log.Type = LogTypeReject
 			log.MarketID = order.MarketID
@@ -719,9 +714,12 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 			return logs, nil
 		}
 
+		// Subtract the entire price level's total size from remaining
+		remainingSize = remainingSize.Sub(unit.totalSize)
 		el = el.Next()
 	}
 
+	// Phase 2: Execute the matching (order can be fully filled)
 	for {
 		tOrd := targetQueue.popHeadOrder()
 
@@ -825,7 +823,7 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) ([]*BookLog, error) {
 		return logs, nil
 	}
 
-	targetQueue.addOrder(tOrd)
+	targetQueue.insertOrder(tOrd, true)
 	log := acquireBookLog()
 	log.Type = LogTypeReject
 	log.MarketID = order.MarketID
