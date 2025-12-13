@@ -10,6 +10,10 @@
 - feature: add `LogTypeReject` to distinguish orders that never entered the book (e.g. failed PostOnly/IOC/FOK) from cancellations
 - feature: add `CalculateDepthChange` helper to simplify downstream depth updates
 - docs: improve readme document and provide more detail info
+- fix: FOK order validation incorrectly used single order size instead of price level total size
+- fix: FOK order validation did not properly reject when price doesn't match
+- fix: `depth()` function off-by-one error returning `limit-1` items instead of `limit`
+- refactor: remove redundant `addOrder` wrapper and use `insertOrder` directly
 
 ## v0.6.0 (2023-10-20)
 

@@ -77,15 +77,6 @@ func NewSellerQueue() *queue {
 	}
 }
 
-// addOrder adds a new order to the queue.
-func (q *queue) addOrder(order *Order) {
-	if order.Side == Buy {
-		q.insertOrder(order, false)
-	} else {
-		q.insertOrder(order, true)
-	}
-}
-
 // order finds an order by its ID.
 func (q *queue) order(id string) *Order {
 	el, ok := q.orders[id]
@@ -214,7 +205,7 @@ func (q *queue) depth(limit uint32) []*DepthItem {
 
 	el := q.depthList.Front()
 
-	var i uint32 = 1
+	var i uint32 = 0
 	for i < limit && el != nil {
 		unit, _ := el.Value.(*priceUnit)
 		order, _ := unit.list.Front().Value.(*Order)
@@ -227,6 +218,7 @@ func (q *queue) depth(limit uint32) []*DepthItem {
 		result = append(result, &d)
 
 		el = el.Next()
+		i++
 	}
 
 	return result
