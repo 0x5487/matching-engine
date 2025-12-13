@@ -6,19 +6,10 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/assert"
 )
 
-type OrderBookTestSuite struct {
-	suite.Suite
-}
-
-func TestOrderBookTestSuite(t *testing.T) {
-	orderBookTestSuite := &OrderBookTestSuite{}
-	suite.Run(t, orderBookTestSuite)
-}
-
-func (suite *OrderBookTestSuite) createTestOrderBook() *OrderBook {
+func createTestOrderBook(t *testing.T) *OrderBook {
 	ctx := context.Background()
 
 	publishTrader := NewMemoryPublishTrader()
@@ -36,7 +27,7 @@ func (suite *OrderBookTestSuite) createTestOrderBook() *OrderBook {
 	}
 
 	err := orderBook.AddOrder(ctx, orderBuy1)
-	suite.NoError(err)
+	assert.NoError(t, err)
 
 	orderBuy2 := &Order{
 		ID:    "buy-2",
@@ -47,7 +38,7 @@ func (suite *OrderBookTestSuite) createTestOrderBook() *OrderBook {
 	}
 
 	err = orderBook.AddOrder(ctx, orderBuy2)
-	suite.NoError(err)
+	assert.NoError(t, err)
 
 	orderBuy3 := &Order{
 		ID:    "buy-3",
@@ -58,7 +49,7 @@ func (suite *OrderBookTestSuite) createTestOrderBook() *OrderBook {
 	}
 
 	err = orderBook.AddOrder(ctx, orderBuy3)
-	suite.NoError(err)
+	assert.NoError(t, err)
 
 	orderSell1 := &Order{
 		ID:    "sell-1",
@@ -68,7 +59,7 @@ func (suite *OrderBookTestSuite) createTestOrderBook() *OrderBook {
 		Price: decimal.NewFromInt(110),
 	}
 	err = orderBook.AddOrder(ctx, orderSell1)
-	suite.NoError(err)
+	assert.NoError(t, err)
 
 	orderSell2 := &Order{
 		ID:    "sell-2",
@@ -78,7 +69,7 @@ func (suite *OrderBookTestSuite) createTestOrderBook() *OrderBook {
 		Price: decimal.NewFromInt(120),
 	}
 	err = orderBook.AddOrder(ctx, orderSell2)
-	suite.NoError(err)
+	assert.NoError(t, err)
 
 	orderSell3 := &Order{
 		ID:    "sell-3",
@@ -88,18 +79,18 @@ func (suite *OrderBookTestSuite) createTestOrderBook() *OrderBook {
 		Price: decimal.NewFromInt(130),
 	}
 	err = orderBook.AddOrder(ctx, orderSell3)
-	suite.NoError(err)
+	assert.NoError(t, err)
 
 	time.Sleep(50 * time.Millisecond)
 
 	return orderBook
 }
 
-func (suite *OrderBookTestSuite) TestLimitOrders() {
+func TestLimitOrders(t *testing.T) {
 	ctx := context.Background()
 
-	suite.Run("take all orders", func() {
-		testOrderBook := suite.createTestOrderBook()
+	t.Run("take all orders", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
 			ID:    "buyAll",
@@ -110,20 +101,24 @@ func (suite *OrderBookTestSuite) TestLimitOrders() {
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
-		suite.NoError(err)
+		assert.NoError(t, err)
 
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		suite.Equal(memoryPublishTrader.Count(), 3)
+		assert.Equal(t, memoryPublishTrader.Count(), 3)
 
-		suite.Equal(int64(0), testOrderBook.askQueue.depthCount())
-		suite.Equal(int64(4), testOrderBook.bidQueue.depthCount())
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 3
+		}, 1*time.Second, 10*time.Millisecond)
+
+		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(4), testOrderBook.bidQueue.depthCount())
 
 	})
 
-	suite.Run("take some orders", func() {
-		testOrderBook := suite.createTestOrderBook()
+	t.Run("take some orders", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
 			ID:    "mysell",
@@ -133,23 +128,27 @@ func (suite *OrderBookTestSuite) TestLimitOrders() {
 			Price: decimal.NewFromInt(75),
 		}
 		err := testOrderBook.AddOrder(ctx, order)
-		suite.NoError(err)
+		assert.NoError(t, err)
 
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		suite.Equal(memoryPublishTrader.Count(), 2)
+		assert.Equal(t, memoryPublishTrader.Count(), 2)
 
-		suite.Equal(int64(4), testOrderBook.askQueue.depthCount())
-		suite.Equal(int64(1), testOrderBook.bidQueue.depthCount())
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 2
+		}, 1*time.Second, 10*time.Millisecond)
+
+		assert.Equal(t, int64(4), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(1), testOrderBook.bidQueue.depthCount())
 	})
 }
 
-func (suite *OrderBookTestSuite) TestMarketOrder() {
+func TestMarketOrder(t *testing.T) {
 	ctx := context.Background()
 
-	suite.Run("take all orders", func() {
-		testOrderBook := suite.createTestOrderBook()
+	t.Run("take all orders", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
 			ID:    "buyAll",
@@ -160,19 +159,19 @@ func (suite *OrderBookTestSuite) TestMarketOrder() {
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
-		suite.NoError(err)
+		assert.NoError(t, err)
 
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		suite.Equal(memoryPublishTrader.Count(), 3)
+		assert.Equal(t, memoryPublishTrader.Count(), 3)
 
-		suite.Equal(int64(0), testOrderBook.askQueue.depthCount())
-		suite.Equal(int64(3), testOrderBook.bidQueue.depthCount())
+		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
 
-	suite.Run("take some orders", func() {
-		testOrderBook := suite.createTestOrderBook()
+	t.Run("take some orders", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
 			ID:    "mysell",
@@ -183,23 +182,23 @@ func (suite *OrderBookTestSuite) TestMarketOrder() {
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
-		suite.NoError(err)
+		assert.NoError(t, err)
 
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		suite.Equal(memoryPublishTrader.Count(), 1)
+		assert.Equal(t, memoryPublishTrader.Count(), 1)
 
-		suite.Equal(int64(3), testOrderBook.askQueue.depthCount())
-		suite.Equal(int64(2), testOrderBook.bidQueue.depthCount())
+		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(2), testOrderBook.bidQueue.depthCount())
 	})
 }
 
-func (suite *OrderBookTestSuite) TestPostOnlyOrder() {
+func TestPostOnlyOrder(t *testing.T) {
 	ctx := context.Background()
 
-	suite.Run("place a post only order", func() {
-		testOrderBook := suite.createTestOrderBook()
+	t.Run("place a post only order", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
 
 		buyAll := &Order{
 			ID:    "post_only",
@@ -210,19 +209,19 @@ func (suite *OrderBookTestSuite) TestPostOnlyOrder() {
 		}
 
 		err := testOrderBook.AddOrder(ctx, buyAll)
-		suite.NoError(err)
+		assert.NoError(t, err)
 
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		suite.Equal(memoryPublishTrader.Count(), 0)
+		assert.Equal(t, memoryPublishTrader.Count(), 0)
 
-		suite.Equal(int64(3), testOrderBook.askQueue.depthCount())
-		suite.Equal(int64(4), testOrderBook.bidQueue.depthCount())
+		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(4), testOrderBook.bidQueue.depthCount())
 	})
 
-	suite.Run("fail to place a post only order", func() {
-		testOrderBook := suite.createTestOrderBook()
+	t.Run("fail to place a post only order", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
 
 		buyAll := &Order{
 			ID:    "post_only",
@@ -233,24 +232,24 @@ func (suite *OrderBookTestSuite) TestPostOnlyOrder() {
 		}
 
 		err := testOrderBook.AddOrder(ctx, buyAll)
-		suite.NoError(err)
+		assert.NoError(t, err)
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		suite.Equal(memoryPublishTrader.Count(), 1)
+		assert.Equal(t, memoryPublishTrader.Count(), 1)
 
 		trade := memoryPublishTrader.Trades[0]
-		suite.Equal(true, trade.IsCancel)
-		suite.Equal(int64(3), testOrderBook.askQueue.depthCount())
-		suite.Equal(int64(3), testOrderBook.bidQueue.depthCount())
+		assert.Equal(t, true, trade.IsCancel)
+		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
 }
 
-func (suite *OrderBookTestSuite) TestIOCOrder() {
+func TestIOCOrder(t *testing.T) {
 	ctx := context.Background()
 
-	suite.Run("no match any orders", func() {
-		testOrderBook := suite.createTestOrderBook()
+	t.Run("no match any orders", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
 			ID:    "ioc",
@@ -261,21 +260,21 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
-		suite.NoError(err)
+		assert.NoError(t, err)
 
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		suite.Equal(memoryPublishTrader.Count(), 1)
+		assert.Equal(t, memoryPublishTrader.Count(), 1)
 
 		trade := memoryPublishTrader.Trades[0]
-		suite.Equal(true, trade.IsCancel)
-		suite.Equal(int64(3), testOrderBook.askQueue.depthCount())
-		suite.Equal(int64(3), testOrderBook.bidQueue.depthCount())
+		assert.Equal(t, true, trade.IsCancel)
+		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
 
-	suite.Run("take all orders with no error", func() {
-		testOrderBook := suite.createTestOrderBook()
+	t.Run("take all orders with no error", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
 			ID:    "ioc",
@@ -286,19 +285,19 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
-		suite.NoError(err)
+		assert.NoError(t, err)
 
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		suite.Equal(memoryPublishTrader.Count(), 3)
+		assert.Equal(t, memoryPublishTrader.Count(), 3)
 
-		suite.Equal(int64(0), testOrderBook.askQueue.depthCount())
-		suite.Equal(int64(3), testOrderBook.bidQueue.depthCount())
+		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
 
-	suite.Run("take all orders and finish as `cancel`", func() {
-		testOrderBook := suite.createTestOrderBook()
+	t.Run("take all orders and finish as `cancel`", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
 			ID:    "ioc",
@@ -309,19 +308,19 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
-		suite.NoError(err)
+		assert.NoError(t, err)
 
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		suite.Equal(memoryPublishTrader.Count(), 4)
+		assert.Equal(t, memoryPublishTrader.Count(), 4)
 
-		suite.Equal(int64(3), testOrderBook.askQueue.depthCount())
-		suite.Equal(int64(0), testOrderBook.bidQueue.depthCount())
+		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(0), testOrderBook.bidQueue.depthCount())
 	})
 
-	suite.Run("take some orders and finish as `cancel`", func() {
-		testOrderBook := suite.createTestOrderBook()
+	t.Run("take some orders and finish as `cancel`", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
 			ID:    "ioc",
@@ -332,23 +331,23 @@ func (suite *OrderBookTestSuite) TestIOCOrder() {
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
-		suite.NoError(err)
+		assert.NoError(t, err)
 
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		suite.Equal(memoryPublishTrader.Count(), 2)
+		assert.Equal(t, memoryPublishTrader.Count(), 2)
 
-		suite.Equal(int64(2), testOrderBook.askQueue.depthCount())
-		suite.Equal(int64(3), testOrderBook.bidQueue.depthCount())
+		assert.Equal(t, int64(2), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
 }
 
-func (suite *OrderBookTestSuite) TestFOKOrder() {
+func TestFOKOrder(t *testing.T) {
 	ctx := context.Background()
 
-	suite.Run("no match any orders", func() {
-		testOrderBook := suite.createTestOrderBook()
+	t.Run("no match any orders", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
 			ID:    "fok",
@@ -359,20 +358,20 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
-		suite.NoError(err)
+		assert.NoError(t, err)
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		suite.Equal(memoryPublishTrader.Count(), 1)
+		assert.Equal(t, memoryPublishTrader.Count(), 1)
 
 		trade := memoryPublishTrader.Get(0)
-		suite.Equal(true, trade.IsCancel)
-		suite.Equal(int64(3), testOrderBook.askQueue.depthCount())
-		suite.Equal(int64(3), testOrderBook.bidQueue.depthCount())
+		assert.Equal(t, true, trade.IsCancel)
+		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
 
-	suite.Run("take all orders with no error", func() {
-		testOrderBook := suite.createTestOrderBook()
+	t.Run("take all orders with no error", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
 			ID:    "fok",
@@ -383,19 +382,19 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
-		suite.NoError(err)
+		assert.NoError(t, err)
 
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		suite.Equal(memoryPublishTrader.Count(), 3)
+		assert.Equal(t, memoryPublishTrader.Count(), 3)
 
-		suite.Equal(int64(0), testOrderBook.askQueue.depthCount())
-		suite.Equal(int64(3), testOrderBook.bidQueue.depthCount())
+		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
 
-	suite.Run("take all orders and finish as `cancel`", func() {
-		testOrderBook := suite.createTestOrderBook()
+	t.Run("take all orders and finish as `cancel`", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
 			ID:    "fok",
@@ -406,20 +405,20 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
-		suite.NoError(err)
+		assert.NoError(t, err)
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		suite.Equal(memoryPublishTrader.Count(), 1)
+		assert.Equal(t, memoryPublishTrader.Count(), 1)
 
 		trade := memoryPublishTrader.Get(0)
-		suite.Equal(true, trade.IsCancel)
-		suite.Equal(int64(3), testOrderBook.askQueue.depthCount())
-		suite.Equal(int64(3), testOrderBook.bidQueue.depthCount())
+		assert.Equal(t, true, trade.IsCancel)
+		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
 
-	suite.Run("take some orders and finish as `cancel`", func() {
-		testOrderBook := suite.createTestOrderBook()
+	t.Run("take some orders and finish as `cancel`", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
 			ID:    "ioc",
@@ -430,46 +429,46 @@ func (suite *OrderBookTestSuite) TestFOKOrder() {
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
-		suite.NoError(err)
+		assert.NoError(t, err)
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		suite.Equal(memoryPublishTrader.Count(), 1)
+		assert.Equal(t, memoryPublishTrader.Count(), 1)
 
 		trade := memoryPublishTrader.Get(0)
-		suite.Equal(true, trade.IsCancel)
-		suite.Equal(int64(3), testOrderBook.askQueue.depthCount())
-		suite.Equal(int64(3), testOrderBook.bidQueue.depthCount())
+		assert.Equal(t, true, trade.IsCancel)
+		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
 }
 
-func (suite *OrderBookTestSuite) TestCancelOrder() {
+func TestCancelOrder(t *testing.T) {
 	ctx := context.Background()
 
-	testOrderBook := suite.createTestOrderBook()
+	testOrderBook := createTestOrderBook(t)
 
 	err := testOrderBook.CancelOrder(ctx, "sell-1")
-	suite.NoError(err)
+	assert.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
-	suite.Equal(int64(2), testOrderBook.askQueue.depthCount())
+	assert.Equal(t, int64(2), testOrderBook.askQueue.depthCount())
 
 	err = testOrderBook.CancelOrder(ctx, "buy-1")
-	suite.NoError(err)
+	assert.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
-	suite.Equal(int64(2), testOrderBook.bidQueue.depthCount())
+	assert.Equal(t, int64(2), testOrderBook.bidQueue.depthCount())
 
 	err = testOrderBook.CancelOrder(ctx, "aaaaaa")
-	suite.NoError(err)
+	assert.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
-	suite.Equal(int64(2), testOrderBook.bidQueue.depthCount())
+	assert.Equal(t, int64(2), testOrderBook.bidQueue.depthCount())
 }
 
-func (suite *OrderBookTestSuite) TestDepth() {
-	testOrderBook := suite.createTestOrderBook()
+func TestDepth(t *testing.T) {
+	testOrderBook := createTestOrderBook(t)
 
 	result, err := testOrderBook.Depth(5)
-	suite.NoError(err)
+	assert.NoError(t, err)
 
-	suite.Len(result.Asks, 3)
-	suite.Len(result.Bids, 3)
+	assert.Len(t, result.Asks, 3)
+	assert.Len(t, result.Bids, 3)
 }
