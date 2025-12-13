@@ -5,8 +5,8 @@
 - feature: add `UpdateID` to `Depth` and track order book state changes
 - refactor: split `handleOrder` into separate handlers for each order type
 - refactor: replace `Trade` with `BookLog` to capture Open, Match, and Cancel events for full order book reconstruction
+- feature: add `AmendOrder` to support modifying order price and size
 - perf: implement `sync.Pool` for `BookLog` to reduce GC pressure and achieve zero-allocation for log events
-
 
 ## v0.6.0 (2023-10-20)
 

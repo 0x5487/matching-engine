@@ -3,6 +3,8 @@ package match
 import (
 	"context"
 	"sync"
+
+	"github.com/shopspring/decimal"
 )
 
 type MatchingEngine struct {
@@ -21,6 +23,12 @@ func NewMatchingEngine(publishTrader PublishTrader) *MatchingEngine {
 func (engine *MatchingEngine) AddOrder(ctx context.Context, order *Order) error {
 	orderbook := engine.OrderBook(order.MarketID)
 	return orderbook.AddOrder(ctx, order)
+}
+
+// AmendOrder modifies an existing order in the appropriate order book.
+func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, orderID string, newPrice decimal.Decimal, newSize decimal.Decimal) error {
+	orderbook := engine.OrderBook(marketID)
+	return orderbook.AmendOrder(ctx, orderID, newPrice, newSize)
 }
 
 // CancelOrder cancels an order in the appropriate order book.
