@@ -24,6 +24,7 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 		Side:  Buy,
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(90),
+		UserID: 101,
 	}
 
 	err := orderBook.AddOrder(ctx, orderBuy1)
@@ -35,6 +36,7 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 		Side:  Buy,
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(80),
+		UserID: 102,
 	}
 
 	err = orderBook.AddOrder(ctx, orderBuy2)
@@ -46,6 +48,7 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 		Side:  Buy,
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(70),
+		UserID: 103,
 	}
 
 	err = orderBook.AddOrder(ctx, orderBuy3)
@@ -57,6 +60,7 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 		Side:  Sell,
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(110),
+		UserID: 201,
 	}
 	err = orderBook.AddOrder(ctx, orderSell1)
 	assert.NoError(t, err)
@@ -67,6 +71,7 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 		Side:  Sell,
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(120),
+		UserID: 202,
 	}
 	err = orderBook.AddOrder(ctx, orderSell2)
 	assert.NoError(t, err)
@@ -77,6 +82,7 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 		Side:  Sell,
 		Size:  decimal.NewFromInt(1),
 		Price: decimal.NewFromInt(130),
+		UserID: 203,
 	}
 	err = orderBook.AddOrder(ctx, orderSell3)
 	assert.NoError(t, err)
@@ -93,11 +99,12 @@ func TestLimitOrders(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
-			ID:    "buyAll",
-			Type:  Limit,
-			Side:  Buy,
-			Price: decimal.NewFromInt(1000),
-			Size:  decimal.NewFromInt(10),
+			ID:     "buyAll",
+			Type:   Limit,
+			Side:   Buy,
+			Price:  decimal.NewFromInt(1000),
+			Size:   decimal.NewFromInt(10),
+			UserID: 300,
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
@@ -117,17 +124,35 @@ func TestLimitOrders(t *testing.T) {
 		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(4), testOrderBook.bidQueue.depthCount())
 
+		// Verify Match Logs
+		match1 := memoryPublishTrader.Get(6)
+		assert.Equal(t, LogTypeMatch, match1.Type)
+		assert.Equal(t, "sell-1", match1.MakerOrderID)
+		assert.Equal(t, int64(201), match1.MakerUserID)
+		assert.Equal(t, "buyAll", match1.TakerOrderID)
+		assert.Equal(t, int64(300), match1.TakerUserID)
+
+		match2 := memoryPublishTrader.Get(7)
+		assert.Equal(t, LogTypeMatch, match2.Type)
+		assert.Equal(t, "sell-2", match2.MakerOrderID)
+		assert.Equal(t, int64(202), match2.MakerUserID)
+
+		match3 := memoryPublishTrader.Get(8)
+		assert.Equal(t, LogTypeMatch, match3.Type)
+		assert.Equal(t, "sell-3", match3.MakerOrderID)
+		assert.Equal(t, int64(203), match3.MakerUserID)
 	})
 
 	t.Run("take some orders", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
-			ID:    "mysell",
-			Type:  Limit,
-			Side:  Sell,
-			Size:  decimal.NewFromInt(5),
-			Price: decimal.NewFromInt(75),
+			ID:     "mysell",
+			Type:   Limit,
+			Side:   Sell,
+			Size:   decimal.NewFromInt(5),
+			Price:  decimal.NewFromInt(75),
+			UserID: 301,
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -143,6 +168,19 @@ func TestLimitOrders(t *testing.T) {
 
 		assert.Equal(t, int64(4), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(1), testOrderBook.bidQueue.depthCount())
+
+		// Verify Match Logs
+		match1 := memoryPublishTrader.Get(6)
+		assert.Equal(t, LogTypeMatch, match1.Type)
+		assert.Equal(t, "buy-1", match1.MakerOrderID)
+		assert.Equal(t, int64(101), match1.MakerUserID)
+		assert.Equal(t, "mysell", match1.TakerOrderID)
+		assert.Equal(t, int64(301), match1.TakerUserID)
+
+		match2 := memoryPublishTrader.Get(7)
+		assert.Equal(t, LogTypeMatch, match2.Type)
+		assert.Equal(t, "buy-2", match2.MakerOrderID)
+		assert.Equal(t, int64(102), match2.MakerUserID)
 	})
 }
 
@@ -463,6 +501,124 @@ func TestCancelOrder(t *testing.T) {
 	assert.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
 	assert.Equal(t, int64(2), testOrderBook.bidQueue.depthCount())
+}
+
+func TestAmendOrder(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("decrease size preserves priority", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
+		// Initial: Buy 90(1), 80(1), 70(1). Sell 110(1), 120(1), 130(1)
+
+		// 1. Amend buy-1 (Price 90) size from 1 to 0.5
+		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(90), decimal.NewFromFloat(0.5))
+		assert.NoError(t, err)
+		time.Sleep(50 * time.Millisecond)
+
+		// Verify Depth
+		depth := testOrderBook.depth(10)
+		assert.Equal(t, "0.5", depth.Bids[0].Size.String())
+
+		// Verify Log
+		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
+		// 6 setup + 1 amend
+		assert.Equal(t, 7, memoryPublishTrader.Count())
+		log := memoryPublishTrader.Get(6)
+		assert.Equal(t, LogTypeAmend, log.Type)
+		assert.Equal(t, "0.5", log.Size.String())
+		assert.Equal(t, "1", log.OldSize.String())
+
+		// Verify Priority: Add another order at same price, match against them.
+		// Add buy-new at 90.
+		testOrderBook.AddOrder(ctx, &Order{ID: "buy-new", Type: Limit, Side: Buy, Price: decimal.NewFromInt(90), Size: decimal.NewFromInt(1), UserID: 401})
+		time.Sleep(20 * time.Millisecond)
+
+		// Sell matching order. Should match buy-1 (0.5) first, then buy-new.
+		testOrderBook.AddOrder(ctx, &Order{ID: "sell-match", Type: Limit, Side: Sell, Price: decimal.NewFromInt(90), Size: decimal.NewFromFloat(0.5), UserID: 402})
+		time.Sleep(20 * time.Millisecond)
+
+		// Check logs for match
+		// 6 setup + 1 amend + 1 open(buy-new) + 1 match(sell-match vs buy-1)
+		assert.True(t, memoryPublishTrader.Count() >= 9)
+		matchLog := memoryPublishTrader.Get(8)
+		assert.Equal(t, LogTypeMatch, matchLog.Type)
+		assert.Equal(t, "buy-1", matchLog.MakerOrderID) // Priority kept!
+		assert.Equal(t, int64(101), matchLog.MakerUserID)
+		assert.Equal(t, "sell-match", matchLog.TakerOrderID)
+		assert.Equal(t, int64(402), matchLog.TakerUserID)
+	})
+
+	t.Run("increase size loses priority", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
+		// Initial: Buy 90(1)
+
+		// 1. Add another order at 90 to compete
+		testOrderBook.AddOrder(ctx, &Order{ID: "buy-2-compete", Type: Limit, Side: Buy, Price: decimal.NewFromInt(90), Size: decimal.NewFromInt(1)})
+		time.Sleep(20 * time.Millisecond)
+
+		// 2. Amend buy-1 size from 1 to 2 (Increase) -> Should lose priority to buy-2-compete
+		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(90), decimal.NewFromInt(2))
+		assert.NoError(t, err)
+		time.Sleep(20 * time.Millisecond)
+
+		// 3. Sell matching order. Should match buy-2-compete first.
+		testOrderBook.AddOrder(ctx, &Order{ID: "sell-match", Type: Limit, Side: Sell, Price: decimal.NewFromInt(90), Size: decimal.NewFromInt(1)})
+		time.Sleep(20 * time.Millisecond)
+
+		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
+		// Find match log
+		found := false
+		for i := 0; i < memoryPublishTrader.Count(); i++ {
+			log := memoryPublishTrader.Get(i)
+			if log.Type == LogTypeMatch && log.TakerOrderID == "sell-match" {
+				assert.Equal(t, "buy-2-compete", log.MakerOrderID) // Priority lost!
+				found = true
+				break
+			}
+		}
+		assert.True(t, found)
+	})
+
+	t.Run("change price moves level", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
+		// Buy-1 at 90.
+
+		// Amend price to 95
+		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(95), decimal.NewFromInt(1))
+		assert.NoError(t, err)
+		time.Sleep(50 * time.Millisecond)
+
+		depth := testOrderBook.depth(10)
+		assert.Equal(t, "95", depth.Bids[0].Price.String())
+		assert.Equal(t, "1", depth.Bids[0].Size.String())
+
+		// Old price 90 should be gone (or have other orders)
+		// In createTestOrderBook, we had 90, 80, 70. Now 90 moved to 95.
+		// Next bid should be 80.
+		assert.Equal(t, "80", depth.Bids[1].Price.String())
+	})
+
+	t.Run("change price and size simultaneously", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
+		// Buy-1 at 90, Size 1.
+
+		// Amend Price to 95 AND Size to 5
+		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(95), decimal.NewFromInt(5))
+		assert.NoError(t, err)
+		time.Sleep(50 * time.Millisecond)
+
+		depth := testOrderBook.depth(10)
+		assert.Equal(t, "95", depth.Bids[0].Price.String())
+		assert.Equal(t, "5", depth.Bids[0].Size.String())
+
+		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
+		log := memoryPublishTrader.Get(6) // 6 setup + 1 amend
+		assert.Equal(t, LogTypeAmend, log.Type)
+		assert.Equal(t, "95", log.Price.String())
+		assert.Equal(t, "5", log.Size.String())
+		assert.Equal(t, "90", log.OldPrice.String())
+		assert.Equal(t, "1", log.OldSize.String())
+	})
 }
 
 func TestDepth(t *testing.T) {

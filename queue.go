@@ -157,6 +157,24 @@ func (q *queue) removeOrder(price decimal.Decimal, id string) {
 	}
 }
 
+// updateOrderSize updates the size of an order in-place.
+// This is used when the size is decreased, preserving the order's priority.
+func (q *queue) updateOrderSize(id string, newSize decimal.Decimal) {
+	el, ok := q.orders[id]
+	if !ok {
+		return
+	}
+	order, _ := el.Value.(*Order)
+
+	skipElement, ok := q.priceList[order.Price.String()]
+	if ok {
+		unit, _ := skipElement.Value.(*priceUnit)
+		diff := order.Size.Sub(newSize)
+		unit.totalSize = unit.totalSize.Sub(diff)
+		order.Size = newSize
+	}
+}
+
 // getHeadOrder returns the order at the front of the queue (best price) without removing it.
 func (q *queue) getHeadOrder() *Order {
 	el := q.depthList.Front()
