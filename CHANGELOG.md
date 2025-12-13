@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## next
+
+- feature: add `UpdateID` to `Depth` and track order book state changes
+- refactor: split `handleOrder` into separate handlers for each order type
+
+
 ## v0.6.0 (2023-10-20)
 
 - feature: PublishTrader 
