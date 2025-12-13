@@ -13,11 +13,14 @@
 - fix: FOK order validation incorrectly used single order size instead of price level total size
 - fix: FOK order validation did not properly reject when price doesn't match
 - fix: `depth()` function off-by-one error returning `limit-1` items instead of `limit`
+- docs: add documentation to `BookLog` struct explaining `OrderBookID > 0` indicates state change
 - refactor: remove redundant `addOrder` wrapper and use `insertOrder` directly
+- refactor: remove unused error return values from order handler functions
 - perf: use `getHeadOrder` (peek) before `popHeadOrder` in order handlers to avoid unnecessary pop/insert operations
 - perf: reduce channel buffer sizes from 1,000,000 to 10,000 for orders and 100 for depth queries to reduce memory usage
 - perf: pre-allocate slice capacity in order handlers to reduce dynamic allocations
 - perf: cache `time.Now().UTC()` per order to reduce syscall overhead in high-frequency scenarios
+- perf: replace atomic operations with direct variable access in queue (single-goroutine access pattern)
 
 ## v0.6.0 (2023-10-20)
 
