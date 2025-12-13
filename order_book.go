@@ -46,6 +46,7 @@ const (
 	LogTypeMatch  LogType = "match"
 	LogTypeCancel LogType = "cancel"
 	LogTypeAmend  LogType = "amend"
+	LogTypeReject LogType = "reject"
 )
 
 type BookLog struct {
@@ -109,6 +110,69 @@ type AmendRequest struct {
 	OrderID  string
 	NewPrice decimal.Decimal
 	NewSize  decimal.Decimal
+}
+
+// DepthChange represents a change in the order book depth.
+type DepthChange struct {
+	Side     Side
+	Price    decimal.Decimal
+	SizeDiff decimal.Decimal
+}
+
+// CalculateDepthChange calculates the depth change based on the book log.
+// It returns a DepthChange struct indicating which side and price level should be updated.
+// Note: For LogTypeMatch, the side returned is the Maker's side (opposite of the log's side).
+func CalculateDepthChange(log *BookLog) DepthChange {
+	switch log.Type {
+	case LogTypeOpen:
+		return DepthChange{
+			Side:     log.Side,
+			Price:    log.Price,
+			SizeDiff: log.Size,
+		}
+	case LogTypeCancel:
+		return DepthChange{
+			Side:     log.Side,
+			Price:    log.Price,
+			SizeDiff: log.Size.Neg(),
+		}
+	case LogTypeMatch:
+		// Match reduces liquidity from the Maker side.
+		// The log.Side is the Taker's side, so we update the opposite side.
+		makerSide := Buy
+		if log.Side == Buy {
+			makerSide = Sell
+		}
+		return DepthChange{
+			Side:     makerSide,
+			Price:    log.Price,
+			SizeDiff: log.Size.Neg(),
+		}
+	case LogTypeAmend:
+		// Scenario 1: Priority Lost (Price changed OR Size increased)
+		// Logic: The order is removed from the book. The new order will be handled by a subsequent LogTypeOpen or LogTypeMatch.
+		// So we only need to remove the OldSize from OldPrice.
+		if !log.OldPrice.Equal(log.Price) || log.Size.GreaterThan(log.OldSize) {
+			return DepthChange{
+				Side:     log.Side,
+				Price:    log.OldPrice,
+				SizeDiff: log.OldSize.Neg(),
+			}
+		}
+
+		// Scenario 2: Priority Kept (Price same AND Size decreased)
+		// Logic: Update in-place. The difference is (NewSize - OldSize).
+		return DepthChange{
+			Side:     log.Side,
+			Price:    log.Price,
+			SizeDiff: log.Size.Sub(log.OldSize),
+		}
+	case LogTypeReject:
+		// Rejected orders never entered the book, so no depth change.
+		return DepthChange{}
+	}
+
+	return DepthChange{}
 }
 
 // OrderBook type
@@ -518,7 +582,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
 		if tOrd == nil {
 			// IOC Cancel (No match)
 			log := acquireBookLog()
-			log.Type = LogTypeCancel
+			log.Type = LogTypeReject
 			log.MarketID = order.MarketID
 			log.Side = order.Side
 			log.Price = order.Price
@@ -537,7 +601,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
 
 			// IOC Cancel (Price mismatch)
 			log := acquireBookLog()
-			log.Type = LogTypeCancel
+			log.Type = LogTypeReject
 			log.MarketID = order.MarketID
 			log.Side = order.Side
 			log.Price = order.Price
@@ -614,7 +678,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 	for {
 		if el == nil {
 			log := acquireBookLog()
-			log.Type = LogTypeCancel
+			log.Type = LogTypeReject
 			log.MarketID = order.MarketID
 			log.Side = order.Side
 			log.Price = order.Price
@@ -642,7 +706,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 
 		if order.Size.LessThan(decimal.Zero) {
 			log := acquireBookLog()
-			log.Type = LogTypeCancel
+			log.Type = LogTypeReject
 			log.MarketID = order.MarketID
 			log.Side = order.Side
 			log.Price = order.Price
@@ -763,7 +827,7 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) ([]*BookLog, error) {
 
 	targetQueue.addOrder(tOrd)
 	log := acquireBookLog()
-	log.Type = LogTypeCancel
+	log.Type = LogTypeReject
 	log.MarketID = order.MarketID
 	log.Side = order.Side
 	log.Price = order.Price
@@ -791,7 +855,7 @@ func (book *OrderBook) handleMarketOrder(order *Order) ([]*BookLog, error) {
 		if tOrd == nil {
 			// Market order ran out of liquidity
 			log := acquireBookLog()
-			log.Type = LogTypeCancel
+			log.Type = LogTypeReject
 			log.MarketID = order.MarketID
 			log.Side = order.Side
 			log.Price = order.Price

@@ -7,6 +7,8 @@
 - refactor: replace `Trade` with `BookLog` to capture Open, Match, and Cancel events for full order book reconstruction
 - feature: add `AmendOrder` to support modifying order price and size
 - perf: implement `sync.Pool` for `BookLog` to reduce GC pressure and achieve zero-allocation for log events
+- feature: add `LogTypeReject` to distinguish orders that never entered the book (e.g. failed PostOnly/IOC/FOK) from cancellations
+- feature: add `CalculateDepthChange` helper to simplify downstream depth updates
 
 ## v0.6.0 (2023-10-20)
 

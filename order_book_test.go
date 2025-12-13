@@ -279,7 +279,7 @@ func TestPostOnlyOrder(t *testing.T) {
 		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
 
 		trade := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeCancel, trade.Type)
+		assert.Equal(t, LogTypeReject, trade.Type)
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
@@ -308,7 +308,7 @@ func TestIOCOrder(t *testing.T) {
 		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
 
 		trade := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeCancel, trade.Type)
+		assert.Equal(t, LogTypeReject, trade.Type)
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
@@ -405,7 +405,7 @@ func TestFOKOrder(t *testing.T) {
 		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
 
 		trade := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeCancel, trade.Type)
+		assert.Equal(t, LogTypeReject, trade.Type)
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
@@ -452,7 +452,7 @@ func TestFOKOrder(t *testing.T) {
 		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
 
 		trade := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeCancel, trade.Type)
+		assert.Equal(t, LogTypeReject, trade.Type)
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
@@ -476,7 +476,7 @@ func TestFOKOrder(t *testing.T) {
 		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
 
 		trade := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeCancel, trade.Type)
+		assert.Equal(t, LogTypeReject, trade.Type)
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
