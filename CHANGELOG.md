@@ -14,6 +14,10 @@
 - fix: FOK order validation did not properly reject when price doesn't match
 - fix: `depth()` function off-by-one error returning `limit-1` items instead of `limit`
 - refactor: remove redundant `addOrder` wrapper and use `insertOrder` directly
+- perf: use `getHeadOrder` (peek) before `popHeadOrder` in order handlers to avoid unnecessary pop/insert operations
+- perf: reduce channel buffer sizes from 1,000,000 to 10,000 for orders and 100 for depth queries to reduce memory usage
+- perf: pre-allocate slice capacity in order handlers to reduce dynamic allocations
+- perf: cache `time.Now().UTC()` per order to reduce syscall overhead in high-frequency scenarios
 
 ## v0.6.0 (2023-10-20)
 
