@@ -4,11 +4,12 @@
 
 - feature: add `UpdateID` to `Depth` and track order book state changes
 - refactor: split `handleOrder` into separate handlers for each order type
+- refactor: replace `Trade` with `BookLog` to capture Open, Match, and Cancel events for full order book reconstruction
 
 
 ## v0.6.0 (2023-10-20)
 
-- feature: PublishTrader 
+- feature: PublishTrader
 - refactor: test case can run parallel
 
 ## v0.5.1 (2023-09-02)

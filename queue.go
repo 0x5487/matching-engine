@@ -33,6 +33,8 @@ type queue struct {
 	orders      map[string]*list.Element
 }
 
+// NewBuyerQueue creates a new queue for buy orders (bids).
+// The orders are sorted by price in descending order (highest price first).
 func NewBuyerQueue() *queue {
 	return &queue{
 		side: Buy,
@@ -53,6 +55,8 @@ func NewBuyerQueue() *queue {
 	}
 }
 
+// NewSellerQueue creates a new queue for sell orders (asks).
+// The orders are sorted by price in ascending order (lowest price first).
 func NewSellerQueue() *queue {
 	return &queue{
 		side: Sell,
@@ -73,6 +77,7 @@ func NewSellerQueue() *queue {
 	}
 }
 
+// addOrder adds a new order to the queue.
 func (q *queue) addOrder(order *Order) {
 	if order.Side == Buy {
 		q.insertOrder(order, false)
@@ -81,6 +86,7 @@ func (q *queue) addOrder(order *Order) {
 	}
 }
 
+// order finds an order by its ID.
 func (q *queue) order(id string) *Order {
 	el, ok := q.orders[id]
 	if ok {
@@ -91,6 +97,8 @@ func (q *queue) order(id string) *Order {
 	return nil
 }
 
+// insertOrder inserts an order into the queue.
+// It updates the price list and depth list.
 func (q *queue) insertOrder(order *Order, isFront bool) {
 	el, ok := q.priceList[order.Price.String()]
 	if ok {
@@ -124,6 +132,8 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 	}
 }
 
+// removeOrder removes an order from the queue by price and ID.
+// It also cleans up the price unit if it becomes empty.
 func (q *queue) removeOrder(price decimal.Decimal, id string) {
 	skipElement, ok := q.priceList[price.String()]
 	if ok {
@@ -147,6 +157,7 @@ func (q *queue) removeOrder(price decimal.Decimal, id string) {
 	}
 }
 
+// getHeadOrder returns the order at the front of the queue (best price) without removing it.
 func (q *queue) getHeadOrder() *Order {
 	el := q.depthList.Front()
 	if el == nil {
@@ -158,6 +169,7 @@ func (q *queue) getHeadOrder() *Order {
 	return order
 }
 
+// popHeadOrder removes and returns the order at the front of the queue.
 func (q *queue) popHeadOrder() *Order {
 	ord := q.getHeadOrder()
 
@@ -168,14 +180,17 @@ func (q *queue) popHeadOrder() *Order {
 	return ord
 }
 
+// orderCount returns the total number of orders in the queue.
 func (q *queue) orderCount() int64 {
 	return atomic.LoadInt64(&q.totalOrders)
 }
 
+// depthCount returns the number of price levels in the queue.
 func (q *queue) depthCount() int64 {
 	return atomic.LoadInt64(&q.depths)
 }
 
+// depth returns the order book depth up to the specified limit.
 func (q *queue) depth(limit uint32) []*DepthItem {
 	result := make([]*DepthItem, 0, limit)
 

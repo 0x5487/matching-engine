@@ -106,10 +106,12 @@ func TestLimitOrders(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		assert.Equal(t, memoryPublishTrader.Count(), 3)
+		assert.Equal(t, memoryPublishTrader.Count(), 10) // 6 setup + 3 matches + 1 open (remaining)
+		// Sell orders: 1@110, 1@120, 1@130. Total 3. Buy order size 10.
+		// Matches: 3. Remaining 7 enters book. So 1 Open log. Total 4 logs.
 
 		assert.Eventually(t, func() bool {
-			return memoryPublishTrader.Count() == 3
+			return memoryPublishTrader.Count() == 10
 		}, 1*time.Second, 10*time.Millisecond)
 
 		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
@@ -133,10 +135,10 @@ func TestLimitOrders(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		assert.Equal(t, memoryPublishTrader.Count(), 2)
+		assert.Equal(t, memoryPublishTrader.Count(), 9) // 6 setup + 2 matches + 1 open (remaining)
 
 		assert.Eventually(t, func() bool {
-			return memoryPublishTrader.Count() == 2
+			return memoryPublishTrader.Count() == 9
 		}, 1*time.Second, 10*time.Millisecond)
 
 		assert.Equal(t, int64(4), testOrderBook.askQueue.depthCount())
@@ -164,7 +166,7 @@ func TestMarketOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		assert.Equal(t, memoryPublishTrader.Count(), 3)
+		assert.Equal(t, memoryPublishTrader.Count(), 9) // 6 setup + 3 matches
 
 		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
@@ -187,7 +189,7 @@ func TestMarketOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		assert.Equal(t, memoryPublishTrader.Count(), 1)
+		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 match
 
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(2), testOrderBook.bidQueue.depthCount())
@@ -214,7 +216,7 @@ func TestPostOnlyOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		assert.Equal(t, memoryPublishTrader.Count(), 0)
+		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 open
 
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(4), testOrderBook.bidQueue.depthCount())
@@ -236,10 +238,10 @@ func TestPostOnlyOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		assert.Equal(t, memoryPublishTrader.Count(), 1)
+		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
 
-		trade := memoryPublishTrader.Trades[0]
-		assert.Equal(t, true, trade.IsCancel)
+		trade := memoryPublishTrader.Get(6)
+		assert.Equal(t, LogTypeCancel, trade.Type)
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
@@ -265,10 +267,10 @@ func TestIOCOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		assert.Equal(t, memoryPublishTrader.Count(), 1)
+		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
 
-		trade := memoryPublishTrader.Trades[0]
-		assert.Equal(t, true, trade.IsCancel)
+		trade := memoryPublishTrader.Get(6)
+		assert.Equal(t, LogTypeCancel, trade.Type)
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
@@ -290,7 +292,7 @@ func TestIOCOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		assert.Equal(t, memoryPublishTrader.Count(), 3)
+		assert.Equal(t, memoryPublishTrader.Count(), 9) // 6 setup + 3 matches
 
 		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
@@ -313,7 +315,7 @@ func TestIOCOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		assert.Equal(t, memoryPublishTrader.Count(), 4)
+		assert.Equal(t, memoryPublishTrader.Count(), 10) // 6 setup + 3 matches + 1 cancel (remaining)
 
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(0), testOrderBook.bidQueue.depthCount())
@@ -336,7 +338,7 @@ func TestIOCOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		assert.Equal(t, memoryPublishTrader.Count(), 2)
+		assert.Equal(t, memoryPublishTrader.Count(), 8) // 6 setup + 1 match + 1 cancel (remaining)
 
 		assert.Equal(t, int64(2), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
@@ -362,10 +364,10 @@ func TestFOKOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		assert.Equal(t, memoryPublishTrader.Count(), 1)
+		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
 
-		trade := memoryPublishTrader.Get(0)
-		assert.Equal(t, true, trade.IsCancel)
+		trade := memoryPublishTrader.Get(6)
+		assert.Equal(t, LogTypeCancel, trade.Type)
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
@@ -387,7 +389,7 @@ func TestFOKOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		assert.Equal(t, memoryPublishTrader.Count(), 3)
+		assert.Equal(t, memoryPublishTrader.Count(), 9) // 6 setup + 3 matches
 
 		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
@@ -409,10 +411,10 @@ func TestFOKOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		assert.Equal(t, memoryPublishTrader.Count(), 1)
+		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
 
-		trade := memoryPublishTrader.Get(0)
-		assert.Equal(t, true, trade.IsCancel)
+		trade := memoryPublishTrader.Get(6)
+		assert.Equal(t, LogTypeCancel, trade.Type)
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
@@ -433,10 +435,10 @@ func TestFOKOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
-		assert.Equal(t, memoryPublishTrader.Count(), 1)
+		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
 
-		trade := memoryPublishTrader.Get(0)
-		assert.Equal(t, true, trade.IsCancel)
+		trade := memoryPublishTrader.Get(6)
+		assert.Equal(t, LogTypeCancel, trade.Type)
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
