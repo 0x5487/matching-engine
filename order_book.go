@@ -181,8 +181,14 @@ func (book *OrderBook) addOrder(order *Order) {
 	var trades []*Trade
 
 	switch order.Type {
-	case Limit, FOK, IOC, PostOnly, Cancel:
-		trades, _ = book.handleOrder(order)
+	case Limit:
+		trades, _ = book.handleLimitOrder(order)
+	case FOK:
+		trades, _ = book.handleFOKOrder(order)
+	case IOC:
+		trades, _ = book.handleIOCOrder(order)
+	case PostOnly:
+		trades, _ = book.handlePostOnlyOrder(order)
 	case Market:
 		trades, _ = book.handleMarketOrder(order)
 	}
@@ -216,7 +222,7 @@ func (book *OrderBook) depth(limit uint32) *Depth {
 	}
 }
 
-func (book *OrderBook) handleOrder(order *Order) ([]*Trade, error) {
+func (book *OrderBook) handleLimitOrder(order *Order) ([]*Trade, error) {
 	var myQueue, targetQueue *queue
 	if order.Side == Buy {
 		myQueue = book.bidQueue
@@ -228,122 +234,89 @@ func (book *OrderBook) handleOrder(order *Order) ([]*Trade, error) {
 
 	trades := []*Trade{}
 
-	// ensure the order book can handle FOK order
-	if order.Type == FOK {
+	for {
+		tOrd := targetQueue.popHeadOrder()
 
-		el := targetQueue.depthList.Front()
-		orignalOrderSize := order.Size
+		if tOrd == nil {
+			myQueue.insertOrder(order, false)
+			return trades, nil
+		}
 
-		for {
-			if el == nil {
-				trade := Trade{
-					MarketID:       order.MarketID,
-					TakerOrderID:   order.ID,
-					TakerOrderSide: order.Side,
-					TakerOrderType: order.Type,
-					TakerUserID:    order.UserID,
-					MakerOrderID:   order.ID,
-					MakerUserID:    order.UserID,
-					Price:          order.Price,
-					Size:           order.Size,
-					IsCancel:       true,
-					CreatedAt:      time.Now().UTC(),
-				}
-				trades = append(trades, &trade)
-				return trades, nil
+		if order.Side == Buy && order.Price.LessThan(tOrd.Price) ||
+			order.Side == Sell && order.Price.GreaterThan(tOrd.Price) {
+			targetQueue.insertOrder(tOrd, true)
+			myQueue.insertOrder(order, false)
+			return trades, nil
+		}
+
+		if order.Size.GreaterThanOrEqual(tOrd.Size) {
+			trade := Trade{
+				TakerOrderID: order.ID,
+				MakerOrderID: tOrd.ID,
+				Price:        tOrd.Price,
+				Size:         tOrd.Size,
+				CreatedAt:    time.Now().UTC(),
 			}
+			trades = append(trades, &trade)
+			order.Size = order.Size.Sub(tOrd.Size)
 
-			unit, _ := el.Value.(*priceUnit)
-			tOrd, _ := unit.list.Front().Value.(*Order)
-
-			if order.Side == Buy && order.Price.GreaterThanOrEqual(tOrd.Price) && order.Size.GreaterThanOrEqual(unit.totalSize) ||
-				order.Side == Sell && order.Price.LessThanOrEqual(tOrd.Price) && order.Size.GreaterThanOrEqual(unit.totalSize) {
-				order.Size = order.Size.Sub(tOrd.Size)
-
-				if order.Size.Equal(decimal.Zero) {
-					order.Size = orignalOrderSize
-					break
-				}
+			if order.Size.Equal(decimal.Zero) {
+				break
 			}
-
-			if order.Size.LessThan(decimal.Zero) {
-				trade := Trade{
-					MarketID:       order.MarketID,
-					TakerOrderID:   order.ID,
-					TakerOrderSide: order.Side,
-					TakerOrderType: order.Type,
-					TakerUserID:    order.UserID,
-					MakerOrderID:   order.ID,
-					MakerUserID:    order.UserID,
-					Price:          order.Price,
-					Size:           order.Size,
-					IsCancel:       true,
-					CreatedAt:      time.Now().UTC(),
-				}
-				trades = append(trades, &trade)
-				return trades, nil
+		} else {
+			trade := Trade{
+				TakerOrderID: order.ID,
+				MakerOrderID: tOrd.ID,
+				Price:        tOrd.Price,
+				Size:         order.Size,
+				CreatedAt:    time.Now().UTC(),
 			}
+			trades = append(trades, &trade)
+			tOrd.Size = tOrd.Size.Sub(order.Size)
+			targetQueue.insertOrder(tOrd, true)
 
-			el = el.Next()
+			break
 		}
 	}
+
+	return trades, nil
+}
+
+func (book *OrderBook) handleIOCOrder(order *Order) ([]*Trade, error) {
+	var targetQueue *queue
+	if order.Side == Buy {
+		targetQueue = book.askQueue
+	} else {
+		targetQueue = book.bidQueue
+	}
+
+	trades := []*Trade{}
 
 	for {
 		tOrd := targetQueue.popHeadOrder()
 
 		if tOrd == nil {
-			switch order.Type {
-			case Limit, PostOnly:
-				myQueue.insertOrder(order, false)
-				return trades, nil
-			case IOC:
-				trade := Trade{
-					MarketID:       order.MarketID,
-					TakerOrderID:   order.ID,
-					TakerOrderSide: order.Side,
-					TakerOrderType: order.Type,
-					TakerUserID:    order.UserID,
-					MakerOrderID:   order.ID,
-					MakerUserID:    order.UserID,
-					Price:          order.Price,
-					Size:           order.Size,
-					IsCancel:       true,
-					CreatedAt:      time.Now().UTC(),
-				}
-				trades = append(trades, &trade)
-				return trades, nil
+			trade := Trade{
+				MarketID:       order.MarketID,
+				TakerOrderID:   order.ID,
+				TakerOrderSide: order.Side,
+				TakerOrderType: order.Type,
+				TakerUserID:    order.UserID,
+				MakerOrderID:   order.ID,
+				MakerUserID:    order.UserID,
+				Price:          order.Price,
+				Size:           order.Size,
+				IsCancel:       true,
+				CreatedAt:      time.Now().UTC(),
 			}
+			trades = append(trades, &trade)
+			return trades, nil
 		}
 
 		if order.Side == Buy && order.Price.LessThan(tOrd.Price) ||
 			order.Side == Sell && order.Price.GreaterThan(tOrd.Price) {
 			targetQueue.insertOrder(tOrd, true)
 
-			switch order.Type {
-			case Limit, PostOnly:
-				myQueue.insertOrder(order, false)
-				return trades, nil
-			case IOC:
-				trade := Trade{
-					MarketID:       order.MarketID,
-					TakerOrderID:   order.ID,
-					TakerOrderSide: order.Side,
-					TakerOrderType: order.Type,
-					TakerUserID:    order.UserID,
-					MakerOrderID:   order.ID,
-					MakerUserID:    order.UserID,
-					Price:          order.Price,
-					Size:           order.Size,
-					IsCancel:       true,
-					CreatedAt:      time.Now().UTC(),
-				}
-				trades = append(trades, &trade)
-				return trades, nil
-			}
-		}
-
-		if order.Type == PostOnly {
-			targetQueue.addOrder(tOrd)
 			trade := Trade{
 				MarketID:       order.MarketID,
 				TakerOrderID:   order.ID,
@@ -391,6 +364,153 @@ func (book *OrderBook) handleOrder(order *Order) ([]*Trade, error) {
 		}
 	}
 
+	return trades, nil
+}
+
+func (book *OrderBook) handleFOKOrder(order *Order) ([]*Trade, error) {
+	var targetQueue *queue
+	if order.Side == Buy {
+		targetQueue = book.askQueue
+	} else {
+		targetQueue = book.bidQueue
+	}
+
+	trades := []*Trade{}
+
+	el := targetQueue.depthList.Front()
+	orignalOrderSize := order.Size
+
+	for {
+		if el == nil {
+			trade := Trade{
+				MarketID:       order.MarketID,
+				TakerOrderID:   order.ID,
+				TakerOrderSide: order.Side,
+				TakerOrderType: order.Type,
+				TakerUserID:    order.UserID,
+				MakerOrderID:   order.ID,
+				MakerUserID:    order.UserID,
+				Price:          order.Price,
+				Size:           order.Size,
+				IsCancel:       true,
+				CreatedAt:      time.Now().UTC(),
+			}
+			trades = append(trades, &trade)
+			return trades, nil
+		}
+
+		unit, _ := el.Value.(*priceUnit)
+		tOrd, _ := unit.list.Front().Value.(*Order)
+
+		if order.Side == Buy && order.Price.GreaterThanOrEqual(tOrd.Price) && order.Size.GreaterThanOrEqual(unit.totalSize) ||
+			order.Side == Sell && order.Price.LessThanOrEqual(tOrd.Price) && order.Size.GreaterThanOrEqual(unit.totalSize) {
+			order.Size = order.Size.Sub(tOrd.Size)
+
+			if order.Size.Equal(decimal.Zero) {
+				order.Size = orignalOrderSize
+				break
+			}
+		}
+
+		if order.Size.LessThan(decimal.Zero) {
+			trade := Trade{
+				MarketID:       order.MarketID,
+				TakerOrderID:   order.ID,
+				TakerOrderSide: order.Side,
+				TakerOrderType: order.Type,
+				TakerUserID:    order.UserID,
+				MakerOrderID:   order.ID,
+				MakerUserID:    order.UserID,
+				Price:          order.Price,
+				Size:           order.Size,
+				IsCancel:       true,
+				CreatedAt:      time.Now().UTC(),
+			}
+			trades = append(trades, &trade)
+			return trades, nil
+		}
+
+		el = el.Next()
+	}
+
+	for {
+		tOrd := targetQueue.popHeadOrder()
+
+		if order.Size.GreaterThanOrEqual(tOrd.Size) {
+			trade := Trade{
+				TakerOrderID: order.ID,
+				MakerOrderID: tOrd.ID,
+				Price:        tOrd.Price,
+				Size:         tOrd.Size,
+				CreatedAt:    time.Now().UTC(),
+			}
+			trades = append(trades, &trade)
+			order.Size = order.Size.Sub(tOrd.Size)
+
+			if order.Size.Equal(decimal.Zero) {
+				break
+			}
+		} else {
+			// This case should not happen if FOK check passed, but for safety
+			trade := Trade{
+				TakerOrderID: order.ID,
+				MakerOrderID: tOrd.ID,
+				Price:        tOrd.Price,
+				Size:         order.Size,
+				CreatedAt:    time.Now().UTC(),
+			}
+			trades = append(trades, &trade)
+			tOrd.Size = tOrd.Size.Sub(order.Size)
+			targetQueue.insertOrder(tOrd, true)
+
+			break
+		}
+	}
+
+	return trades, nil
+}
+
+func (book *OrderBook) handlePostOnlyOrder(order *Order) ([]*Trade, error) {
+	var myQueue, targetQueue *queue
+	if order.Side == Buy {
+		myQueue = book.bidQueue
+		targetQueue = book.askQueue
+	} else {
+		myQueue = book.askQueue
+		targetQueue = book.bidQueue
+	}
+
+	trades := []*Trade{}
+
+	tOrd := targetQueue.popHeadOrder()
+
+	if tOrd == nil {
+		myQueue.insertOrder(order, false)
+		return trades, nil
+	}
+
+	if order.Side == Buy && order.Price.LessThan(tOrd.Price) ||
+		order.Side == Sell && order.Price.GreaterThan(tOrd.Price) {
+		targetQueue.insertOrder(tOrd, true)
+		myQueue.insertOrder(order, false)
+		return trades, nil
+	}
+
+	targetQueue.addOrder(tOrd)
+	trade := Trade{
+		MarketID:       order.MarketID,
+		TakerOrderID:   order.ID,
+		TakerOrderSide: order.Side,
+		TakerOrderType: order.Type,
+		TakerUserID:    order.UserID,
+		MakerOrderID:   order.ID,
+		MakerUserID:    order.UserID,
+		Price:          order.Price,
+		Size:           order.Size,
+		IsCancel:       true,
+		CreatedAt:      time.Now().UTC(),
+	}
+	trades = append(trades, &trade)
 	return trades, nil
 }
 
