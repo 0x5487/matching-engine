@@ -13,6 +13,8 @@
 - fix: FOK order validation incorrectly used single order size instead of price level total size
 - fix: FOK order validation did not properly reject when price doesn't match
 - fix: `depth()` function off-by-one error returning `limit-1` items instead of `limit`
+- feature: add `OrderBook.Shutdown(ctx)` for graceful shutdown with pending order drain
+- feature: add `MatchingEngine.Shutdown(ctx)` for graceful shutdown of all markets in parallel
 - docs: add documentation to `BookLog` struct explaining `OrderBookID > 0` indicates state change
 - refactor: remove redundant `addOrder` wrapper and use `insertOrder` directly
 - refactor: remove unused error return values from order handler functions

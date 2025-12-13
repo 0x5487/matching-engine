@@ -844,3 +844,113 @@ func TestDepth(t *testing.T) {
 	assert.Len(t, result.Asks, 3)
 	assert.Len(t, result.Bids, 3)
 }
+
+func TestShutdown(t *testing.T) {
+	t.Run("Shutdown blocks until drain completes", func(t *testing.T) {
+		ctx := context.Background()
+		publishTrader := NewMemoryPublishTrader()
+		orderBook := NewOrderBook(publishTrader)
+
+		// Start the order book in a goroutine
+		startDone := make(chan error)
+		go func() {
+			startDone <- orderBook.Start()
+		}()
+
+		// Add some orders
+		for i := 0; i < 10; i++ {
+			order := &Order{
+				ID:     "order-" + string(rune('a'+i)),
+				Type:   Limit,
+				Side:   Buy,
+				Size:   decimal.NewFromInt(1),
+				Price:  decimal.NewFromInt(int64(100 - i)),
+				UserID: int64(i),
+			}
+			err := orderBook.AddOrder(ctx, order)
+			assert.NoError(t, err)
+		}
+
+		// Shutdown should block and complete successfully
+		shutdownCtx := context.Background()
+		err := orderBook.Shutdown(shutdownCtx)
+		assert.NoError(t, err)
+
+		// Start() should have returned
+		select {
+		case err := <-startDone:
+			assert.NoError(t, err)
+		case <-time.After(time.Second):
+			t.Fatal("Start() did not return after Shutdown()")
+		}
+	})
+
+	t.Run("AddOrder returns ErrShutdown after shutdown", func(t *testing.T) {
+		ctx := context.Background()
+		publishTrader := NewMemoryPublishTrader()
+		orderBook := NewOrderBook(publishTrader)
+
+		go func() {
+			_ = orderBook.Start()
+		}()
+
+		// Wait for Start() to be ready
+		time.Sleep(10 * time.Millisecond)
+
+		// Shutdown
+		err := orderBook.Shutdown(ctx)
+		assert.NoError(t, err)
+
+		// Try to add an order after shutdown
+		order := &Order{
+			ID:     "after-shutdown",
+			Type:   Limit,
+			Side:   Buy,
+			Size:   decimal.NewFromInt(1),
+			Price:  decimal.NewFromInt(100),
+			UserID: 999,
+		}
+		err = orderBook.AddOrder(ctx, order)
+		assert.Equal(t, ErrShutdown, err)
+	})
+
+	t.Run("Shutdown respects context timeout", func(t *testing.T) {
+		publishTrader := NewMemoryPublishTrader()
+		orderBook := NewOrderBook(publishTrader)
+
+		// Do NOT start the order book - this simulates Start() not being called
+		// The drain will never happen, so Shutdown should timeout
+
+		// Set isShutdown manually to simulate partial state
+		// and close done channel
+		orderBook.isShutdown.Store(true)
+		close(orderBook.done)
+
+		// Shutdown with a short timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+
+		err := orderBook.Shutdown(ctx)
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	})
+
+	t.Run("Multiple Shutdown calls are safe", func(t *testing.T) {
+		ctx := context.Background()
+		publishTrader := NewMemoryPublishTrader()
+		orderBook := NewOrderBook(publishTrader)
+
+		go func() {
+			_ = orderBook.Start()
+		}()
+
+		time.Sleep(10 * time.Millisecond)
+
+		// First shutdown
+		err := orderBook.Shutdown(ctx)
+		assert.NoError(t, err)
+
+		// Second shutdown should also work (idempotent)
+		err = orderBook.Shutdown(ctx)
+		assert.NoError(t, err)
+	})
+}

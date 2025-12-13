@@ -7,4 +7,5 @@ var (
 	ErrInvalidParam          = errors.New("the param is invalid")
 	ErrInternal              = errors.New("internal server error")
 	ErrTimeout               = errors.New("timeout")
+	ErrShutdown              = errors.New("order book is shutting down")
 )
