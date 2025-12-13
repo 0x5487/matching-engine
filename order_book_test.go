@@ -19,11 +19,11 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 	}()
 
 	orderBuy1 := &Order{
-		ID:    "buy-1",
-		Type:  Limit,
-		Side:  Buy,
-		Size:  decimal.NewFromInt(1),
-		Price: decimal.NewFromInt(90),
+		ID:     "buy-1",
+		Type:   Limit,
+		Side:   Buy,
+		Size:   decimal.NewFromInt(1),
+		Price:  decimal.NewFromInt(90),
 		UserID: 101,
 	}
 
@@ -31,11 +31,11 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 	assert.NoError(t, err)
 
 	orderBuy2 := &Order{
-		ID:    "buy-2",
-		Type:  Limit,
-		Side:  Buy,
-		Size:  decimal.NewFromInt(1),
-		Price: decimal.NewFromInt(80),
+		ID:     "buy-2",
+		Type:   Limit,
+		Side:   Buy,
+		Size:   decimal.NewFromInt(1),
+		Price:  decimal.NewFromInt(80),
 		UserID: 102,
 	}
 
@@ -43,11 +43,11 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 	assert.NoError(t, err)
 
 	orderBuy3 := &Order{
-		ID:    "buy-3",
-		Type:  Limit,
-		Side:  Buy,
-		Size:  decimal.NewFromInt(1),
-		Price: decimal.NewFromInt(70),
+		ID:     "buy-3",
+		Type:   Limit,
+		Side:   Buy,
+		Size:   decimal.NewFromInt(1),
+		Price:  decimal.NewFromInt(70),
 		UserID: 103,
 	}
 
@@ -55,33 +55,33 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 	assert.NoError(t, err)
 
 	orderSell1 := &Order{
-		ID:    "sell-1",
-		Type:  Limit,
-		Side:  Sell,
-		Size:  decimal.NewFromInt(1),
-		Price: decimal.NewFromInt(110),
+		ID:     "sell-1",
+		Type:   Limit,
+		Side:   Sell,
+		Size:   decimal.NewFromInt(1),
+		Price:  decimal.NewFromInt(110),
 		UserID: 201,
 	}
 	err = orderBook.AddOrder(ctx, orderSell1)
 	assert.NoError(t, err)
 
 	orderSell2 := &Order{
-		ID:    "sell-2",
-		Type:  Limit,
-		Side:  Sell,
-		Size:  decimal.NewFromInt(1),
-		Price: decimal.NewFromInt(120),
+		ID:     "sell-2",
+		Type:   Limit,
+		Side:   Sell,
+		Size:   decimal.NewFromInt(1),
+		Price:  decimal.NewFromInt(120),
 		UserID: 202,
 	}
 	err = orderBook.AddOrder(ctx, orderSell2)
 	assert.NoError(t, err)
 
 	orderSell3 := &Order{
-		ID:    "sell-3",
-		Type:  Limit,
-		Side:  Sell,
-		Size:  decimal.NewFromInt(1),
-		Price: decimal.NewFromInt(130),
+		ID:     "sell-3",
+		Type:   Limit,
+		Side:   Sell,
+		Size:   decimal.NewFromInt(1),
+		Price:  decimal.NewFromInt(130),
 		UserID: 203,
 	}
 	err = orderBook.AddOrder(ctx, orderSell3)
@@ -129,8 +129,8 @@ func TestLimitOrders(t *testing.T) {
 		assert.Equal(t, LogTypeMatch, match1.Type)
 		assert.Equal(t, "sell-1", match1.MakerOrderID)
 		assert.Equal(t, int64(201), match1.MakerUserID)
-		assert.Equal(t, "buyAll", match1.TakerOrderID)
-		assert.Equal(t, int64(300), match1.TakerUserID)
+		assert.Equal(t, "buyAll", match1.OrderID)
+		assert.Equal(t, int64(300), match1.UserID)
 
 		match2 := memoryPublishTrader.Get(7)
 		assert.Equal(t, LogTypeMatch, match2.Type)
@@ -174,8 +174,8 @@ func TestLimitOrders(t *testing.T) {
 		assert.Equal(t, LogTypeMatch, match1.Type)
 		assert.Equal(t, "buy-1", match1.MakerOrderID)
 		assert.Equal(t, int64(101), match1.MakerUserID)
-		assert.Equal(t, "mysell", match1.TakerOrderID)
-		assert.Equal(t, int64(301), match1.TakerUserID)
+		assert.Equal(t, "mysell", match1.OrderID)
+		assert.Equal(t, int64(301), match1.UserID)
 
 		match2 := memoryPublishTrader.Get(7)
 		assert.Equal(t, LogTypeMatch, match2.Type)
@@ -544,8 +544,8 @@ func TestAmendOrder(t *testing.T) {
 		assert.Equal(t, LogTypeMatch, matchLog.Type)
 		assert.Equal(t, "buy-1", matchLog.MakerOrderID) // Priority kept!
 		assert.Equal(t, int64(101), matchLog.MakerUserID)
-		assert.Equal(t, "sell-match", matchLog.TakerOrderID)
-		assert.Equal(t, int64(402), matchLog.TakerUserID)
+		assert.Equal(t, "sell-match", matchLog.OrderID)
+		assert.Equal(t, int64(402), matchLog.UserID)
 	})
 
 	t.Run("increase size loses priority", func(t *testing.T) {
@@ -570,7 +570,7 @@ func TestAmendOrder(t *testing.T) {
 		found := false
 		for i := 0; i < memoryPublishTrader.Count(); i++ {
 			log := memoryPublishTrader.Get(i)
-			if log.Type == LogTypeMatch && log.TakerOrderID == "sell-match" {
+			if log.Type == LogTypeMatch && log.OrderID == "sell-match" {
 				assert.Equal(t, "buy-2-compete", log.MakerOrderID) // Priority lost!
 				found = true
 				break
