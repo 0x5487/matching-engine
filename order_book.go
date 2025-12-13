@@ -2,6 +2,7 @@ package match
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/nite-coder/blackbear/pkg/cast"
@@ -38,7 +39,7 @@ type Order struct {
 }
 
 type Trade struct {
-	ID             string          `json:"id"`
+	ID             uint64          `json:"id"`
 	MarketID       string          `json:"market_id"`
 	TakerOrderID   string          `json:"taker_order_id"`
 	TakerOrderSide Side            `json:"taker_order_side"`
@@ -70,12 +71,14 @@ type OrderBookUpdateEvent struct {
 }
 
 type Depth struct {
-	Asks []*DepthItem
-	Bids []*DepthItem
+	UpdateID uint64       `json:"update_id"`
+	Asks     []*DepthItem `json:"asks"`
+	Bids     []*DepthItem `json:"bids"`
 }
 
 // OrderBook type
 type OrderBook struct {
+	id            atomic.Uint64
 	bidQueue      *queue
 	askQueue      *queue
 	orderChan     chan *Order
@@ -173,6 +176,8 @@ func (book *OrderBook) Start() error {
 }
 
 func (book *OrderBook) addOrder(order *Order) {
+	book.id.Add(1)
+
 	var trades []*Trade
 
 	switch order.Type {
@@ -191,20 +196,23 @@ func (book *OrderBook) cancelOrder(id string) {
 	order := book.askQueue.order(id)
 	if order != nil {
 		book.askQueue.removeOrder(order.Price, id)
+		book.id.Add(1)
 		return
 	}
 
 	order = book.bidQueue.order(id)
 	if order != nil {
 		book.bidQueue.removeOrder(order.Price, id)
+		book.id.Add(1)
 		return
 	}
 }
 
 func (book *OrderBook) depth(limit uint32) *Depth {
 	return &Depth{
-		Asks: book.askQueue.depth(limit),
-		Bids: book.bidQueue.depth(limit),
+		UpdateID: book.id.Load(),
+		Asks:     book.askQueue.depth(limit),
+		Bids:     book.bidQueue.depth(limit),
 	}
 }
 
