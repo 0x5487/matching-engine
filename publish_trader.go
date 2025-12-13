@@ -24,7 +24,11 @@ func NewMemoryPublishTrader() *MemoryPublishTrader {
 func (m *MemoryPublishTrader) Publish(trades ...*BookLog) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.Trades = append(m.Trades, trades...)
+	for _, trade := range trades {
+		cpy := new(BookLog)
+		*cpy = *trade
+		m.Trades = append(m.Trades, cpy)
+	}
 }
 
 // Count returns the number of logs stored.

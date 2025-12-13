@@ -3,6 +3,7 @@ package match
 import (
 	"context"
 	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/nite-coder/blackbear/pkg/cast"
@@ -60,6 +61,23 @@ type BookLog struct {
 	TakerSide      Side            `json:"taker_side,omitempty"`
 	TakerOrderType OrderType       `json:"taker_order_type,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
+}
+
+var bookLogPool = sync.Pool{
+	New: func() interface{} {
+		return new(BookLog)
+	},
+}
+
+func acquireBookLog() *BookLog {
+	return bookLogPool.Get().(*BookLog)
+}
+
+func releaseBookLog(log *BookLog) {
+	// Reset structure to zero values.
+	// For decimal.Decimal, the zero value (nil internal pointer) represents 0, which is valid.
+	*log = BookLog{}
+	bookLogPool.Put(log)
 }
 
 type Response struct {
@@ -208,6 +226,9 @@ func (book *OrderBook) addOrder(order *Order) {
 
 	if len(logs) > 0 {
 		book.publishTrader.Publish(logs...)
+		for _, log := range logs {
+			releaseBookLog(log)
+		}
 	}
 }
 
@@ -217,17 +238,18 @@ func (book *OrderBook) cancelOrder(id string) {
 	if order != nil {
 		book.askQueue.removeOrder(order.Price, id)
 		book.id.Add(1)
-		book.publishTrader.Publish(&BookLog{
-			ID:        book.id.Load(),
-			Type:      LogTypeCancel,
-			MarketID:  order.MarketID,
-			Side:      order.Side,
-			Price:     order.Price,
-			Size:      order.Size,
-			OrderID:   order.ID,
-			UserID:    order.UserID,
-			CreatedAt: time.Now().UTC(),
-		})
+		log := acquireBookLog()
+		log.ID = book.id.Load()
+		log.Type = LogTypeCancel
+		log.MarketID = order.MarketID
+		log.Side = order.Side
+		log.Price = order.Price
+		log.Size = order.Size
+		log.OrderID = order.ID
+		log.UserID = order.UserID
+		log.CreatedAt = time.Now().UTC()
+		book.publishTrader.Publish(log)
+		releaseBookLog(log)
 		return
 	}
 
@@ -235,17 +257,18 @@ func (book *OrderBook) cancelOrder(id string) {
 	if order != nil {
 		book.bidQueue.removeOrder(order.Price, id)
 		book.id.Add(1)
-		book.publishTrader.Publish(&BookLog{
-			ID:        book.id.Load(),
-			Type:      LogTypeCancel,
-			MarketID:  order.MarketID,
-			Side:      order.Side,
-			Price:     order.Price,
-			Size:      order.Size,
-			OrderID:   order.ID,
-			UserID:    order.UserID,
-			CreatedAt: time.Now().UTC(),
-		})
+		log := acquireBookLog()
+		log.ID = book.id.Load()
+		log.Type = LogTypeCancel
+		log.MarketID = order.MarketID
+		log.Side = order.Side
+		log.Price = order.Price
+		log.Size = order.Size
+		log.OrderID = order.ID
+		log.UserID = order.UserID
+		log.CreatedAt = time.Now().UTC()
+		book.publishTrader.Publish(log)
+		releaseBookLog(log)
 		return
 	}
 }
@@ -278,17 +301,17 @@ func (book *OrderBook) handleLimitOrder(order *Order) ([]*BookLog, error) {
 		if tOrd == nil {
 			myQueue.insertOrder(order, false)
 			book.id.Add(1)
-			logs = append(logs, &BookLog{
-				ID:        book.id.Load(),
-				Type:      LogTypeOpen,
-				MarketID:  order.MarketID,
-				Side:      order.Side,
-				Price:     order.Price,
-				Size:      order.Size,
-				OrderID:   order.ID,
-				UserID:    order.UserID,
-				CreatedAt: time.Now().UTC(),
-			})
+			log := acquireBookLog()
+			log.ID = book.id.Load()
+			log.Type = LogTypeOpen
+			log.MarketID = order.MarketID
+			log.Side = order.Side
+			log.Price = order.Price
+			log.Size = order.Size
+			log.OrderID = order.ID
+			log.UserID = order.UserID
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 			return logs, nil
 		}
 
@@ -297,38 +320,37 @@ func (book *OrderBook) handleLimitOrder(order *Order) ([]*BookLog, error) {
 			targetQueue.insertOrder(tOrd, true)
 			myQueue.insertOrder(order, false)
 			book.id.Add(1)
-			logs = append(logs, &BookLog{
-				ID:        book.id.Load(),
-				Type:      LogTypeOpen,
-				MarketID:  order.MarketID,
-				Side:      order.Side,
-				Price:     order.Price,
-				Size:      order.Size,
-				OrderID:   order.ID,
-				UserID:    order.UserID,
-				CreatedAt: time.Now().UTC(),
-			})
+			log := acquireBookLog()
+			log.ID = book.id.Load()
+			log.Type = LogTypeOpen
+			log.MarketID = order.MarketID
+			log.Side = order.Side
+			log.Price = order.Price
+			log.Size = order.Size
+			log.OrderID = order.ID
+			log.UserID = order.UserID
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 			return logs, nil
 		}
 
 		if order.Size.GreaterThanOrEqual(tOrd.Size) {
 			book.id.Add(1)
-			log := BookLog{
-				ID:             book.id.Load(),
-				Type:           LogTypeMatch,
-				MarketID:       order.MarketID,
-				Side:           tOrd.Side,
-				Price:          tOrd.Price,
-				Size:           tOrd.Size,
-				OrderID:        tOrd.ID,
-				UserID:         tOrd.UserID,
-				TakerOrderID:   order.ID,
-				TakerUserID:    order.UserID,
-				TakerSide:      order.Side,
-				TakerOrderType: order.Type,
-				CreatedAt:      time.Now().UTC(),
-			}
-			logs = append(logs, &log)
+			log := acquireBookLog()
+			log.ID = book.id.Load()
+			log.Type = LogTypeMatch
+			log.MarketID = order.MarketID
+			log.Side = tOrd.Side
+			log.Price = tOrd.Price
+			log.Size = tOrd.Size
+			log.OrderID = tOrd.ID
+			log.UserID = tOrd.UserID
+			log.TakerOrderID = order.ID
+			log.TakerUserID = order.UserID
+			log.TakerSide = order.Side
+			log.TakerOrderType = order.Type
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 			order.Size = order.Size.Sub(tOrd.Size)
 
 			if order.Size.Equal(decimal.Zero) {
@@ -336,22 +358,21 @@ func (book *OrderBook) handleLimitOrder(order *Order) ([]*BookLog, error) {
 			}
 		} else {
 			book.id.Add(1)
-			log := BookLog{
-				ID:             book.id.Load(),
-				Type:           LogTypeMatch,
-				MarketID:       order.MarketID,
-				Side:           tOrd.Side,
-				Price:          tOrd.Price,
-				Size:           order.Size,
-				OrderID:        tOrd.ID,
-				UserID:         tOrd.UserID,
-				TakerOrderID:   order.ID,
-				TakerUserID:    order.UserID,
-				TakerSide:      order.Side,
-				TakerOrderType: order.Type,
-				CreatedAt:      time.Now().UTC(),
-			}
-			logs = append(logs, &log)
+			log := acquireBookLog()
+			log.ID = book.id.Load()
+			log.Type = LogTypeMatch
+			log.MarketID = order.MarketID
+			log.Side = tOrd.Side
+			log.Price = tOrd.Price
+			log.Size = order.Size
+			log.OrderID = tOrd.ID
+			log.UserID = tOrd.UserID
+			log.TakerOrderID = order.ID
+			log.TakerUserID = order.UserID
+			log.TakerSide = order.Side
+			log.TakerOrderType = order.Type
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			targetQueue.insertOrder(tOrd, true)
 
@@ -378,18 +399,17 @@ func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
 
 		if tOrd == nil {
 			// IOC Cancel (No match)
-			log := BookLog{
-				Type:           LogTypeCancel,
-				MarketID:       order.MarketID,
-				Side:           order.Side,
-				Price:          order.Price,
-				Size:           order.Size,
-				OrderID:        order.ID,
-				UserID:         order.UserID,
-				TakerOrderType: order.Type,
-				CreatedAt:      time.Now().UTC(),
-			}
-			logs = append(logs, &log)
+			log := acquireBookLog()
+			log.Type = LogTypeCancel
+			log.MarketID = order.MarketID
+			log.Side = order.Side
+			log.Price = order.Price
+			log.Size = order.Size
+			log.OrderID = order.ID
+			log.UserID = order.UserID
+			log.TakerOrderType = order.Type
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 			return logs, nil
 		}
 
@@ -398,39 +418,37 @@ func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
 			targetQueue.insertOrder(tOrd, true)
 
 			// IOC Cancel (Price mismatch)
-			log := BookLog{
-				Type:           LogTypeCancel,
-				MarketID:       order.MarketID,
-				Side:           order.Side,
-				Price:          order.Price,
-				Size:           order.Size,
-				OrderID:        order.ID,
-				UserID:         order.UserID,
-				TakerOrderType: order.Type,
-				CreatedAt:      time.Now().UTC(),
-			}
-			logs = append(logs, &log)
+			log := acquireBookLog()
+			log.Type = LogTypeCancel
+			log.MarketID = order.MarketID
+			log.Side = order.Side
+			log.Price = order.Price
+			log.Size = order.Size
+			log.OrderID = order.ID
+			log.UserID = order.UserID
+			log.TakerOrderType = order.Type
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 			return logs, nil
 		}
 
 		if order.Size.GreaterThanOrEqual(tOrd.Size) {
 			book.id.Add(1)
-			log := BookLog{
-				ID:             book.id.Load(),
-				Type:           LogTypeMatch,
-				MarketID:       order.MarketID,
-				Side:           tOrd.Side,
-				Price:          tOrd.Price,
-				Size:           tOrd.Size,
-				OrderID:        tOrd.ID,
-				UserID:         tOrd.UserID,
-				TakerOrderID:   order.ID,
-				TakerUserID:    order.UserID,
-				TakerSide:      order.Side,
-				TakerOrderType: order.Type,
-				CreatedAt:      time.Now().UTC(),
-			}
-			logs = append(logs, &log)
+			log := acquireBookLog()
+			log.ID = book.id.Load()
+			log.Type = LogTypeMatch
+			log.MarketID = order.MarketID
+			log.Side = tOrd.Side
+			log.Price = tOrd.Price
+			log.Size = tOrd.Size
+			log.OrderID = tOrd.ID
+			log.UserID = tOrd.UserID
+			log.TakerOrderID = order.ID
+			log.TakerUserID = order.UserID
+			log.TakerSide = order.Side
+			log.TakerOrderType = order.Type
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 			order.Size = order.Size.Sub(tOrd.Size)
 
 			if order.Size.Equal(decimal.Zero) {
@@ -438,22 +456,21 @@ func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
 			}
 		} else {
 			book.id.Add(1)
-			log := BookLog{
-				ID:             book.id.Load(),
-				Type:           LogTypeMatch,
-				MarketID:       order.MarketID,
-				Side:           tOrd.Side,
-				Price:          tOrd.Price,
-				Size:           order.Size,
-				OrderID:        tOrd.ID,
-				UserID:         tOrd.UserID,
-				TakerOrderID:   order.ID,
-				TakerUserID:    order.UserID,
-				TakerSide:      order.Side,
-				TakerOrderType: order.Type,
-				CreatedAt:      time.Now().UTC(),
-			}
-			logs = append(logs, &log)
+			log := acquireBookLog()
+			log.ID = book.id.Load()
+			log.Type = LogTypeMatch
+			log.MarketID = order.MarketID
+			log.Side = tOrd.Side
+			log.Price = tOrd.Price
+			log.Size = order.Size
+			log.OrderID = tOrd.ID
+			log.UserID = tOrd.UserID
+			log.TakerOrderID = order.ID
+			log.TakerUserID = order.UserID
+			log.TakerSide = order.Side
+			log.TakerOrderType = order.Type
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			targetQueue.insertOrder(tOrd, true)
 
@@ -480,18 +497,17 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 
 	for {
 		if el == nil {
-			log := BookLog{
-				Type:           LogTypeCancel,
-				MarketID:       order.MarketID,
-				Side:           order.Side,
-				Price:          order.Price,
-				Size:           order.Size,
-				OrderID:        order.ID,
-				UserID:         order.UserID,
-				TakerOrderType: order.Type,
-				CreatedAt:      time.Now().UTC(),
-			}
-			logs = append(logs, &log)
+			log := acquireBookLog()
+			log.Type = LogTypeCancel
+			log.MarketID = order.MarketID
+			log.Side = order.Side
+			log.Price = order.Price
+			log.Size = order.Size
+			log.OrderID = order.ID
+			log.UserID = order.UserID
+			log.TakerOrderType = order.Type
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 			return logs, nil
 		}
 
@@ -509,18 +525,17 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 		}
 
 		if order.Size.LessThan(decimal.Zero) {
-			log := BookLog{
-				Type:           LogTypeCancel,
-				MarketID:       order.MarketID,
-				Side:           order.Side,
-				Price:          order.Price,
-				Size:           order.Size,
-				OrderID:        order.ID,
-				UserID:         order.UserID,
-				TakerOrderType: order.Type,
-				CreatedAt:      time.Now().UTC(),
-			}
-			logs = append(logs, &log)
+			log := acquireBookLog()
+			log.Type = LogTypeCancel
+			log.MarketID = order.MarketID
+			log.Side = order.Side
+			log.Price = order.Price
+			log.Size = order.Size
+			log.OrderID = order.ID
+			log.UserID = order.UserID
+			log.TakerOrderType = order.Type
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 			return logs, nil
 		}
 
@@ -532,22 +547,21 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 
 		if order.Size.GreaterThanOrEqual(tOrd.Size) {
 			book.id.Add(1)
-			log := BookLog{
-				ID:             book.id.Load(),
-				Type:           LogTypeMatch,
-				MarketID:       order.MarketID,
-				Side:           tOrd.Side,
-				Price:          tOrd.Price,
-				Size:           tOrd.Size,
-				OrderID:        tOrd.ID,
-				UserID:         tOrd.UserID,
-				TakerOrderID:   order.ID,
-				TakerUserID:    order.UserID,
-				TakerSide:      order.Side,
-				TakerOrderType: order.Type,
-				CreatedAt:      time.Now().UTC(),
-			}
-			logs = append(logs, &log)
+			log := acquireBookLog()
+			log.ID = book.id.Load()
+			log.Type = LogTypeMatch
+			log.MarketID = order.MarketID
+			log.Side = tOrd.Side
+			log.Price = tOrd.Price
+			log.Size = tOrd.Size
+			log.OrderID = tOrd.ID
+			log.UserID = tOrd.UserID
+			log.TakerOrderID = order.ID
+			log.TakerUserID = order.UserID
+			log.TakerSide = order.Side
+			log.TakerOrderType = order.Type
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 			order.Size = order.Size.Sub(tOrd.Size)
 
 			if order.Size.Equal(decimal.Zero) {
@@ -555,22 +569,21 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 			}
 		} else {
 			book.id.Add(1)
-			log := BookLog{
-				ID:             book.id.Load(),
-				Type:           LogTypeMatch,
-				MarketID:       order.MarketID,
-				Side:           tOrd.Side,
-				Price:          tOrd.Price,
-				Size:           order.Size,
-				OrderID:        tOrd.ID,
-				UserID:         tOrd.UserID,
-				TakerOrderID:   order.ID,
-				TakerUserID:    order.UserID,
-				TakerSide:      order.Side,
-				TakerOrderType: order.Type,
-				CreatedAt:      time.Now().UTC(),
-			}
-			logs = append(logs, &log)
+			log := acquireBookLog()
+			log.ID = book.id.Load()
+			log.Type = LogTypeMatch
+			log.MarketID = order.MarketID
+			log.Side = tOrd.Side
+			log.Price = tOrd.Price
+			log.Size = order.Size
+			log.OrderID = tOrd.ID
+			log.UserID = tOrd.UserID
+			log.TakerOrderID = order.ID
+			log.TakerUserID = order.UserID
+			log.TakerSide = order.Side
+			log.TakerOrderType = order.Type
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			targetQueue.insertOrder(tOrd, true)
 
@@ -599,17 +612,17 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) ([]*BookLog, error) {
 	if tOrd == nil {
 		myQueue.insertOrder(order, false)
 		book.id.Add(1)
-		logs = append(logs, &BookLog{
-			ID:        book.id.Load(),
-			Type:      LogTypeOpen,
-			MarketID:  order.MarketID,
-			Side:      order.Side,
-			Price:     order.Price,
-			Size:      order.Size,
-			OrderID:   order.ID,
-			UserID:    order.UserID,
-			CreatedAt: time.Now().UTC(),
-		})
+		log := acquireBookLog()
+		log.ID = book.id.Load()
+		log.Type = LogTypeOpen
+		log.MarketID = order.MarketID
+		log.Side = order.Side
+		log.Price = order.Price
+		log.Size = order.Size
+		log.OrderID = order.ID
+		log.UserID = order.UserID
+		log.CreatedAt = time.Now().UTC()
+		logs = append(logs, log)
 		return logs, nil
 	}
 
@@ -618,33 +631,32 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) ([]*BookLog, error) {
 		targetQueue.insertOrder(tOrd, true)
 		myQueue.insertOrder(order, false)
 		book.id.Add(1)
-		logs = append(logs, &BookLog{
-			ID:        book.id.Load(),
-			Type:      LogTypeOpen,
-			MarketID:  order.MarketID,
-			Side:      order.Side,
-			Price:     order.Price,
-			Size:      order.Size,
-			OrderID:   order.ID,
-			UserID:    order.UserID,
-			CreatedAt: time.Now().UTC(),
-		})
+		log := acquireBookLog()
+		log.ID = book.id.Load()
+		log.Type = LogTypeOpen
+		log.MarketID = order.MarketID
+		log.Side = order.Side
+		log.Price = order.Price
+		log.Size = order.Size
+		log.OrderID = order.ID
+		log.UserID = order.UserID
+		log.CreatedAt = time.Now().UTC()
+		logs = append(logs, log)
 		return logs, nil
 	}
 
 	targetQueue.addOrder(tOrd)
-	log := BookLog{
-		Type:           LogTypeCancel,
-		MarketID:       order.MarketID,
-		Side:           order.Side,
-		Price:          order.Price,
-		Size:           order.Size,
-		OrderID:        order.ID,
-		UserID:         order.UserID,
-		TakerOrderType: order.Type,
-		CreatedAt:      time.Now().UTC(),
-	}
-	logs = append(logs, &log)
+	log := acquireBookLog()
+	log.Type = LogTypeCancel
+	log.MarketID = order.MarketID
+	log.Side = order.Side
+	log.Price = order.Price
+	log.Size = order.Size
+	log.OrderID = order.ID
+	log.UserID = order.UserID
+	log.TakerOrderType = order.Type
+	log.CreatedAt = time.Now().UTC()
+	logs = append(logs, log)
 	return logs, nil
 }
 
@@ -662,18 +674,17 @@ func (book *OrderBook) handleMarketOrder(order *Order) ([]*BookLog, error) {
 
 		if tOrd == nil {
 			// Market order ran out of liquidity
-			log := BookLog{
-				Type:           LogTypeCancel,
-				MarketID:       order.MarketID,
-				Side:           order.Side,
-				Price:          order.Price,
-				Size:           order.Size,
-				OrderID:        order.ID,
-				UserID:         order.UserID,
-				TakerOrderType: order.Type,
-				CreatedAt:      time.Now().UTC(),
-			}
-			logs = append(logs, &log)
+			log := acquireBookLog()
+			log.Type = LogTypeCancel
+			log.MarketID = order.MarketID
+			log.Side = order.Side
+			log.Price = order.Price
+			log.Size = order.Size
+			log.OrderID = order.ID
+			log.UserID = order.UserID
+			log.TakerOrderType = order.Type
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 			return logs, nil
 		}
 
@@ -682,22 +693,21 @@ func (book *OrderBook) handleMarketOrder(order *Order) ([]*BookLog, error) {
 
 		if order.Size.GreaterThanOrEqual(amount) {
 			book.id.Add(1)
-			log := BookLog{
-				ID:             book.id.Load(),
-				Type:           LogTypeMatch,
-				MarketID:       order.MarketID,
-				Side:           tOrd.Side,
-				Price:          tOrd.Price,
-				Size:           tOrd.Size,
-				OrderID:        tOrd.ID,
-				UserID:         tOrd.UserID,
-				TakerOrderID:   order.ID,
-				TakerUserID:    order.UserID,
-				TakerSide:      order.Side,
-				TakerOrderType: order.Type,
-				CreatedAt:      time.Now().UTC(),
-			}
-			logs = append(logs, &log)
+			log := acquireBookLog()
+			log.ID = book.id.Load()
+			log.Type = LogTypeMatch
+			log.MarketID = order.MarketID
+			log.Side = tOrd.Side
+			log.Price = tOrd.Price
+			log.Size = tOrd.Size
+			log.OrderID = tOrd.ID
+			log.UserID = tOrd.UserID
+			log.TakerOrderID = order.ID
+			log.TakerUserID = order.UserID
+			log.TakerSide = order.Side
+			log.TakerOrderType = order.Type
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 			order.Size = order.Size.Sub(amount)
 			if order.Size.Equal(decimal.Zero) {
 				break
@@ -706,22 +716,21 @@ func (book *OrderBook) handleMarketOrder(order *Order) ([]*BookLog, error) {
 			tSize := order.Size.Div(tOrd.Price)
 
 			book.id.Add(1)
-			log := BookLog{
-				ID:             book.id.Load(),
-				Type:           LogTypeMatch,
-				MarketID:       order.MarketID,
-				Side:           tOrd.Side,
-				Price:          tOrd.Price,
-				Size:           tSize,
-				OrderID:        tOrd.ID,
-				UserID:         tOrd.UserID,
-				TakerOrderID:   order.ID,
-				TakerUserID:    order.UserID,
-				TakerSide:      order.Side,
-				TakerOrderType: order.Type,
-				CreatedAt:      time.Now().UTC(),
-			}
-			logs = append(logs, &log)
+			log := acquireBookLog()
+			log.ID = book.id.Load()
+			log.Type = LogTypeMatch
+			log.MarketID = order.MarketID
+			log.Side = tOrd.Side
+			log.Price = tOrd.Price
+			log.Size = tSize
+			log.OrderID = tOrd.ID
+			log.UserID = tOrd.UserID
+			log.TakerOrderID = order.ID
+			log.TakerUserID = order.UserID
+			log.TakerSide = order.Side
+			log.TakerOrderType = order.Type
+			log.CreatedAt = time.Now().UTC()
+			logs = append(logs, log)
 
 			tOrd.Size = tOrd.Size.Sub(tSize)
 			targetQueue.insertOrder(tOrd, true)
