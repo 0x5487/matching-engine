@@ -49,9 +49,12 @@ const (
 	LogTypeReject LogType = "reject"
 )
 
+// BookLog represents an event in the order book.
+// When OrderBookID > 0, it indicates that the order book state has changed (e.g., Open, Match, Cancel, Amend).
+// When OrderBookID == 0, the event does not affect order book state (e.g., Reject).
 type BookLog struct {
 	OrderBookID  uint64          `json:"id"`
-	Type         LogType         `json:"type"` // Event type: open, match, cancel, amend
+	Type         LogType         `json:"type"` // Event type: open, match, cancel, amend, reject
 	MarketID     string          `json:"market_id"`
 	Side         Side            `json:"side"`
 	Price        decimal.Decimal `json:"price"`
@@ -303,15 +306,15 @@ func (book *OrderBook) addOrder(order *Order) {
 
 	switch order.Type {
 	case Limit:
-		logs, _ = book.handleLimitOrder(order)
+		logs = book.handleLimitOrder(order)
 	case FOK:
-		logs, _ = book.handleFOKOrder(order)
+		logs = book.handleFOKOrder(order)
 	case IOC:
-		logs, _ = book.handleIOCOrder(order)
+		logs = book.handleIOCOrder(order)
 	case PostOnly:
-		logs, _ = book.handlePostOnlyOrder(order)
+		logs = book.handlePostOnlyOrder(order)
 	case Market:
-		logs, _ = book.handleMarketOrder(order)
+		logs = book.handleMarketOrder(order)
 	}
 
 	if len(logs) > 0 {
@@ -371,11 +374,11 @@ func (book *OrderBook) amendOrder(req *AmendRequest) {
 		var logs []*BookLog
 		switch order.Type {
 		case Limit:
-			logs, _ = book.handleLimitOrder(order)
+			logs = book.handleLimitOrder(order)
 		case PostOnly:
-			logs, _ = book.handlePostOnlyOrder(order)
+			logs = book.handlePostOnlyOrder(order)
 		default:
-			logs, _ = book.handleLimitOrder(order)
+			logs = book.handleLimitOrder(order)
 		}
 
 		if len(logs) > 0 {
@@ -465,7 +468,7 @@ func (book *OrderBook) depth(limit uint32) *Depth {
 }
 
 // handleLimitOrder handles Limit orders. It matches against the opposite queue and adds the remaining size to the book.
-func (book *OrderBook) handleLimitOrder(order *Order) ([]*BookLog, error) {
+func (book *OrderBook) handleLimitOrder(order *Order) []*BookLog {
 	var myQueue, targetQueue *queue
 	if order.Side == Buy {
 		myQueue = book.bidQueue
@@ -498,7 +501,7 @@ func (book *OrderBook) handleLimitOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.CreatedAt = now
 			logs = append(logs, log)
-			return logs, nil
+			return logs
 		}
 
 		// Check price condition before popping
@@ -519,7 +522,7 @@ func (book *OrderBook) handleLimitOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.CreatedAt = now
 			logs = append(logs, log)
-			return logs, nil
+			return logs
 		}
 
 		// Price matches, now actually pop the order for matching
@@ -569,11 +572,11 @@ func (book *OrderBook) handleLimitOrder(order *Order) ([]*BookLog, error) {
 		}
 	}
 
-	return logs, nil
+	return logs
 }
 
 // handleIOCOrder handles Immediate Or Cancel orders. It matches as much as possible and cancels the rest.
-func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
+func (book *OrderBook) handleIOCOrder(order *Order) []*BookLog {
 	var targetQueue *queue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -590,7 +593,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
 		tOrd := targetQueue.getHeadOrder()
 
 		if tOrd == nil {
-			// IOC Cancel (No match)
+			// IOC Cancel (No match) - Reject does not change order book state
 			log := acquireBookLog()
 			log.Type = LogTypeReject
 			log.MarketID = order.MarketID
@@ -602,13 +605,12 @@ func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.CreatedAt = now
 			logs = append(logs, log)
-			return logs, nil
+			return logs
 		}
 
-		// Check price condition before popping
 		if order.Side == Buy && order.Price.LessThan(tOrd.Price) ||
 			order.Side == Sell && order.Price.GreaterThan(tOrd.Price) {
-			// IOC Cancel (Price mismatch) - no need to pop/insert
+			// IOC Cancel (Price mismatch) - Reject does not change order book state
 			log := acquireBookLog()
 			log.Type = LogTypeReject
 			log.MarketID = order.MarketID
@@ -620,7 +622,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.CreatedAt = now
 			logs = append(logs, log)
-			return logs, nil
+			return logs
 		}
 
 		// Price matches, now actually pop the order for matching
@@ -670,11 +672,11 @@ func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
 		}
 	}
 
-	return logs, nil
+	return logs
 }
 
 // handleFOKOrder handles Fill Or Kill orders. It checks if the order can be fully filled before matching.
-func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
+func (book *OrderBook) handleFOKOrder(order *Order) []*BookLog {
 	var targetQueue *queue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -692,7 +694,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 
 	for remainingSize.GreaterThan(decimal.Zero) {
 		if el == nil {
-			// Not enough liquidity to fill the entire order
+			// Not enough liquidity - Reject does not change order book state
 			log := acquireBookLog()
 			log.Type = LogTypeReject
 			log.MarketID = order.MarketID
@@ -704,7 +706,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.CreatedAt = now
 			logs = append(logs, log)
-			return logs, nil
+			return logs
 		}
 
 		unit, _ := el.Value.(*priceUnit)
@@ -713,7 +715,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 		// Check if the price is acceptable
 		if order.Side == Buy && order.Price.LessThan(tOrd.Price) ||
 			order.Side == Sell && order.Price.GreaterThan(tOrd.Price) {
-			// Price is not acceptable, reject the order
+			// Price not acceptable - Reject does not change order book state
 			log := acquireBookLog()
 			log.Type = LogTypeReject
 			log.MarketID = order.MarketID
@@ -725,7 +727,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.CreatedAt = now
 			logs = append(logs, log)
-			return logs, nil
+			return logs
 		}
 
 		// Subtract the entire price level's total size from remaining
@@ -781,11 +783,11 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 		}
 	}
 
-	return logs, nil
+	return logs
 }
 
 // handlePostOnlyOrder handles Post Only orders. It ensures the order is added to the book without matching immediately.
-func (book *OrderBook) handlePostOnlyOrder(order *Order) ([]*BookLog, error) {
+func (book *OrderBook) handlePostOnlyOrder(order *Order) []*BookLog {
 	var myQueue, targetQueue *queue
 	if order.Side == Buy {
 		myQueue = book.bidQueue
@@ -818,7 +820,7 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) ([]*BookLog, error) {
 		log.OrderType = order.Type
 		log.CreatedAt = now
 		logs = append(logs, log)
-		return logs, nil
+		return logs
 	}
 
 	// Check if order would cross the spread (would match)
@@ -839,10 +841,10 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) ([]*BookLog, error) {
 		log.OrderType = order.Type
 		log.CreatedAt = now
 		logs = append(logs, log)
-		return logs, nil
+		return logs
 	}
 
-	// Price would cross, reject the post-only order
+	// Price would cross - Reject does not change order book state
 	log := acquireBookLog()
 	log.Type = LogTypeReject
 	log.MarketID = order.MarketID
@@ -854,11 +856,11 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) ([]*BookLog, error) {
 	log.OrderType = order.Type
 	log.CreatedAt = now
 	logs = append(logs, log)
-	return logs, nil
+	return logs
 }
 
 // handleMarketOrder handles Market orders. It matches against the best available prices until filled or liquidity is exhausted.
-func (book *OrderBook) handleMarketOrder(order *Order) ([]*BookLog, error) {
+func (book *OrderBook) handleMarketOrder(order *Order) []*BookLog {
 	targetQueue := book.bidQueue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -872,7 +874,7 @@ func (book *OrderBook) handleMarketOrder(order *Order) ([]*BookLog, error) {
 		tOrd := targetQueue.popHeadOrder()
 
 		if tOrd == nil {
-			// Market order ran out of liquidity
+			// Market order ran out of liquidity - Reject does not change order book state
 			log := acquireBookLog()
 			log.Type = LogTypeReject
 			log.MarketID = order.MarketID
@@ -884,7 +886,7 @@ func (book *OrderBook) handleMarketOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.CreatedAt = now
 			logs = append(logs, log)
-			return logs, nil
+			return logs
 		}
 
 		// The size of the market order is the total amount, not the quantity.
@@ -936,5 +938,5 @@ func (book *OrderBook) handleMarketOrder(order *Order) ([]*BookLog, error) {
 		}
 	}
 
-	return logs, nil
+	return logs
 }

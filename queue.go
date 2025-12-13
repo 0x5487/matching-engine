@@ -2,7 +2,6 @@ package match
 
 import (
 	"container/list"
-	"sync/atomic"
 
 	"github.com/huandu/skiplist"
 	"github.com/shopspring/decimal"
@@ -104,7 +103,7 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 		unit.totalSize = unit.totalSize.Add(order.Size)
 		q.orders[order.ID] = orderElement
 
-		atomic.AddInt64(&q.totalOrders, 1)
+		q.totalOrders++
 	} else {
 		unit := priceUnit{
 			list: list.New(),
@@ -118,8 +117,8 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 		el := q.depthList.Set(order.Price, &unit)
 		q.priceList[order.Price.String()] = el
 
-		atomic.AddInt64(&q.totalOrders, 1)
-		atomic.AddInt64(&q.depths, 1)
+		q.totalOrders++
+		q.depths++
 	}
 }
 
@@ -136,13 +135,13 @@ func (q *queue) removeOrder(price decimal.Decimal, id string) {
 			unit.list.Remove(orderElement)
 			unit.totalSize = unit.totalSize.Sub(order.Size)
 			delete(q.orders, id)
-			atomic.AddInt64(&q.totalOrders, -1)
+			q.totalOrders--
 		}
 
 		if unit.list.Len() == 0 {
 			q.depthList.RemoveElement(skipElement)
 			delete(q.priceList, order.Price.String())
-			atomic.AddInt64(&q.depths, -1)
+			q.depths--
 		}
 
 	}
@@ -191,12 +190,12 @@ func (q *queue) popHeadOrder() *Order {
 
 // orderCount returns the total number of orders in the queue.
 func (q *queue) orderCount() int64 {
-	return atomic.LoadInt64(&q.totalOrders)
+	return q.totalOrders
 }
 
 // depthCount returns the number of price levels in the queue.
 func (q *queue) depthCount() int64 {
-	return atomic.LoadInt64(&q.depths)
+	return q.depths
 }
 
 // depth returns the order book depth up to the specified limit.
