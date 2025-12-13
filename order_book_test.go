@@ -516,7 +516,8 @@ func TestAmendOrder(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		// Verify Depth
-		depth := testOrderBook.depth(10)
+		depth, err := testOrderBook.Depth(10)
+		assert.NoError(t, err)
 		assert.Equal(t, "0.5", depth.Bids[0].Size.String())
 
 		// Verify Log
@@ -588,7 +589,8 @@ func TestAmendOrder(t *testing.T) {
 		assert.NoError(t, err)
 		time.Sleep(50 * time.Millisecond)
 
-		depth := testOrderBook.depth(10)
+		depth, err := testOrderBook.Depth(10)
+		assert.NoError(t, err)
 		assert.Equal(t, "95", depth.Bids[0].Price.String())
 		assert.Equal(t, "1", depth.Bids[0].Size.String())
 
@@ -607,7 +609,8 @@ func TestAmendOrder(t *testing.T) {
 		assert.NoError(t, err)
 		time.Sleep(50 * time.Millisecond)
 
-		depth := testOrderBook.depth(10)
+		depth, err := testOrderBook.Depth(10)
+		assert.NoError(t, err)
 		assert.Equal(t, "95", depth.Bids[0].Price.String())
 		assert.Equal(t, "5", depth.Bids[0].Size.String())
 
@@ -618,6 +621,49 @@ func TestAmendOrder(t *testing.T) {
 		assert.Equal(t, "5", log.Size.String())
 		assert.Equal(t, "90", log.OldPrice.String())
 		assert.Equal(t, "1", log.OldSize.String())
+	})
+
+	t.Run("amend order crosses spread and matches", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
+		// Initial: Sell 110(1), 120(1)... Buy 90(1)...
+
+		// Amend Buy-1 (90) to 115 (Crosses Sell-1 at 110) with Size 2
+		// Should match Sell-1 (Price 110, Size 1) fully.
+		// Remaining Buy-1 (Size 1) should sit at 115.
+		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(115), decimal.NewFromInt(2))
+		assert.NoError(t, err)
+		time.Sleep(50 * time.Millisecond)
+
+		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishTrader)
+		// 6 setup + 1 amend + 1 match + 1 open (remaining)
+		assert.Equal(t, 9, memoryPublishTrader.Count())
+
+		// Verify Amend Log
+		amendLog := memoryPublishTrader.Get(6)
+		assert.Equal(t, LogTypeAmend, amendLog.Type)
+		assert.Equal(t, "115", amendLog.Price.String())
+		assert.Equal(t, "2", amendLog.Size.String())
+
+		// Verify Match Log
+		matchLog := memoryPublishTrader.Get(7)
+		assert.Equal(t, LogTypeMatch, matchLog.Type)
+		assert.Equal(t, "buy-1", matchLog.OrderID)
+		assert.Equal(t, "sell-1", matchLog.MakerOrderID)
+		assert.Equal(t, "110", matchLog.Price.String()) // Matched at Maker price
+		assert.Equal(t, "1", matchLog.Size.String())
+
+		// Verify Open Log (Remaining part)
+		openLog := memoryPublishTrader.Get(8)
+		assert.Equal(t, LogTypeOpen, openLog.Type)
+		assert.Equal(t, "buy-1", openLog.OrderID)
+		assert.Equal(t, "115", openLog.Price.String())
+		assert.Equal(t, "1", openLog.Size.String())
+
+		// Verify Depth: Buy-1 remaining 1 at 115
+		depth, err := testOrderBook.Depth(10)
+		assert.NoError(t, err)
+		assert.Equal(t, "115", depth.Bids[0].Price.String())
+		assert.Equal(t, "1", depth.Bids[0].Size.String())
 	})
 }
 
