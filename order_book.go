@@ -260,14 +260,14 @@ func (book *OrderBook) addOrder(order *Order) {
 
 // amendOrder processes the modification of an order.
 func (book *OrderBook) amendOrder(req *AmendRequest) {
-	var queue *queue
+	var myQueue *queue
 	order := book.askQueue.order(req.OrderID)
 	if order != nil {
-		queue = book.askQueue
+		myQueue = book.askQueue
 	} else {
 		order = book.bidQueue.order(req.OrderID)
 		if order != nil {
-			queue = book.bidQueue
+			myQueue = book.bidQueue
 		}
 	}
 
@@ -280,51 +280,72 @@ func (book *OrderBook) amendOrder(req *AmendRequest) {
 
 	// Scenario 1: Price changed OR Size increased -> Priority Lost (Remove and Re-insert)
 	if !oldPrice.Equal(req.NewPrice) || req.NewSize.GreaterThan(oldSize) {
-		queue.removeOrder(oldPrice, req.OrderID)
+		myQueue.removeOrder(oldPrice, req.OrderID)
 
 		order.Price = req.NewPrice
 		order.Size = req.NewSize
 
-		// If price changed, we might need to switch queues if the side logic depended on it?
-		// Actually, side doesn't change in amend. But we need to insert into the correct queue.
-		// Since we found it in `queue`, we insert back into `queue`.
-		// Wait, if price changes, does it cross the spread?
-		// For simplicity in this implementation, Amend is treated as "Cancel + PostOnly/Limit".
-		// But here we just re-insert into the book. If it crosses the spread, it might match immediately?
-		// Standard Amend usually re-evaluates matching.
-		// To keep it simple and safe: We treat it as a new Limit order insertion but without matching logic for now,
-		// OR we should route it through handleLimitOrder?
-		// If we route through handleLimitOrder, it's complex because handleLimitOrder expects a new *Order struct.
-		// Let's assume Amend is for resting orders and simply updates the book.
-		// If the new price crosses the spread, it will sit there (crossed market).
-		// Ideally, one should cancel and place a new order if they want to match.
-		// Here we just insert it back to the queue.
-		queue.insertOrder(order, false) // false = push back (priority lost)
+		// Publish Amend Log FIRST to establish the new state
+		book.id.Add(1)
+		log := acquireBookLog()
+		log.OrderBookID = book.id.Load()
+		log.Type = LogTypeAmend
+		log.MarketID = order.MarketID
+		log.Side = order.Side
+		log.Price = req.NewPrice
+		log.Size = req.NewSize
+		log.OldPrice = oldPrice
+		log.OldSize = oldSize
+		log.OrderID = order.ID
+		log.UserID = order.UserID
+		log.OrderType = order.Type
+		log.CreatedAt = time.Now().UTC()
+		book.publishTrader.Publish(log)
+		releaseBookLog(log)
+
+		// Trigger Matching Logic (Similar to handleLimitOrder)
+		var logs []*BookLog
+		switch order.Type {
+		case Limit:
+			logs, _ = book.handleLimitOrder(order)
+		case PostOnly:
+			logs, _ = book.handlePostOnlyOrder(order)
+		default:
+			logs, _ = book.handleLimitOrder(order)
+		}
+
+		if len(logs) > 0 {
+			book.publishTrader.Publish(logs...)
+			for _, log := range logs {
+				releaseBookLog(log)
+			}
+		}
+
 	} else {
 		// Scenario 2: Price same AND Size decreased -> Priority Kept (Update in-place)
 		if req.NewSize.LessThan(oldSize) {
-			queue.updateOrderSize(req.OrderID, req.NewSize)
+			myQueue.updateOrderSize(req.OrderID, req.NewSize)
 		}
-		// If size is same, do nothing.
+
+		// Publish Amend Log
+		book.id.Add(1)
+		log := acquireBookLog()
+		log.OrderBookID = book.id.Load()
+		log.Type = LogTypeAmend
+		log.MarketID = order.MarketID
+		log.Side = order.Side
+		log.Price = req.NewPrice
+		log.Size = req.NewSize
+		log.OldPrice = oldPrice
+		log.OldSize = oldSize
+		log.OrderID = order.ID
+		log.UserID = order.UserID
+		log.OrderType = order.Type
+		log.CreatedAt = time.Now().UTC()
+
+		book.publishTrader.Publish(log)
+		releaseBookLog(log)
 	}
-
-	book.id.Add(1)
-	log := acquireBookLog()
-	log.OrderBookID = book.id.Load()
-	log.Type = LogTypeAmend
-	log.MarketID = order.MarketID
-	log.Side = order.Side
-	log.Price = req.NewPrice
-	log.Size = req.NewSize
-	log.OldPrice = oldPrice
-	log.OldSize = oldSize
-	log.OrderID = order.ID
-	log.UserID = order.UserID
-	log.OrderType = order.Type
-	log.CreatedAt = time.Now().UTC()
-
-	book.publishTrader.Publish(log)
-	releaseBookLog(log)
 }
 
 // cancelOrder processes the cancellation of an order.
