@@ -4,7 +4,7 @@ a matching-engine for crypto exchange
 
 ## Feature
 
-1. order type (`market`, `limit`, `ioc`, `post_only`, `fok`)
+1. order type (`market`, `limit`, `ioc`, `post_only`, `fok`, `cancel`)
 1. engine supports multiple markets
 1. high-speed. (all in memory)
 1. query order book depth
