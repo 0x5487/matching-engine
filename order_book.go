@@ -192,10 +192,10 @@ func NewOrderBook(publishTrader PublishTrader) *OrderBook {
 	return &OrderBook{
 		bidQueue:      NewBuyerQueue(),
 		askQueue:      NewSellerQueue(),
-		orderChan:     make(chan *Order, 1000000),
-		amendChan:     make(chan *AmendRequest, 1000000),
-		cancelChan:    make(chan string, 1000000),
-		depthChan:     make(chan *Message, 1000000),
+		orderChan:     make(chan *Order, 10000),
+		amendChan:     make(chan *AmendRequest, 10000),
+		cancelChan:    make(chan string, 10000),
+		depthChan:     make(chan *Message, 100),
 		publishTrader: publishTrader,
 	}
 }
@@ -475,10 +475,13 @@ func (book *OrderBook) handleLimitOrder(order *Order) ([]*BookLog, error) {
 		targetQueue = book.bidQueue
 	}
 
-	logs := []*BookLog{}
+	// Pre-allocate slice and cache timestamp
+	logs := make([]*BookLog, 0, 8)
+	now := time.Now().UTC()
 
 	for {
-		tOrd := targetQueue.popHeadOrder()
+		// Peek first to check if matching is possible
+		tOrd := targetQueue.getHeadOrder()
 
 		if tOrd == nil {
 			myQueue.insertOrder(order, false)
@@ -493,14 +496,15 @@ func (book *OrderBook) handleLimitOrder(order *Order) ([]*BookLog, error) {
 			log.OrderID = order.ID
 			log.UserID = order.UserID
 			log.OrderType = order.Type
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 			return logs, nil
 		}
 
+		// Check price condition before popping
 		if order.Side == Buy && order.Price.LessThan(tOrd.Price) ||
 			order.Side == Sell && order.Price.GreaterThan(tOrd.Price) {
-			targetQueue.insertOrder(tOrd, true)
+			// Price doesn't match, add order to book without popping
 			myQueue.insertOrder(order, false)
 			book.id.Add(1)
 			log := acquireBookLog()
@@ -513,10 +517,13 @@ func (book *OrderBook) handleLimitOrder(order *Order) ([]*BookLog, error) {
 			log.OrderID = order.ID
 			log.UserID = order.UserID
 			log.OrderType = order.Type
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 			return logs, nil
 		}
+
+		// Price matches, now actually pop the order for matching
+		tOrd = targetQueue.popHeadOrder()
 
 		if order.Size.GreaterThanOrEqual(tOrd.Size) {
 			book.id.Add(1)
@@ -532,7 +539,7 @@ func (book *OrderBook) handleLimitOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.MakerOrderID = tOrd.ID
 			log.MakerUserID = tOrd.UserID
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 			order.Size = order.Size.Sub(tOrd.Size)
 
@@ -553,7 +560,7 @@ func (book *OrderBook) handleLimitOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.MakerOrderID = tOrd.ID
 			log.MakerUserID = tOrd.UserID
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			targetQueue.insertOrder(tOrd, true)
@@ -574,10 +581,13 @@ func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
 		targetQueue = book.bidQueue
 	}
 
-	logs := []*BookLog{}
+	// Pre-allocate slice and cache timestamp
+	logs := make([]*BookLog, 0, 8)
+	now := time.Now().UTC()
 
 	for {
-		tOrd := targetQueue.popHeadOrder()
+		// Peek first to check if matching is possible
+		tOrd := targetQueue.getHeadOrder()
 
 		if tOrd == nil {
 			// IOC Cancel (No match)
@@ -590,16 +600,15 @@ func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
 			log.OrderID = order.ID
 			log.UserID = order.UserID
 			log.OrderType = order.Type
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 			return logs, nil
 		}
 
+		// Check price condition before popping
 		if order.Side == Buy && order.Price.LessThan(tOrd.Price) ||
 			order.Side == Sell && order.Price.GreaterThan(tOrd.Price) {
-			targetQueue.insertOrder(tOrd, true)
-
-			// IOC Cancel (Price mismatch)
+			// IOC Cancel (Price mismatch) - no need to pop/insert
 			log := acquireBookLog()
 			log.Type = LogTypeReject
 			log.MarketID = order.MarketID
@@ -609,10 +618,13 @@ func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
 			log.OrderID = order.ID
 			log.UserID = order.UserID
 			log.OrderType = order.Type
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 			return logs, nil
 		}
+
+		// Price matches, now actually pop the order for matching
+		tOrd = targetQueue.popHeadOrder()
 
 		if order.Size.GreaterThanOrEqual(tOrd.Size) {
 			book.id.Add(1)
@@ -628,7 +640,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.MakerOrderID = tOrd.ID
 			log.MakerUserID = tOrd.UserID
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 			order.Size = order.Size.Sub(tOrd.Size)
 
@@ -649,7 +661,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.MakerOrderID = tOrd.ID
 			log.MakerUserID = tOrd.UserID
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			targetQueue.insertOrder(tOrd, true)
@@ -670,7 +682,9 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 		targetQueue = book.bidQueue
 	}
 
-	logs := []*BookLog{}
+	// Pre-allocate slice and cache timestamp
+	logs := make([]*BookLog, 0, 8)
+	now := time.Now().UTC()
 
 	// Phase 1: Validate if the order can be fully filled
 	el := targetQueue.depthList.Front()
@@ -688,7 +702,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 			log.OrderID = order.ID
 			log.UserID = order.UserID
 			log.OrderType = order.Type
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 			return logs, nil
 		}
@@ -709,7 +723,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 			log.OrderID = order.ID
 			log.UserID = order.UserID
 			log.OrderType = order.Type
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 			return logs, nil
 		}
@@ -737,7 +751,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.MakerOrderID = tOrd.ID
 			log.MakerUserID = tOrd.UserID
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 			order.Size = order.Size.Sub(tOrd.Size)
 
@@ -758,7 +772,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.MakerOrderID = tOrd.ID
 			log.MakerUserID = tOrd.UserID
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			targetQueue.insertOrder(tOrd, true)
@@ -781,11 +795,15 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) ([]*BookLog, error) {
 		targetQueue = book.bidQueue
 	}
 
-	logs := []*BookLog{}
+	// Pre-allocate slice and cache timestamp
+	logs := make([]*BookLog, 0, 1)
+	now := time.Now().UTC()
 
-	tOrd := targetQueue.popHeadOrder()
+	// Use peek instead of pop to avoid unnecessary remove/insert operations
+	tOrd := targetQueue.getHeadOrder()
 
 	if tOrd == nil {
+		// No opposing orders, safe to add
 		myQueue.insertOrder(order, false)
 		book.id.Add(1)
 		log := acquireBookLog()
@@ -798,14 +816,15 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) ([]*BookLog, error) {
 		log.OrderID = order.ID
 		log.UserID = order.UserID
 		log.OrderType = order.Type
-		log.CreatedAt = time.Now().UTC()
+		log.CreatedAt = now
 		logs = append(logs, log)
 		return logs, nil
 	}
 
+	// Check if order would cross the spread (would match)
 	if order.Side == Buy && order.Price.LessThan(tOrd.Price) ||
 		order.Side == Sell && order.Price.GreaterThan(tOrd.Price) {
-		targetQueue.insertOrder(tOrd, true)
+		// Price doesn't cross, safe to add as maker
 		myQueue.insertOrder(order, false)
 		book.id.Add(1)
 		log := acquireBookLog()
@@ -818,12 +837,12 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) ([]*BookLog, error) {
 		log.OrderID = order.ID
 		log.UserID = order.UserID
 		log.OrderType = order.Type
-		log.CreatedAt = time.Now().UTC()
+		log.CreatedAt = now
 		logs = append(logs, log)
 		return logs, nil
 	}
 
-	targetQueue.insertOrder(tOrd, true)
+	// Price would cross, reject the post-only order
 	log := acquireBookLog()
 	log.Type = LogTypeReject
 	log.MarketID = order.MarketID
@@ -833,7 +852,7 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) ([]*BookLog, error) {
 	log.OrderID = order.ID
 	log.UserID = order.UserID
 	log.OrderType = order.Type
-	log.CreatedAt = time.Now().UTC()
+	log.CreatedAt = now
 	logs = append(logs, log)
 	return logs, nil
 }
@@ -845,7 +864,9 @@ func (book *OrderBook) handleMarketOrder(order *Order) ([]*BookLog, error) {
 		targetQueue = book.askQueue
 	}
 
-	logs := []*BookLog{}
+	// Pre-allocate slice and cache timestamp
+	logs := make([]*BookLog, 0, 8)
+	now := time.Now().UTC()
 
 	for {
 		tOrd := targetQueue.popHeadOrder()
@@ -861,7 +882,7 @@ func (book *OrderBook) handleMarketOrder(order *Order) ([]*BookLog, error) {
 			log.OrderID = order.ID
 			log.UserID = order.UserID
 			log.OrderType = order.Type
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 			return logs, nil
 		}
@@ -883,7 +904,7 @@ func (book *OrderBook) handleMarketOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.MakerOrderID = tOrd.ID
 			log.MakerUserID = tOrd.UserID
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 			order.Size = order.Size.Sub(amount)
 			if order.Size.Equal(decimal.Zero) {
@@ -905,7 +926,7 @@ func (book *OrderBook) handleMarketOrder(order *Order) ([]*BookLog, error) {
 			log.OrderType = order.Type
 			log.MakerOrderID = tOrd.ID
 			log.MakerUserID = tOrd.UserID
-			log.CreatedAt = time.Now().UTC()
+			log.CreatedAt = now
 			logs = append(logs, log)
 
 			tOrd.Size = tOrd.Size.Sub(tSize)

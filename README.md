@@ -28,48 +28,102 @@ go get github.com/0x5487/matching-engine
 
 ## 🛠 Usage
 
-### 1. Initialize the Engine
-
-You need to implement the `PublishTrader` interface to handle the output logs (trades, order updates).
+### Quick Start
 
 ```go
 package main
 
 import (
- "context"
- "fmt"
- "time"
+	"context"
+	"fmt"
+	"time"
 
- match "github.com/0x5487/matching-engine"
- "github.com/shopspring/decimal"
+	match "github.com/0x5487/matching-engine"
+	"github.com/shopspring/decimal"
 )
 
-// MyTradeHandler implements match.PublishTrader
-type MyTradeHandler struct{}
-
-func (h *MyTradeHandler) Publish(logs ...*match.BookLog) {
- for _, log := range logs {
-  fmt.Printf("Event: %s | OrderID: %s | Price: %s | Size: %s\n", 
-            log.Type, log.OrderID, log.Price, log.Size)
- }
-}
-
 func main() {
- publishTrader := NewMemoryPublishTrader() // save trade into memory, if you want to pulish the trade to MQ, you can implement the interface
- engine := NewMatchingEngine(publishTrader)
+	ctx := context.Background()
 
- // market1
- market1 := "BTC-USDT"
- order1 := &Order{
-  ID:       "order1",
-  MarketID: market1,
-  Type:     Limit,
-  Side:     Buy,
-  Price:    decimal.NewFromInt(100),
-  Size:     decimal.NewFromInt(2),
- }
+	// 1. Create a publish trader to handle order book events
+	publishTrader := match.NewMemoryPublishTrader()
 
- _, err := suite.engine.AddOrder(order1)
+	// 2. Create and start the order book
+	orderBook := match.NewOrderBook(publishTrader)
+	go orderBook.Start()
+
+	// 3. Add a limit buy order
+	buyOrder := &match.Order{
+		ID:       "buy-1",
+		MarketID: "BTC-USDT",
+		Type:     match.Limit,
+		Side:     match.Buy,
+		Price:    decimal.NewFromInt(50000),
+		Size:     decimal.NewFromInt(1),
+		UserID:   1001,
+	}
+	_ = orderBook.AddOrder(ctx, buyOrder)
+
+	// 4. Add a limit sell order (this will match with the buy order)
+	sellOrder := &match.Order{
+		ID:       "sell-1",
+		MarketID: "BTC-USDT",
+		Type:     match.Limit,
+		Side:     match.Sell,
+		Price:    decimal.NewFromInt(50000),
+		Size:     decimal.NewFromInt(1),
+		UserID:   1002,
+	}
+	_ = orderBook.AddOrder(ctx, sellOrder)
+
+	time.Sleep(100 * time.Millisecond)
+
+	// 5. Check the results
+	fmt.Printf("Total events: %d\n", publishTrader.Count())
+	for i := 0; i < publishTrader.Count(); i++ {
+		log := publishTrader.Get(i)
+		fmt.Printf("[%s] OrderID: %s, Price: %s, Size: %s\n",
+			log.Type, log.OrderID, log.Price, log.Size)
+	}
+
+	// 6. Get current order book depth
+	depth, _ := orderBook.Depth(10)
+	fmt.Printf("Bids: %d, Asks: %d\n", len(depth.Bids), len(depth.Asks))
+}
+```
+
+### Order Types
+
+| Type | Description |
+|------|-------------|
+| `Limit` | Buy/sell at a specific price or better |
+| `Market` | Execute immediately at best available price |
+| `IOC` | Fill immediately, cancel unfilled portion |
+| `FOK` | Fill entirely or cancel completely |
+| `PostOnly` | Add to book as maker only, reject if would cross |
+
+### Order Management
+
+```go
+// Cancel an order
+orderBook.CancelOrder(ctx, "order-id")
+
+// Amend an order (change price or size)
+orderBook.AmendOrder(ctx, "order-id", newPrice, newSize)
+```
+
+### Custom Event Handler
+
+Implement `PublishTrader` interface to handle events your way:
+
+```go
+type MyHandler struct{}
+
+func (h *MyHandler) Publish(logs ...*match.BookLog) {
+	for _, log := range logs {
+		// Send to WebSocket, save to DB, publish to MQ, etc.
+		fmt.Printf("Event: %s | OrderID: %s\n", log.Type, log.OrderID)
+	}
 }
 ```
 
