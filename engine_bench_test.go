@@ -26,7 +26,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 		ctx := context.Background()
 		var errCount int64
 
-		publishTrader := NewDiscardPublishTrader()
+		publishTrader := NewDiscardPublishLog()
 		engine := NewMatchingEngine(publishTrader)
 
 		b.Run(fmt.Sprintf("goroutines-%d", i*goprocs), func(b *testing.B) {

@@ -13,11 +13,11 @@ import (
 type MatchingEngine struct {
 	isShutdown    atomic.Bool
 	orderbooks    sync.Map
-	publishTrader PublishTrader
+	publishTrader PublishLog
 }
 
 // NewMatchingEngine creates a new matching engine instance.
-func NewMatchingEngine(publishTrader PublishTrader) *MatchingEngine {
+func NewMatchingEngine(publishTrader PublishLog) *MatchingEngine {
 	return &MatchingEngine{
 		publishTrader: publishTrader,
 	}
