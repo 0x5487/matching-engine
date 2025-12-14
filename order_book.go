@@ -495,7 +495,7 @@ func (book *OrderBook) handleLimitOrder(order *Order) []*BookLog {
 
 	for {
 		// Peek first to check if matching is possible
-		tOrd := targetQueue.getHeadOrder()
+		tOrd := targetQueue.peekHeadOrder()
 
 		if tOrd == nil {
 			myQueue.insertOrder(order, false)
@@ -601,7 +601,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) []*BookLog {
 
 	for {
 		// Peek first to check if matching is possible
-		tOrd := targetQueue.getHeadOrder()
+		tOrd := targetQueue.peekHeadOrder()
 
 		if tOrd == nil {
 			// IOC Cancel (No match) - Reject does not change order book state
@@ -825,7 +825,7 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) []*BookLog {
 	now := time.Now().UTC()
 
 	// Use peek instead of pop to avoid unnecessary remove/insert operations
-	tOrd := targetQueue.getHeadOrder()
+	tOrd := targetQueue.peekHeadOrder()
 
 	if tOrd == nil {
 		// No opposing orders, safe to add
