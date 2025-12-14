@@ -11,7 +11,7 @@ import (
 
 func TestMatchingEngine(t *testing.T) {
 	t.Run("PlaceOrders", func(t *testing.T) {
-		publishTrader := NewMemoryPublishTrader()
+		publishTrader := NewMemoryPublishLog()
 		engine := NewMatchingEngine(publishTrader)
 
 		ctx := context.Background()
@@ -54,7 +54,7 @@ func TestMatchingEngine(t *testing.T) {
 	})
 
 	t.Run("CancelOrder", func(t *testing.T) {
-		publishTrader := NewMemoryPublishTrader()
+		publishTrader := NewMemoryPublishLog()
 		engine := NewMatchingEngine(publishTrader)
 
 		ctx := context.Background()
@@ -101,7 +101,7 @@ func TestMatchingEngine(t *testing.T) {
 
 func TestMatchingEngineShutdown(t *testing.T) {
 	t.Run("ShutdownMultipleMarkets", func(t *testing.T) {
-		publishTrader := NewMemoryPublishTrader()
+		publishTrader := NewMemoryPublishLog()
 		engine := NewMatchingEngine(publishTrader)
 
 		ctx := context.Background()
@@ -141,7 +141,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 	})
 
 	t.Run("RejectsNewMarkets", func(t *testing.T) {
-		publishTrader := NewMemoryPublishTrader()
+		publishTrader := NewMemoryPublishLog()
 		engine := NewMatchingEngine(publishTrader)
 
 		ctx := context.Background()
@@ -182,7 +182,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 	})
 
 	t.Run("RespectsContextTimeout", func(t *testing.T) {
-		publishTrader := NewMemoryPublishTrader()
+		publishTrader := NewMemoryPublishLog()
 		engine := NewMatchingEngine(publishTrader)
 
 		ctx := context.Background()

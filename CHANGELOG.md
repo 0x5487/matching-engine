@@ -2,6 +2,11 @@
 
 ## next
 
+- feature: add `RejectReason` field to `BookLog` with constants for reject scenarios (`no_liquidity`, `price_mismatch`, `insufficient_size`, `would_cross_spread`)
+- feature: add `TradeID` field to `BookLog` for sequential trade identification (only set on Match events)
+- feature: add `Amount` field to `BookLog` with pre-calculated `Price × Size` (only set on Match events)
+- docs: add `PublishTrader` interface documentation explaining sync.Pool recycling requirements
+- perf: optimize atomic operations by using `Add()` return value instead of separate `Load()` call
 - feature: add `UpdateID` to `Depth` and track order book state changes
 - refactor: split `handleOrder` into separate handlers for each order type
 - refactor: replace `Trade` with `BookLog` to capture Open, Match, and Cancel events for full order book reconstruction
