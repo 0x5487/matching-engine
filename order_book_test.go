@@ -191,11 +191,11 @@ func TestMarketOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
-			ID:    "buyAll",
-			Type:  Market,
-			Side:  Buy,
-			Price: decimal.NewFromInt(0),
-			Size:  decimal.NewFromInt(110).Add(decimal.NewFromInt(120)).Add(decimal.NewFromInt(130)),
+			ID:        "buyAll",
+			Type:      Market,
+			Side:      Buy,
+			Price:     decimal.NewFromInt(0),
+			QuoteSize: decimal.NewFromInt(110).Add(decimal.NewFromInt(120)).Add(decimal.NewFromInt(130)), // 360 USDT to spend
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
@@ -214,11 +214,11 @@ func TestMarketOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
 		order := &Order{
-			ID:    "mysell",
-			Type:  Market,
-			Side:  Sell,
-			Price: decimal.NewFromInt(0),
-			Size:  decimal.NewFromInt(90),
+			ID:        "mysell",
+			Type:      Market,
+			Side:      Sell,
+			Price:     decimal.NewFromInt(0),
+			QuoteSize: decimal.NewFromInt(90), // 90 USDT worth
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
@@ -231,6 +231,172 @@ func TestMarketOrder(t *testing.T) {
 
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
 		assert.Equal(t, int64(2), testOrderBook.bidQueue.depthCount())
+	})
+
+	t.Run("QuoteSize mode - buy with quote amount", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
+
+		// Buy using 230 quote currency (e.g., USDT)
+		// Should match: sell-1 at 110 (1 BTC = 110 USDT) and sell-2 at 120 (1 BTC = 120 USDT)
+		order := &Order{
+			ID:        "market-quote-buy",
+			Type:      Market,
+			Side:      Buy,
+			QuoteSize: decimal.NewFromInt(230), // 110 + 120 = 230 USDT
+		}
+		err := testOrderBook.AddOrder(ctx, order)
+		assert.NoError(t, err)
+		time.Sleep(50 * time.Millisecond)
+
+		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+		// 6 setup + 2 matches
+		assert.Equal(t, 8, memoryPublishTrader.Count())
+
+		// Verify first match: 1 BTC at 110
+		match1 := memoryPublishTrader.Get(6)
+		assert.Equal(t, LogTypeMatch, match1.Type)
+		assert.Equal(t, "110", match1.Price.String())
+		assert.Equal(t, "1", match1.Size.String())
+		assert.Equal(t, "110", match1.Amount.String())
+
+		// Verify second match: 1 BTC at 120
+		match2 := memoryPublishTrader.Get(7)
+		assert.Equal(t, LogTypeMatch, match2.Type)
+		assert.Equal(t, "120", match2.Price.String())
+		assert.Equal(t, "1", match2.Size.String())
+		assert.Equal(t, "120", match2.Amount.String())
+	})
+
+	t.Run("QuoteSize mode - partial fill of maker order", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
+
+		// Buy using 55 quote currency - should partially fill sell-1 at 110
+		order := &Order{
+			ID:        "market-quote-partial",
+			Type:      Market,
+			Side:      Buy,
+			QuoteSize: decimal.NewFromInt(55), // 55 USDT = 0.5 BTC at 110
+		}
+		err := testOrderBook.AddOrder(ctx, order)
+		assert.NoError(t, err)
+		time.Sleep(50 * time.Millisecond)
+
+		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+		// 6 setup + 1 match
+		assert.Equal(t, 7, memoryPublishTrader.Count())
+
+		match := memoryPublishTrader.Get(6)
+		assert.Equal(t, LogTypeMatch, match.Type)
+		assert.Equal(t, "110", match.Price.String())
+		assert.Equal(t, "0.5", match.Size.String()) // 55 / 110 = 0.5 BTC
+		assert.Equal(t, "55", match.Amount.String())
+
+		// Verify remaining sell order
+		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
+	})
+
+	t.Run("QuoteSize mode - no liquidity rejection", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		orderBook := NewOrderBook(publishTrader)
+		go func() { _ = orderBook.Start() }()
+
+		order := &Order{
+			ID:        "market-quote-no-liq",
+			Type:      Market,
+			Side:      Buy,
+			QuoteSize: decimal.NewFromInt(100),
+		}
+		err := orderBook.AddOrder(ctx, order)
+		assert.NoError(t, err)
+		time.Sleep(50 * time.Millisecond)
+
+		log := publishTrader.Get(0)
+		assert.Equal(t, LogTypeReject, log.Type)
+		assert.Equal(t, RejectReasonNoLiquidity, log.RejectReason)
+		assert.Equal(t, "100", log.Size.String()) // Remaining quote amount
+	})
+
+	t.Run("Size mode - buy with base quantity", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
+
+		// Buy 2 base currency units (e.g., 2 BTC)
+		order := &Order{
+			ID:   "market-base-buy",
+			Type: Market,
+			Side: Buy,
+			Size: decimal.NewFromInt(2), // 2 BTC
+		}
+		err := testOrderBook.AddOrder(ctx, order)
+		assert.NoError(t, err)
+		time.Sleep(50 * time.Millisecond)
+
+		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+		// 6 setup + 2 matches
+		assert.Equal(t, 8, memoryPublishTrader.Count())
+
+		// Verify first match: 1 BTC at 110
+		match1 := memoryPublishTrader.Get(6)
+		assert.Equal(t, LogTypeMatch, match1.Type)
+		assert.Equal(t, "110", match1.Price.String())
+		assert.Equal(t, "1", match1.Size.String())
+		assert.Equal(t, "110", match1.Amount.String())
+
+		// Verify second match: 1 BTC at 120
+		match2 := memoryPublishTrader.Get(7)
+		assert.Equal(t, LogTypeMatch, match2.Type)
+		assert.Equal(t, "120", match2.Price.String())
+		assert.Equal(t, "1", match2.Size.String())
+		assert.Equal(t, "120", match2.Amount.String())
+	})
+
+	t.Run("Size mode - partial fill of maker order", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
+
+		// Buy 0.5 base currency - should partially fill sell-1
+		order := &Order{
+			ID:   "market-base-partial",
+			Type: Market,
+			Side: Buy,
+			Size: decimal.NewFromFloat(0.5), // 0.5 BTC
+		}
+		err := testOrderBook.AddOrder(ctx, order)
+		assert.NoError(t, err)
+		time.Sleep(50 * time.Millisecond)
+
+		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+		// 6 setup + 1 match
+		assert.Equal(t, 7, memoryPublishTrader.Count())
+
+		match := memoryPublishTrader.Get(6)
+		assert.Equal(t, LogTypeMatch, match.Type)
+		assert.Equal(t, "110", match.Price.String())
+		assert.Equal(t, "0.5", match.Size.String())
+		assert.Equal(t, "55", match.Amount.String()) // 0.5 * 110 = 55
+
+		// Verify remaining sell order
+		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
+	})
+
+	t.Run("Size mode - take all orders", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
+
+		// Buy 3 base currency units - consume all sell orders
+		order := &Order{
+			ID:   "market-base-all",
+			Type: Market,
+			Side: Buy,
+			Size: decimal.NewFromInt(3), // 3 BTC
+		}
+		err := testOrderBook.AddOrder(ctx, order)
+		assert.NoError(t, err)
+		time.Sleep(50 * time.Millisecond)
+
+		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+		// 6 setup + 3 matches
+		assert.Equal(t, 9, memoryPublishTrader.Count())
+
+		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
+		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
 	})
 }
 
