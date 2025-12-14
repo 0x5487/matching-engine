@@ -165,8 +165,8 @@ func (q *queue) updateOrderSize(id string, newSize decimal.Decimal) {
 	}
 }
 
-// getHeadOrder returns the order at the front of the queue (best price) without removing it.
-func (q *queue) getHeadOrder() *Order {
+// peekHeadOrder returns the order at the front of the queue (best price) without removing it.
+func (q *queue) peekHeadOrder() *Order {
 	el := q.depthList.Front()
 	if el == nil {
 		return nil
@@ -179,7 +179,7 @@ func (q *queue) getHeadOrder() *Order {
 
 // popHeadOrder removes and returns the order at the front of the queue.
 func (q *queue) popHeadOrder() *Order {
-	ord := q.getHeadOrder()
+	ord := q.peekHeadOrder()
 
 	if ord != nil {
 		q.removeOrder(ord.Price, ord.ID)

@@ -1,13 +1,12 @@
 # CHANGELOG
 
-## next
+## v0.7.0 (2025-12-14)
 
 - **breaking**: replace `OrderBookID` with `SequenceID` in `BookLog`. All events now have a globally increasing `SequenceID` for ordering, deduplication, and rebuild synchronization. Use `LogType` to determine if the event affects order book state.
 - feature: add `QuoteSize` field to `Order` for Market orders to specify amount in quote currency (e.g., USDT). Mutually exclusive with `Size`.
 - feature: add `RejectReason` field to `BookLog` with constants for reject scenarios (`no_liquidity`, `price_mismatch`, `insufficient_size`, `would_cross_spread`)
 - feature: add `TradeID` field to `BookLog` for sequential trade identification (only set on Match events)
 - feature: add `Amount` field to `BookLog` with pre-calculated `Price × Size` (only set on Match events)
-- docs: add `PublishTrader` interface documentation explaining sync.Pool recycling requirements
 - perf: optimize atomic operations by using `Add()` return value instead of separate `Load()` call
 - refactor: split `handleOrder` into separate handlers for each order type
 - refactor: replace `Trade` with `BookLog` to capture Open, Match, and Cancel events for full order book reconstruction
@@ -21,9 +20,6 @@
 - fix: `depth()` function off-by-one error returning `limit-1` items instead of `limit`
 - feature: add `OrderBook.Shutdown(ctx)` for graceful shutdown with pending order drain
 - feature: add `MatchingEngine.Shutdown(ctx)` for graceful shutdown of all markets in parallel
-- refactor: remove redundant `addOrder` wrapper and use `insertOrder` directly
-- refactor: remove unused error return values from order handler functions
-- perf: use `getHeadOrder` (peek) before `popHeadOrder` in order handlers to avoid unnecessary pop/insert operations
 - perf: reduce channel buffer sizes from 1,000,000 to 10,000 for orders and 100 for depth queries to reduce memory usage
 - perf: pre-allocate slice capacity in order handlers to reduce dynamic allocations
 - perf: cache `time.Now().UTC()` per order to reduce syscall overhead in high-frequency scenarios
