@@ -33,7 +33,8 @@ type Order struct {
 	MarketID  string          `json:"market_id"`
 	Side      Side            `json:"side"`
 	Price     decimal.Decimal `json:"price"`
-	Size      decimal.Decimal `json:"size"`
+	Size      decimal.Decimal `json:"size"`                 // Base currency quantity (e.g., BTC amount)
+	QuoteSize decimal.Decimal `json:"quote_size,omitempty"` // Quote currency amount (e.g., USDT), only for Market orders. Mutually exclusive with Size.
 	Type      OrderType       `json:"type"`
 	UserID    int64           `json:"user_id"`
 	CreatedAt time.Time       `json:"created_at"`
@@ -926,6 +927,8 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) []*BookLog {
 }
 
 // handleMarketOrder handles Market orders. It matches against the best available prices until filled or liquidity is exhausted.
+// If QuoteSize is set (and Size is zero), the order is filled by quote currency amount.
+// If Size is set (and QuoteSize is zero), the order is filled by base currency quantity.
 func (book *OrderBook) handleMarketOrder(order *Order) []*BookLog {
 	targetQueue := book.bidQueue
 	if order.Side == Buy {
@@ -935,6 +938,11 @@ func (book *OrderBook) handleMarketOrder(order *Order) []*BookLog {
 	// Pre-allocate slice and cache timestamp
 	logs := make([]*BookLog, 0, 8)
 	now := time.Now().UTC()
+
+	// Determine if using quote size mode (amount in quote currency) or base size mode (quantity in base currency)
+	useQuoteSize := order.QuoteSize.GreaterThan(decimal.Zero) && order.Size.IsZero()
+	remainingQuote := order.QuoteSize
+	remainingBase := order.Size
 
 	for {
 		tOrd := targetQueue.popHeadOrder()
@@ -946,7 +954,11 @@ func (book *OrderBook) handleMarketOrder(order *Order) []*BookLog {
 			log.MarketID = order.MarketID
 			log.Side = order.Side
 			log.Price = order.Price
-			log.Size = order.Size
+			if useQuoteSize {
+				log.Size = remainingQuote // Remaining quote amount
+			} else {
+				log.Size = remainingBase // Remaining base quantity
+			}
 			log.OrderID = order.ID
 			log.UserID = order.UserID
 			log.OrderType = order.Type
@@ -956,54 +968,104 @@ func (book *OrderBook) handleMarketOrder(order *Order) []*BookLog {
 			return logs
 		}
 
-		// The size of the market order is the total amount, not the quantity.
-		amount := tOrd.Price.Mul(tOrd.Size)
+		if useQuoteSize {
+			// Quote size mode: order.QuoteSize is the total amount in quote currency (e.g., USDT)
+			amount := tOrd.Price.Mul(tOrd.Size) // Quote amount for this maker order
 
-		if order.Size.GreaterThanOrEqual(amount) {
-			log := acquireBookLog()
-			log.OrderBookID = book.id.Add(1)
-			log.TradeID = book.tradeID.Add(1)
-			log.Type = LogTypeMatch
-			log.MarketID = order.MarketID
-			log.Side = order.Side
-			log.Price = tOrd.Price
-			log.Size = tOrd.Size
-			log.Amount = amount
-			log.OrderID = order.ID
-			log.UserID = order.UserID
-			log.OrderType = order.Type
-			log.MakerOrderID = tOrd.ID
-			log.MakerUserID = tOrd.UserID
-			log.CreatedAt = now
-			logs = append(logs, log)
-			order.Size = order.Size.Sub(amount)
-			if order.Size.Equal(decimal.Zero) {
+			if remainingQuote.GreaterThanOrEqual(amount) {
+				// Consume entire maker order
+				log := acquireBookLog()
+				log.OrderBookID = book.id.Add(1)
+				log.TradeID = book.tradeID.Add(1)
+				log.Type = LogTypeMatch
+				log.MarketID = order.MarketID
+				log.Side = order.Side
+				log.Price = tOrd.Price
+				log.Size = tOrd.Size
+				log.Amount = amount
+				log.OrderID = order.ID
+				log.UserID = order.UserID
+				log.OrderType = order.Type
+				log.MakerOrderID = tOrd.ID
+				log.MakerUserID = tOrd.UserID
+				log.CreatedAt = now
+				logs = append(logs, log)
+				remainingQuote = remainingQuote.Sub(amount)
+				if remainingQuote.Equal(decimal.Zero) {
+					break
+				}
+			} else {
+				// Partial fill of maker order
+				tSize := remainingQuote.Div(tOrd.Price)
+
+				log := acquireBookLog()
+				log.OrderBookID = book.id.Add(1)
+				log.TradeID = book.tradeID.Add(1)
+				log.Type = LogTypeMatch
+				log.MarketID = order.MarketID
+				log.Side = order.Side
+				log.Price = tOrd.Price
+				log.Size = tSize
+				log.Amount = remainingQuote
+				log.OrderID = order.ID
+				log.UserID = order.UserID
+				log.OrderType = order.Type
+				log.MakerOrderID = tOrd.ID
+				log.MakerUserID = tOrd.UserID
+				log.CreatedAt = now
+				logs = append(logs, log)
+
+				tOrd.Size = tOrd.Size.Sub(tSize)
+				targetQueue.insertOrder(tOrd, true)
 				break
 			}
 		} else {
-			tSize := order.Size.Div(tOrd.Price)
+			// Base size mode: order.Size is the quantity in base currency (e.g., BTC)
+			if remainingBase.GreaterThanOrEqual(tOrd.Size) {
+				// Consume entire maker order
+				log := acquireBookLog()
+				log.OrderBookID = book.id.Add(1)
+				log.TradeID = book.tradeID.Add(1)
+				log.Type = LogTypeMatch
+				log.MarketID = order.MarketID
+				log.Side = order.Side
+				log.Price = tOrd.Price
+				log.Size = tOrd.Size
+				log.Amount = tOrd.Price.Mul(tOrd.Size)
+				log.OrderID = order.ID
+				log.UserID = order.UserID
+				log.OrderType = order.Type
+				log.MakerOrderID = tOrd.ID
+				log.MakerUserID = tOrd.UserID
+				log.CreatedAt = now
+				logs = append(logs, log)
+				remainingBase = remainingBase.Sub(tOrd.Size)
+				if remainingBase.Equal(decimal.Zero) {
+					break
+				}
+			} else {
+				// Partial fill of maker order
+				log := acquireBookLog()
+				log.OrderBookID = book.id.Add(1)
+				log.TradeID = book.tradeID.Add(1)
+				log.Type = LogTypeMatch
+				log.MarketID = order.MarketID
+				log.Side = order.Side
+				log.Price = tOrd.Price
+				log.Size = remainingBase
+				log.Amount = tOrd.Price.Mul(remainingBase)
+				log.OrderID = order.ID
+				log.UserID = order.UserID
+				log.OrderType = order.Type
+				log.MakerOrderID = tOrd.ID
+				log.MakerUserID = tOrd.UserID
+				log.CreatedAt = now
+				logs = append(logs, log)
 
-			log := acquireBookLog()
-			log.OrderBookID = book.id.Add(1)
-			log.TradeID = book.tradeID.Add(1)
-			log.Type = LogTypeMatch
-			log.MarketID = order.MarketID
-			log.Side = order.Side
-			log.Price = tOrd.Price
-			log.Size = tSize
-			log.Amount = order.Size
-			log.OrderID = order.ID
-			log.UserID = order.UserID
-			log.OrderType = order.Type
-			log.MakerOrderID = tOrd.ID
-			log.MakerUserID = tOrd.UserID
-			log.CreatedAt = now
-			logs = append(logs, log)
-
-			tOrd.Size = tOrd.Size.Sub(tSize)
-			targetQueue.insertOrder(tOrd, true)
-
-			break
+				tOrd.Size = tOrd.Size.Sub(remainingBase)
+				targetQueue.insertOrder(tOrd, true)
+				break
+			}
 		}
 	}
 

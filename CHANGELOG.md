@@ -2,6 +2,7 @@
 
 ## next
 
+- feature: add `QuoteSize` field to `Order` for Market orders to specify amount in quote currency (e.g., USDT). Mutually exclusive with `Size`.
 - feature: add `RejectReason` field to `BookLog` with constants for reject scenarios (`no_liquidity`, `price_mismatch`, `insufficient_size`, `would_cross_spread`)
 - feature: add `TradeID` field to `BookLog` for sequential trade identification (only set on Match events)
 - feature: add `Amount` field to `BookLog` with pre-calculated `Price × Size` (only set on Match events)
