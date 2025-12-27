@@ -31,8 +31,9 @@
 ```go
 // 存於 metadata.json
 type SnapshotMetadata struct {
+    SchemaVersion      int    `json:"schema_version"`        // 快照結構版本號，用於向後相容
     Timestamp          int64  `json:"timestamp"`              // 快照生成時間
-    GlobalLastCmdSeqID uint64 `json:"global_last_cmd_seq_id"` // 全域 MQ 重播起點
+    GlobalLastCmdSeqID uint64 `json:"global_last_cmd_seq_id"` // 全域 MQ 重播起點 (取各市場 LastCmdSeqID 的最大值)
     EngineVersion      string `json:"engine_version"`         // 引擎版本
     SnapshotChecksum   uint32 `json:"snapshot_checksum"`      // snapshot.bin 的全檔 CRC32
 }
@@ -49,6 +50,8 @@ type MarketSegment struct {
     Checksum uint32 `json:"checksum"` // 該段資料的 CRC32
 }
 ```
+
+> **Note**: Footer 目前使用 JSON 格式序列化，對於大量市場 (1000+) 可能產生較大的解析開銷。未來可考慮改用 Protocol Buffers 或 FlatBuffers 優化。
 
 ### 2.2 OrderBook Snapshot (Binary)
 
@@ -118,7 +121,11 @@ type OrderBookSnapshot struct {
     *   將重建好的 OrderBook 註冊回 `MatchingEngine`。
     *   啟動每個 OrderBook 的 `Start()` Goroutine。
 
-4.  **MQ 重播**:
+4.  **狀態驗證**:
+    *   比對各市場 Checksum 確保資料完整。
+    *   驗證買賣簿總訂單數與預期一致。
+
+5.  **MQ 重播**:
     *   Engine 告知 MQ Consumer 從 `GlobalLastCmdSeqID + 1` 開始消費。
     *   系統恢復服務。
 
@@ -126,8 +133,17 @@ type OrderBookSnapshot struct {
 
 *   **快照期間崩潰**: 由於寫入是先寫臨時目錄，若中途崩潰，重啟時會看到未完成的目錄 (無 `DONE` 標記)，直接捨棄並使用上一個成功快照。
 *   **熱更新/擴容**: 透過 Snapshot 機制，可以輕鬆將 Engine 狀態複製到新機器，實現快速擴容或藍綠部署。
-*   **熱更新/擴容**: 透過 Snapshot 機制，可以輕鬆將 Engine 狀態複製到新機器，實現快速擴容或藍綠部署。
 
 ## 5. 未來擴展
+
+*   **ZIP 打包壓縮**: 將 `metadata.json` 與 `snapshot.bin` 打包成單一 `.zip` 檔案，簡化 API 與檔案管理：
+    ```
+    snapshot_2024_12_27_120000.zip
+    ├── metadata.json
+    └── snapshot.bin
+    ```
+    *   **API 變更**: `TakeSnapshot(filePath)` / `RestoreFromSnapshot(filePath)` 傳入檔案路徑而非目錄
+    *   **優點**: 單檔傳輸、備份更方便；壓縮節省儲存空間；標準格式可用命令行工具解壓
+    *   **考量**: 壓縮增加少量 CPU 開銷；無法直接 seek 到特定市場資料（但目前全量讀取無影響）
 
 *   **增量快照 (Incremental)**: 對於極大規模市場，可考慮只 Snapshot 變動部分 (與 WAL 結合)，但目前全量快照方案簡單可靠，優先實作。

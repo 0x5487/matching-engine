@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"hash/crc32"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -276,6 +275,12 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 		return nil, err
 	}
 
+	// Sync to ensure data is flushed to disk before checksum calculation
+	if err := binFile.Sync(); err != nil {
+		binFile.Close()
+		return nil, err
+	}
+
 	// Close file before calculating checksum
 	if err := binFile.Close(); err != nil {
 		return nil, err
@@ -289,9 +294,10 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 
 	// Write metadata.json
 	meta := &SnapshotMetadata{
+		SchemaVersion:      SnapshotSchemaVersion,
 		Timestamp:          time.Now().UnixNano(),
 		GlobalLastCmdSeqID: globalSeqID,
-		EngineVersion:      "v1.0.0", // TODO: Version management
+		EngineVersion:      EngineVersion,
 		SnapshotChecksum:   snapshotChecksum,
 	}
 
@@ -314,21 +320,6 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 	}
 
 	return meta, nil
-}
-
-// calculateFileCRC32 calculates the CRC32 checksum of a file.
-func calculateFileCRC32(filePath string) (uint32, error) {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-
-	hash := crc32.NewIEEE()
-	if _, err := io.Copy(hash, f); err != nil {
-		return 0, err
-	}
-	return hash.Sum32(), nil
 }
 
 // RestoreFromSnapshot restores the entire matching engine state from a snapshot in the specified directory.
