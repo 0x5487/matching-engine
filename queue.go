@@ -198,6 +198,38 @@ func (q *queue) depthCount() int64 {
 	return q.depths
 }
 
+// toSnapshot serializes the queue into a slice of Order structs.
+// It iterates through the skip list (price levels) and then the linked list (orders) to preserve priority.
+func (q *queue) toSnapshot() []Order {
+	snapshots := make([]Order, 0, q.totalOrders)
+
+	// Iterate over all price levels
+	elem := q.depthList.Front()
+	for elem != nil {
+		unit := elem.Value.(*priceUnit)
+
+		// Iterate over all orders at this price level
+		orderElem := unit.list.Front()
+		for orderElem != nil {
+			order := orderElem.Value.(*Order)
+			snapshots = append(snapshots, Order{
+				ID:        order.ID,
+				Side:      order.Side,
+				Price:     order.Price,
+				Size:      order.Size,
+				UserID:    order.UserID,
+				Type:      order.Type,
+				Timestamp: order.Timestamp,
+			})
+			orderElem = orderElem.Next()
+		}
+
+		elem = elem.Next()
+	}
+
+	return snapshots
+}
+
 // depth returns the order book depth up to the specified limit.
 func (q *queue) depth(limit uint32) []*DepthItem {
 	result := make([]*DepthItem, 0, limit)

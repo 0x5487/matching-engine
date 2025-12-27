@@ -2,6 +2,7 @@ package match
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -28,16 +29,29 @@ const (
 	Cancel   OrderType = "cancel"    // the order has been canceled
 )
 
+// PlaceOrderCommand is the input command for placing an order.
+// QuoteSize is only used for Market orders to specify amount in quote currency.
+type PlaceOrderCommand struct {
+	MarketID  string          `json:"market_id"`
+	ID        string          `json:"id"`
+	Side      Side            `json:"side"`
+	Type      OrderType       `json:"type"`
+	Price     decimal.Decimal `json:"price"`                // Limit order price
+	Size      decimal.Decimal `json:"size"`                 // Base currency quantity (e.g., BTC)
+	QuoteSize decimal.Decimal `json:"quote_size,omitempty"` // Quote currency amount (e.g., USDT), only for Market orders
+	UserID    int64           `json:"user_id"`
+}
+
+// Order represents the state of an order in the order book.
+// This is the serializable state used for snapshots.
 type Order struct {
 	ID        string          `json:"id"`
-	MarketID  string          `json:"market_id"`
 	Side      Side            `json:"side"`
 	Price     decimal.Decimal `json:"price"`
-	Size      decimal.Decimal `json:"size"`                 // Base currency quantity (e.g., BTC amount)
-	QuoteSize decimal.Decimal `json:"quote_size,omitempty"` // Quote currency amount (e.g., USDT), only for Market orders. Mutually exclusive with Size.
+	Size      decimal.Decimal `json:"size"` // Remaining size
 	Type      OrderType       `json:"type"`
 	UserID    int64           `json:"user_id"`
-	CreatedAt time.Time       `json:"created_at"`
+	Timestamp int64           `json:"timestamp"` // Unix nano, creation time
 }
 
 type LogType string
@@ -149,6 +163,7 @@ const (
 	CmdAmendOrder
 	CmdDepth
 	CmdGetStats
+	CmdSnapshot
 )
 
 // BookStats contains statistics about the order book queues
@@ -170,6 +185,7 @@ type Command struct {
 
 // OrderBook type
 type OrderBook struct {
+	marketID         string
 	seqID            atomic.Uint64 // Globally increasing sequence ID for BookLog production; used by any event that generates an order book log
 	lastCmdSeqID     atomic.Uint64 // Last sequence ID of the command
 	tradeID          atomic.Uint64 // Sequential trade ID counter, only incremented for Match events
@@ -183,8 +199,9 @@ type OrderBook struct {
 }
 
 // NewOrderBook creates a new order book instance.
-func NewOrderBook(publishTrader PublishLog) *OrderBook {
+func NewOrderBook(marketID string, publishTrader PublishLog) *OrderBook {
 	return &OrderBook{
+		marketID:         marketID,
 		bidQueue:         NewBuyerQueue(),
 		askQueue:         NewSellerQueue(),
 		cmdChan:          make(chan Command, 32768),
@@ -196,17 +213,17 @@ func NewOrderBook(publishTrader PublishLog) *OrderBook {
 
 // AddOrder submits an order to the order book asynchronously.
 // Returns ErrShutdown if the order book is shutting down.
-func (book *OrderBook) AddOrder(ctx context.Context, order *Order) error {
+func (book *OrderBook) AddOrder(ctx context.Context, cmd *PlaceOrderCommand) error {
 	if book.isShutdown.Load() {
 		return ErrShutdown
 	}
 
-	if len(order.Type) == 0 || len(order.ID) == 0 {
+	if len(cmd.Type) == 0 || len(cmd.ID) == 0 {
 		return ErrInvalidParam
 	}
 
 	select {
-	case book.cmdChan <- Command{Type: CmdPlaceOrder, Payload: order}:
+	case book.cmdChan <- Command{Type: CmdPlaceOrder, Payload: cmd}:
 		return nil
 	case <-ctx.Done():
 		return ErrTimeout
@@ -322,8 +339,8 @@ func (book *OrderBook) Start() error {
 		case cmd := <-book.cmdChan: // Process commands from the unified channel
 			switch cmd.Type {
 			case CmdPlaceOrder:
-				if order, ok := cmd.Payload.(*Order); ok {
-					book.addOrder(order)
+				if placeCmd, ok := cmd.Payload.(*PlaceOrderCommand); ok {
+					book.addOrder(placeCmd)
 				}
 			case CmdAmendOrder:
 				if req, ok := cmd.Payload.(*AmendRequest); ok {
@@ -355,6 +372,14 @@ func (book *OrderBook) Start() error {
 				if cmd.Resp != nil {
 					select {
 					case cmd.Resp <- stats:
+					default:
+					}
+				}
+			case CmdSnapshot:
+				snap := book.createSnapshot()
+				if cmd.Resp != nil {
+					select {
+					case cmd.Resp <- snap:
 					default:
 					}
 				}
@@ -392,8 +417,8 @@ func (book *OrderBook) drain() error {
 		case cmd := <-book.cmdChan:
 			switch cmd.Type {
 			case CmdPlaceOrder:
-				if order, ok := cmd.Payload.(*Order); ok {
-					book.addOrder(order)
+				if placeCmd, ok := cmd.Payload.(*PlaceOrderCommand); ok {
+					book.addOrder(placeCmd)
 				}
 			case CmdAmendOrder:
 				if req, ok := cmd.Payload.(*AmendRequest); ok {
@@ -406,7 +431,8 @@ func (book *OrderBook) drain() error {
 			// CmdDepth is read-only, we can skip it during drain or process it if strictly needed.
 			// Usually during shutdown/drain we only care about state-mutating commands.
 			// However, to strictly drain the channel, we should consume it.
-			case CmdDepth, CmdGetStats:
+			// However, to strictly drain the channel, we should consume it.
+			case CmdDepth, CmdGetStats, CmdSnapshot:
 				// Read-only commands, no-op during drain
 			}
 		default:
@@ -417,7 +443,18 @@ func (book *OrderBook) drain() error {
 }
 
 // addOrder processes the addition of an order based on its type.
-func (book *OrderBook) addOrder(order *Order) {
+func (book *OrderBook) addOrder(cmd *PlaceOrderCommand) {
+	// Convert command to order state
+	order := &Order{
+		ID:        cmd.ID,
+		Side:      cmd.Side,
+		Price:     cmd.Price,
+		Size:      cmd.Size,
+		Type:      cmd.Type,
+		UserID:    cmd.UserID,
+		Timestamp: time.Now().UnixNano(),
+	}
+
 	var logs []*BookLog
 
 	switch order.Type {
@@ -430,7 +467,7 @@ func (book *OrderBook) addOrder(order *Order) {
 	case PostOnly:
 		logs = book.handlePostOnlyOrder(order)
 	case Market:
-		logs = book.handleMarketOrder(order)
+		logs = book.handleMarketOrder(order, cmd.QuoteSize)
 	case Cancel:
 		// Not a valid order type for placement
 	}
@@ -474,7 +511,7 @@ func (book *OrderBook) amendOrder(req *AmendRequest) {
 		log := acquireBookLog()
 		log.SequenceID = book.seqID.Add(1)
 		log.Type = LogTypeAmend
-		log.MarketID = order.MarketID
+		log.MarketID = book.marketID
 		log.Side = order.Side
 		log.Price = req.NewPrice
 		log.Size = req.NewSize
@@ -515,7 +552,7 @@ func (book *OrderBook) amendOrder(req *AmendRequest) {
 		log := acquireBookLog()
 		log.SequenceID = book.seqID.Add(1)
 		log.Type = LogTypeAmend
-		log.MarketID = order.MarketID
+		log.MarketID = book.marketID
 		log.Side = order.Side
 		log.Price = req.NewPrice
 		log.Size = req.NewSize
@@ -539,7 +576,7 @@ func (book *OrderBook) cancelOrder(id string) {
 		log := acquireBookLog()
 		log.SequenceID = book.seqID.Add(1)
 		log.Type = LogTypeCancel
-		log.MarketID = order.MarketID
+		log.MarketID = book.marketID
 		log.Side = order.Side
 		log.Price = order.Price
 		log.Size = order.Size
@@ -558,7 +595,7 @@ func (book *OrderBook) cancelOrder(id string) {
 		log := acquireBookLog()
 		log.SequenceID = book.seqID.Add(1)
 		log.Type = LogTypeCancel
-		log.MarketID = order.MarketID
+		log.MarketID = book.marketID
 		log.Side = order.Side
 		log.Price = order.Price
 		log.Size = order.Size
@@ -605,7 +642,7 @@ func (book *OrderBook) handleLimitOrder(order *Order) []*BookLog {
 			log := acquireBookLog()
 			log.SequenceID = book.seqID.Add(1)
 			log.Type = LogTypeOpen
-			log.MarketID = order.MarketID
+			log.MarketID = book.marketID
 			log.Side = order.Side
 			log.Price = order.Price
 			log.Size = order.Size
@@ -625,7 +662,7 @@ func (book *OrderBook) handleLimitOrder(order *Order) []*BookLog {
 			log := acquireBookLog()
 			log.SequenceID = book.seqID.Add(1)
 			log.Type = LogTypeOpen
-			log.MarketID = order.MarketID
+			log.MarketID = book.marketID
 			log.Side = order.Side
 			log.Price = order.Price
 			log.Size = order.Size
@@ -645,7 +682,7 @@ func (book *OrderBook) handleLimitOrder(order *Order) []*BookLog {
 			log.SequenceID = book.seqID.Add(1)
 			log.TradeID = book.tradeID.Add(1)
 			log.Type = LogTypeMatch
-			log.MarketID = order.MarketID
+			log.MarketID = book.marketID
 			log.Side = order.Side
 			log.Price = tOrd.Price
 			log.Size = tOrd.Size
@@ -667,7 +704,7 @@ func (book *OrderBook) handleLimitOrder(order *Order) []*BookLog {
 			log.SequenceID = book.seqID.Add(1)
 			log.TradeID = book.tradeID.Add(1)
 			log.Type = LogTypeMatch
-			log.MarketID = order.MarketID
+			log.MarketID = book.marketID
 			log.Side = order.Side
 			log.Price = tOrd.Price
 			log.Size = order.Size
@@ -711,7 +748,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) []*BookLog {
 			log := acquireBookLog()
 			log.SequenceID = book.seqID.Add(1)
 			log.Type = LogTypeReject
-			log.MarketID = order.MarketID
+			log.MarketID = book.marketID
 			log.Side = order.Side
 			log.Price = order.Price
 			log.Size = order.Size
@@ -730,7 +767,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) []*BookLog {
 			log := acquireBookLog()
 			log.SequenceID = book.seqID.Add(1)
 			log.Type = LogTypeReject
-			log.MarketID = order.MarketID
+			log.MarketID = book.marketID
 			log.Side = order.Side
 			log.Price = order.Price
 			log.Size = order.Size
@@ -751,7 +788,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) []*BookLog {
 			log.SequenceID = book.seqID.Add(1)
 			log.TradeID = book.tradeID.Add(1)
 			log.Type = LogTypeMatch
-			log.MarketID = order.MarketID
+			log.MarketID = book.marketID
 			log.Side = order.Side
 			log.Price = tOrd.Price
 			log.Size = tOrd.Size
@@ -773,7 +810,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) []*BookLog {
 			log.SequenceID = book.seqID.Add(1)
 			log.TradeID = book.tradeID.Add(1)
 			log.Type = LogTypeMatch
-			log.MarketID = order.MarketID
+			log.MarketID = book.marketID
 			log.Side = order.Side
 			log.Price = tOrd.Price
 			log.Size = order.Size
@@ -818,7 +855,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) []*BookLog {
 			log := acquireBookLog()
 			log.SequenceID = book.seqID.Add(1)
 			log.Type = LogTypeReject
-			log.MarketID = order.MarketID
+			log.MarketID = book.marketID
 			log.Side = order.Side
 			log.Price = order.Price
 			log.Size = order.Size
@@ -841,7 +878,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) []*BookLog {
 			log := acquireBookLog()
 			log.SequenceID = book.seqID.Add(1)
 			log.Type = LogTypeReject
-			log.MarketID = order.MarketID
+			log.MarketID = book.marketID
 			log.Side = order.Side
 			log.Price = order.Price
 			log.Size = order.Size
@@ -868,7 +905,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) []*BookLog {
 			log.SequenceID = book.seqID.Add(1)
 			log.TradeID = book.tradeID.Add(1)
 			log.Type = LogTypeMatch
-			log.MarketID = order.MarketID
+			log.MarketID = book.marketID
 			log.Side = order.Side
 			log.Price = tOrd.Price
 			log.Size = tOrd.Size
@@ -890,7 +927,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) []*BookLog {
 			log.SequenceID = book.seqID.Add(1)
 			log.TradeID = book.tradeID.Add(1)
 			log.Type = LogTypeMatch
-			log.MarketID = order.MarketID
+			log.MarketID = book.marketID
 			log.Side = order.Side
 			log.Price = tOrd.Price
 			log.Size = order.Size
@@ -936,7 +973,7 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) []*BookLog {
 		log := acquireBookLog()
 		log.SequenceID = book.seqID.Add(1)
 		log.Type = LogTypeOpen
-		log.MarketID = order.MarketID
+		log.MarketID = book.marketID
 		log.Side = order.Side
 		log.Price = order.Price
 		log.Size = order.Size
@@ -956,7 +993,7 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) []*BookLog {
 		log := acquireBookLog()
 		log.SequenceID = book.seqID.Add(1)
 		log.Type = LogTypeOpen
-		log.MarketID = order.MarketID
+		log.MarketID = book.marketID
 		log.Side = order.Side
 		log.Price = order.Price
 		log.Size = order.Size
@@ -972,7 +1009,7 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) []*BookLog {
 	log := acquireBookLog()
 	log.SequenceID = book.seqID.Add(1)
 	log.Type = LogTypeReject
-	log.MarketID = order.MarketID
+	log.MarketID = book.marketID
 	log.Side = order.Side
 	log.Price = order.Price
 	log.Size = order.Size
@@ -986,9 +1023,9 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) []*BookLog {
 }
 
 // handleMarketOrder handles Market orders. It matches against the best available prices until filled or liquidity is exhausted.
-// If QuoteSize is set (and Size is zero), the order is filled by quote currency amount.
-// If Size is set (and QuoteSize is zero), the order is filled by base currency quantity.
-func (book *OrderBook) handleMarketOrder(order *Order) []*BookLog {
+// If quoteSize is set (and Size is zero), the order is filled by quote currency amount.
+// If Size is set (and quoteSize is zero), the order is filled by base currency quantity.
+func (book *OrderBook) handleMarketOrder(order *Order, quoteSize decimal.Decimal) []*BookLog {
 	targetQueue := book.bidQueue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -999,8 +1036,8 @@ func (book *OrderBook) handleMarketOrder(order *Order) []*BookLog {
 	now := time.Now().UTC()
 
 	// Determine if using quote size mode (amount in quote currency) or base size mode (quantity in base currency)
-	useQuoteSize := order.QuoteSize.GreaterThan(decimal.Zero) && order.Size.IsZero()
-	remainingQuote := order.QuoteSize
+	useQuoteSize := quoteSize.GreaterThan(decimal.Zero) && order.Size.IsZero()
+	remainingQuote := quoteSize
 	remainingBase := order.Size
 
 	for {
@@ -1011,7 +1048,7 @@ func (book *OrderBook) handleMarketOrder(order *Order) []*BookLog {
 			log := acquireBookLog()
 			log.SequenceID = book.seqID.Add(1)
 			log.Type = LogTypeReject
-			log.MarketID = order.MarketID
+			log.MarketID = book.marketID
 			log.Side = order.Side
 			log.Price = order.Price
 			if useQuoteSize {
@@ -1038,7 +1075,7 @@ func (book *OrderBook) handleMarketOrder(order *Order) []*BookLog {
 				log.SequenceID = book.seqID.Add(1)
 				log.TradeID = book.tradeID.Add(1)
 				log.Type = LogTypeMatch
-				log.MarketID = order.MarketID
+				log.MarketID = book.marketID
 				log.Side = order.Side
 				log.Price = tOrd.Price
 				log.Size = tOrd.Size
@@ -1062,7 +1099,7 @@ func (book *OrderBook) handleMarketOrder(order *Order) []*BookLog {
 				log.SequenceID = book.seqID.Add(1)
 				log.TradeID = book.tradeID.Add(1)
 				log.Type = LogTypeMatch
-				log.MarketID = order.MarketID
+				log.MarketID = book.marketID
 				log.Side = order.Side
 				log.Price = tOrd.Price
 				log.Size = tSize
@@ -1087,7 +1124,7 @@ func (book *OrderBook) handleMarketOrder(order *Order) []*BookLog {
 				log.SequenceID = book.seqID.Add(1)
 				log.TradeID = book.tradeID.Add(1)
 				log.Type = LogTypeMatch
-				log.MarketID = order.MarketID
+				log.MarketID = book.marketID
 				log.Side = order.Side
 				log.Price = tOrd.Price
 				log.Size = tOrd.Size
@@ -1109,7 +1146,7 @@ func (book *OrderBook) handleMarketOrder(order *Order) []*BookLog {
 				log.SequenceID = book.seqID.Add(1)
 				log.TradeID = book.tradeID.Add(1)
 				log.Type = LogTypeMatch
-				log.MarketID = order.MarketID
+				log.MarketID = book.marketID
 				log.Side = order.Side
 				log.Price = tOrd.Price
 				log.Size = remainingBase
@@ -1130,4 +1167,82 @@ func (book *OrderBook) handleMarketOrder(order *Order) []*BookLog {
 	}
 
 	return logs
+}
+
+// createSnapshot creates a snapshot of the current order book state.
+// This method is called from the order book loop (via CmdSnapshot), so it's thread-safe with respect to order processing.
+func (book *OrderBook) createSnapshot() *OrderBookSnapshot {
+	snap := &OrderBookSnapshot{
+		MarketID:     book.marketID,
+		SeqID:        book.seqID.Load(),
+		LastCmdSeqID: book.lastCmdSeqID.Load(),
+		TradeID:      book.tradeID.Load(),
+		Bids:         make([]*Order, 0),
+		Asks:         make([]*Order, 0),
+	}
+
+	// Capture bids
+	bids := book.bidQueue.toSnapshot()
+	for i := range bids {
+		snap.Bids = append(snap.Bids, &bids[i])
+	}
+
+	// Capture asks
+	asks := book.askQueue.toSnapshot()
+	for i := range asks {
+		snap.Asks = append(snap.Asks, &asks[i])
+	}
+
+	return snap
+}
+
+// Restore restores the order book state from a snapshot.
+// It resets the current state and rebuilds the order book from the snapshot data.
+func (book *OrderBook) Restore(snap *OrderBookSnapshot) {
+	// 1. Reset counters
+	book.seqID.Store(snap.SeqID)
+	book.lastCmdSeqID.Store(snap.LastCmdSeqID)
+	book.tradeID.Store(snap.TradeID)
+
+	// 2. Clear current queues
+	book.bidQueue = NewBuyerQueue()
+	book.askQueue = NewSellerQueue()
+
+	// 3. Helper to insert orders
+	restoreOrders := func(orders []*Order, queue *queue) {
+		for _, o := range orders {
+			// Insert directly into queue, bypassing matching logic
+			queue.insertOrder(o, false) // Insert at back to preserve priority if sorted by time
+		}
+	}
+
+	restoreOrders(snap.Bids, book.bidQueue)
+	restoreOrders(snap.Asks, book.askQueue)
+}
+
+// TakeSnapshot captures the current state of the order book.
+// It is thread-safe and interacts with the order book loop via a channel.
+func (book *OrderBook) TakeSnapshot() (*OrderBookSnapshot, error) {
+	respChan := make(chan any, 1)
+	cmd := Command{
+		Type: CmdSnapshot,
+		Resp: respChan,
+	}
+
+	select {
+	case book.cmdChan <- cmd:
+		select {
+		case res := <-respChan:
+			if snap, ok := res.(*OrderBookSnapshot); ok {
+				return snap, nil
+			}
+			return nil, errors.New("unexpected response type for snapshot")
+		case <-time.After(5 * time.Second): // Timeout for snapshot
+			return nil, ErrTimeout
+		}
+	case <-book.done:
+		return nil, ErrOrderBookClosed
+	case <-time.After(1 * time.Second): // Fail fast if channel is full
+		return nil, ErrTimeout
+	}
 }

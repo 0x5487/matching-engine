@@ -2,6 +2,9 @@ package match
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -18,13 +21,13 @@ func TestMatchingEngine(t *testing.T) {
 
 		// market1
 		market1 := "BTC-USDT"
-		order1 := &Order{
-			ID:       "order1",
+		order1 := &PlaceOrderCommand{
 			MarketID: market1,
-			Type:     Limit,
-			Side:     Buy,
-			Price:    decimal.NewFromInt(100),
-			Size:     decimal.NewFromInt(2),
+			ID:       "order1",
+			Type:  Limit,
+			Side:  Buy,
+			Price: decimal.NewFromInt(100),
+			Size:  decimal.NewFromInt(2),
 		}
 
 		err := engine.AddOrder(ctx, order1)
@@ -38,9 +41,9 @@ func TestMatchingEngine(t *testing.T) {
 
 		// market2
 		market2 := "ETH-USDT"
-		order2 := &Order{
-			ID:       "order2",
+		order2 := &PlaceOrderCommand{
 			MarketID: market2,
+			ID:       "order2",
 			Type:     Limit,
 			Side:     Sell,
 			Price:    decimal.NewFromInt(110),
@@ -65,13 +68,13 @@ func TestMatchingEngine(t *testing.T) {
 
 		market1 := "BTC-USDT"
 
-		order1 := &Order{
-			ID:       "order1",
+		order1 := &PlaceOrderCommand{
 			MarketID: market1,
-			Type:     Limit,
-			Side:     Buy,
-			Price:    decimal.NewFromInt(100),
-			Size:     decimal.NewFromInt(2),
+			ID:       "order1",
+			Type:  Limit,
+			Side:  Buy,
+			Price: decimal.NewFromInt(100),
+			Size:  decimal.NewFromInt(2),
 		}
 
 		err := engine.AddOrder(ctx, order1)
@@ -105,9 +108,9 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		// Create orders in multiple markets
 		markets := []string{"BTC-USDT", "ETH-USDT", "SOL-USDT"}
 		for i, market := range markets {
-			order := &Order{
-				ID:       "order-" + market,
+			order := &PlaceOrderCommand{
 				MarketID: market,
+				ID:       "order-" + market,
 				Type:     Limit,
 				Side:     Buy,
 				Price:    decimal.NewFromInt(int64(100 + i*10)),
@@ -122,9 +125,9 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		assert.NoError(t, err)
 
 		// After shutdown, adding orders should return ErrShutdown
-		order := &Order{
-			ID:       "after-shutdown",
+		order := &PlaceOrderCommand{
 			MarketID: "BTC-USDT",
+			ID:       "after-shutdown",
 			Type:     Limit,
 			Side:     Buy,
 			Price:    decimal.NewFromInt(100),
@@ -141,13 +144,13 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		ctx := context.Background()
 
 		// Create one market first
-		order := &Order{
-			ID:       "order1",
+		order := &PlaceOrderCommand{
 			MarketID: "BTC-USDT",
-			Type:     Limit,
-			Side:     Buy,
-			Price:    decimal.NewFromInt(100),
-			Size:     decimal.NewFromInt(1),
+			ID:       "order1",
+			Type:  Limit,
+			Side:  Buy,
+			Price: decimal.NewFromInt(100),
+			Size:  decimal.NewFromInt(1),
 		}
 		err := engine.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -157,13 +160,13 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Try to create a new market after shutdown - should return ErrShutdown
-		newMarketOrder := &Order{
-			ID:       "new-market-order",
+		newMarketOrder := &PlaceOrderCommand{
 			MarketID: "NEW-MARKET",
-			Type:     Limit,
-			Side:     Buy,
-			Price:    decimal.NewFromInt(100),
-			Size:     decimal.NewFromInt(1),
+			ID:       "new-market-order",
+			Type:  Limit,
+			Side:  Buy,
+			Price: decimal.NewFromInt(100),
+			Size:  decimal.NewFromInt(1),
 		}
 		err = engine.AddOrder(ctx, newMarketOrder)
 		assert.Equal(t, ErrShutdown, err)
@@ -180,13 +183,13 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		ctx := context.Background()
 
 		// Create an order to ensure at least one market exists
-		order := &Order{
-			ID:       "order1",
+		order := &PlaceOrderCommand{
 			MarketID: "BTC-USDT",
-			Type:     Limit,
-			Side:     Buy,
-			Price:    decimal.NewFromInt(100),
-			Size:     decimal.NewFromInt(1),
+			ID:       "order1",
+			Type:  Limit,
+			Side:  Buy,
+			Price: decimal.NewFromInt(100),
+			Size:  decimal.NewFromInt(1),
 		}
 		err := engine.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -198,4 +201,109 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		err = engine.Shutdown(timeoutCtx)
 		assert.NoError(t, err)
 	})
+}
+
+func TestEngineSnapshotRestore(t *testing.T) {
+	// Setup temporary directory for snapshots
+	tmpDir, err := os.MkdirTemp("", "snapshot_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	ctx := context.Background()
+	publishTrader := NewMemoryPublishLog()
+	engine := NewMatchingEngine(publishTrader)
+
+	// 1. Setup State: Create 2 OrderBooks with Orders
+	market1 := "BTC-USDT"
+	market2 := "ETH-USDT"
+
+	// Add orders to Market 1
+	err = engine.AddOrder(ctx, &PlaceOrderCommand{
+		MarketID: market1,
+		ID:       "btc-buy-1",
+		Side:     Buy,
+		Type:     Limit,
+		Price:    decimal.NewFromInt(50000),
+		Size:     decimal.NewFromInt(1),
+		UserID:   1,
+	})
+	assert.NoError(t, err)
+
+	// Add orders to Market 2
+	err = engine.AddOrder(ctx, &PlaceOrderCommand{
+		MarketID: market2,
+		ID:       "eth-sell-1",
+		Side:     Sell,
+		Type:     Limit,
+		Price:    decimal.NewFromInt(3000),
+		Size:     decimal.NewFromInt(10),
+		UserID:   2,
+	})
+	assert.NoError(t, err)
+
+	// Wait for processing
+	time.Sleep(100 * time.Millisecond) // Give some time for async processing
+
+	// 2. Take Snapshot
+	meta, err := engine.TakeSnapshot(tmpDir)
+	assert.NoError(t, err)
+	assert.NotNil(t, meta)
+	assert.NotZero(t, meta.Timestamp)
+
+	// Verify Files Created
+	assert.FileExists(t, filepath.Join(tmpDir, "snapshot.bin"))
+	assert.FileExists(t, filepath.Join(tmpDir, "metadata.json"))
+
+	// Verify Metadata Content
+	metaContent, err := os.ReadFile(filepath.Join(tmpDir, "metadata.json"))
+	assert.NoError(t, err)
+	var readMeta SnapshotMetadata
+	err = json.Unmarshal(metaContent, &readMeta)
+	assert.NoError(t, err)
+	assert.Equal(t, meta.Timestamp, readMeta.Timestamp)
+
+	// 3. Restore to a NEW Engine
+	newPublishTrader := NewMemoryPublishLog()
+	newEngine := NewMatchingEngine(newPublishTrader)
+
+	restoredMeta, err := newEngine.RestoreFromSnapshot(tmpDir)
+	assert.NoError(t, err)
+	assert.NotNil(t, restoredMeta)
+	assert.Equal(t, meta.GlobalLastCmdSeqID, restoredMeta.GlobalLastCmdSeqID)
+
+	// 4. Verify Restored State
+	// Check Market 1
+	book1 := newEngine.OrderBook(market1)
+	assert.NotNil(t, book1)
+	stats1, err := book1.GetStats()
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), stats1.BidOrderCount)
+	assert.Equal(t, int64(0), stats1.AskOrderCount)
+
+	// Check Market 2
+	book2 := newEngine.OrderBook(market2)
+	assert.NotNil(t, book2)
+	stats2, err := book2.GetStats()
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), stats2.BidOrderCount)
+	assert.Equal(t, int64(1), stats2.AskOrderCount)
+
+	// 5. Verify Continuity (Add new orders to restored engine)
+	err = newEngine.AddOrder(ctx, &PlaceOrderCommand{
+		MarketID: market1,
+		ID:       "btc-sell-match",
+		Side:     Sell,
+		Type:     Limit,
+		Price:    decimal.NewFromInt(50000),
+		Size:     decimal.NewFromInt(1),
+		UserID:   3,
+	})
+	assert.NoError(t, err)
+
+	// Should match btc-buy-1
+	time.Sleep(100 * time.Millisecond)
+	stats1After, err := book1.GetStats()
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), stats1After.BidOrderCount) // Consumed
+	assert.Equal(t, int64(0), stats1After.AskOrderCount) // Consumed
 }

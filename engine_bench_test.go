@@ -36,13 +36,12 @@ func BenchmarkPlaceOrders(b *testing.B) {
 					n, _ := rand.Int(rand.Reader, big.NewInt(100000))
 					price := n.Int64() + 1
 
-					order := &Order{
-						ID:       xid.New().String(),
-						MarketID: "BTC-USDT",
-						Type:     Limit,
-						Side:     Buy,
-						Price:    decimal.NewFromInt(price),
-						Size:     decimal.NewFromInt(1),
+					order := &PlaceOrderCommand{
+						ID:    xid.New().String(),
+						Type:  Limit,
+						Side:  Buy,
+						Price: decimal.NewFromInt(price),
+						Size:  decimal.NewFromInt(1),
 					}
 
 					err := engine.AddOrder(ctx, order)

@@ -9,4 +9,7 @@ var (
 	ErrTimeout               = errors.New("timeout")
 	ErrShutdown              = errors.New("order book is shutting down")
 	ErrNotFound              = errors.New("not found")
+	ErrInvalidPrice          = errors.New("invalid price")
+	ErrInvalidSize           = errors.New("invalid size")
+	ErrOrderBookClosed       = errors.New("order book is closed")
 )
