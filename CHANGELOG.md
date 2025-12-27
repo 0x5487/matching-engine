@@ -4,6 +4,7 @@
 
 - perf: implement thread-safe `GetStats()` using unified command channel to eliminate race conditions in tests.
 - refactor: replace `time.Sleep` with `assert.Eventually` in unit tests for faster and more deterministic execution.
+- feature: add `SeqID` to `Command` and `lastCmdSeqID` to `OrderBook` to track the last processed message sequence from MQ, enabling reliable snapshot recovery.
 
 ## v0.7.0 (2025-12-14)
 

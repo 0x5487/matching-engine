@@ -162,6 +162,7 @@ type BookStats struct {
 // Command represents a unified command sent to the order book.
 // It improves deterministic ordering and performance by using a single channel.
 type Command struct {
+	SeqID   uint64
 	Type    CommandType
 	Payload any
 	Resp    chan any // Optional: for synchronous response (e.g. CmdDepth)
@@ -169,7 +170,8 @@ type Command struct {
 
 // OrderBook type
 type OrderBook struct {
-	seqID            atomic.Uint64 // Globally increasing sequence ID for all events
+	seqID            atomic.Uint64 // Globally increasing sequence ID for BookLog production; used by any event that generates an order book log
+	lastCmdSeqID     atomic.Uint64 // Last sequence ID of the command
 	tradeID          atomic.Uint64 // Sequential trade ID counter, only incremented for Match events
 	isShutdown       atomic.Bool
 	bidQueue         *queue
@@ -180,7 +182,6 @@ type OrderBook struct {
 	publishTrader    PublishLog
 }
 
-// NewOrderBook creates a new order book instance.
 // NewOrderBook creates a new order book instance.
 func NewOrderBook(publishTrader PublishLog) *OrderBook {
 	return &OrderBook{
@@ -302,6 +303,12 @@ func (book *OrderBook) GetStats() (*BookStats, error) {
 	}
 }
 
+// LastCmdSeqID returns the sequence ID of the last processed command.
+// This is used for snapshot recovery to know where to resume consuming from MQ.
+func (book *OrderBook) LastCmdSeqID() uint64 {
+	return book.lastCmdSeqID.Load()
+}
+
 // Start starts the order book loop to process orders, cancellations, and depth requests.
 // Returns nil when Shutdown() is called and all pending orders are drained.
 func (book *OrderBook) Start() error {
@@ -351,6 +358,10 @@ func (book *OrderBook) Start() error {
 					default:
 					}
 				}
+			}
+			// Update lastCmdSeqID after processing each command (for snapshot recovery)
+			if cmd.SeqID > 0 {
+				book.lastCmdSeqID.Store(cmd.SeqID)
 			}
 		}
 	}

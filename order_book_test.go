@@ -102,22 +102,30 @@ func TestLimitOrders(t *testing.T) {
 	t.Run("take all orders", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		order := &Order{
-			ID:     "buyAll",
-			Type:   Limit,
-			Side:   Buy,
-			Price:  decimal.NewFromInt(1000),
-			Size:   decimal.NewFromInt(10),
-			UserID: 300,
-		}
+		// Verify initial LastCmdSeqID is 0
+		assert.Equal(t, uint64(0), testOrderBook.LastCmdSeqID())
 
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		// Send command with SeqID
+		testOrderBook.cmdChan <- Command{
+			SeqID: 100,
+			Type:  CmdPlaceOrder,
+			Payload: &Order{
+				ID:     "buyAll",
+				Type:   Limit,
+				Side:   Buy,
+				Price:  decimal.NewFromInt(1000),
+				Size:   decimal.NewFromInt(10),
+				UserID: 300,
+			},
+		}
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
 			return memoryPublishTrader.Count() == 10
 		}, 1*time.Second, 10*time.Millisecond)
+
+		// Verify LastCmdSeqID was updated
+		assert.Equal(t, uint64(100), testOrderBook.LastCmdSeqID())
 
 		stats, err := testOrderBook.GetStats()
 		assert.NoError(t, err)
