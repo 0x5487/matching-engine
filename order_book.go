@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nite-coder/blackbear/pkg/cast"
 	"github.com/shopspring/decimal"
 )
 
@@ -141,6 +140,33 @@ type DepthChange struct {
 	SizeDiff decimal.Decimal
 }
 
+// CommandType represents the type of command sent to the order book.
+type CommandType int
+
+const (
+	CmdPlaceOrder CommandType = iota
+	CmdCancelOrder
+	CmdAmendOrder
+	CmdDepth
+	CmdGetStats
+)
+
+// BookStats contains statistics about the order book queues
+type BookStats struct {
+	AskDepthCount int64
+	AskOrderCount int64
+	BidDepthCount int64
+	BidOrderCount int64
+}
+
+// Command represents a unified command sent to the order book.
+// It improves deterministic ordering and performance by using a single channel.
+type Command struct {
+	Type    CommandType
+	Payload any
+	Resp    chan any // Optional: for synchronous response (e.g. CmdDepth)
+}
+
 // OrderBook type
 type OrderBook struct {
 	seqID            atomic.Uint64 // Globally increasing sequence ID for all events
@@ -148,24 +174,19 @@ type OrderBook struct {
 	isShutdown       atomic.Bool
 	bidQueue         *queue
 	askQueue         *queue
-	orderChan        chan *Order
-	amendChan        chan *AmendRequest
-	cancelChan       chan string
-	depthChan        chan *Message
+	cmdChan          chan Command
 	done             chan struct{}
 	shutdownComplete chan struct{}
 	publishTrader    PublishLog
 }
 
 // NewOrderBook creates a new order book instance.
+// NewOrderBook creates a new order book instance.
 func NewOrderBook(publishTrader PublishLog) *OrderBook {
 	return &OrderBook{
 		bidQueue:         NewBuyerQueue(),
 		askQueue:         NewSellerQueue(),
-		orderChan:        make(chan *Order, 10000),
-		amendChan:        make(chan *AmendRequest, 10000),
-		cancelChan:       make(chan string, 10000),
-		depthChan:        make(chan *Message, 100),
+		cmdChan:          make(chan Command, 32768),
 		done:             make(chan struct{}),
 		shutdownComplete: make(chan struct{}),
 		publishTrader:    publishTrader,
@@ -184,7 +205,7 @@ func (book *OrderBook) AddOrder(ctx context.Context, order *Order) error {
 	}
 
 	select {
-	case book.orderChan <- order:
+	case book.cmdChan <- Command{Type: CmdPlaceOrder, Payload: order}:
 		return nil
 	case <-ctx.Done():
 		return ErrTimeout
@@ -198,7 +219,7 @@ func (book *OrderBook) AmendOrder(ctx context.Context, id string, newPrice decim
 	}
 
 	select {
-	case book.amendChan <- &AmendRequest{OrderID: id, NewPrice: newPrice, NewSize: newSize}:
+	case book.cmdChan <- Command{Type: CmdAmendOrder, Payload: &AmendRequest{OrderID: id, NewPrice: newPrice, NewSize: newSize}}:
 		return nil
 	case <-ctx.Done():
 		return ErrTimeout
@@ -212,7 +233,7 @@ func (book *OrderBook) CancelOrder(ctx context.Context, id string) error {
 	}
 
 	select {
-	case book.cancelChan <- id:
+	case book.cmdChan <- Command{Type: CmdCancelOrder, Payload: id}:
 		return nil
 	case <-ctx.Done():
 		return ErrTimeout
@@ -225,26 +246,56 @@ func (book *OrderBook) Depth(limit uint32) (*Depth, error) {
 		return nil, ErrInvalidParam
 	}
 
-	msg := &Message{
-		Action:  "depth",
-		Payload: limit,
-		Resp:    make(chan *Response),
+	respChan := make(chan any, 1) // Create a response channel for this specific command
+
+	select {
+	case book.cmdChan <- Command{Type: CmdDepth, Payload: limit, Resp: respChan}:
+		// Request sent, now wait for response
+	case <-time.After(time.Second):
+		return nil, ErrTimeout
 	}
 
 	select {
-	case book.depthChan <- msg:
-		resp := <-msg.Resp
-		if resp.Error != nil {
-			return nil, resp.Error
+	case res := <-respChan:
+		// If the response is directly *Depth (not wrapped in *Response), handle it
+		if result, ok := res.(*Depth); ok {
+			return result, nil
 		}
 
-		if resp.Data != nil {
-			result, ok := resp.Data.(*Depth)
-			if ok {
-				return result, nil
+		// If it's *Response (kept for compatibility if needed, though we simplified in Start loop)
+		if r, ok := res.(*Response); ok {
+			if r.Error != nil {
+				return nil, r.Error
+			}
+			if r.Data != nil {
+				if result, ok := r.Data.(*Depth); ok {
+					return result, nil
+				}
 			}
 		}
+		return nil, nil // Unexpected response type
+	case <-time.After(time.Second):
+		return nil, ErrTimeout
+	}
+}
 
+// GetStats returns usage statistics for the order book.
+// It is thread-safe and interacts with the order book loop via a channel.
+func (book *OrderBook) GetStats() (*BookStats, error) {
+	respChan := make(chan any, 1)
+
+	select {
+	case book.cmdChan <- Command{Type: CmdGetStats, Resp: respChan}:
+		// Request sent, now wait for response
+	case <-time.After(time.Second):
+		return nil, ErrTimeout
+	}
+
+	select {
+	case res := <-respChan:
+		if result, ok := res.(*BookStats); ok {
+			return result, nil
+		}
 		return nil, nil
 	case <-time.After(time.Second):
 		return nil, ErrTimeout
@@ -261,21 +312,46 @@ func (book *OrderBook) Start() error {
 		select {
 		case <-book.done:
 			return book.drain()
-		case order := <-book.orderChan:
-			book.addOrder(order)
-		case req := <-book.amendChan:
-			book.amendOrder(req)
-		case orderID := <-book.cancelChan:
-			book.cancelOrder(orderID)
-		case msg := <-book.depthChan:
-			limit, _ := cast.ToUint32(msg.Payload)
-			result := book.depth(limit)
-			resp := Response{
-				Error: nil,
-				Data:  result,
+		case cmd := <-book.cmdChan: // Process commands from the unified channel
+			switch cmd.Type {
+			case CmdPlaceOrder:
+				if order, ok := cmd.Payload.(*Order); ok {
+					book.addOrder(order)
+				}
+			case CmdAmendOrder:
+				if req, ok := cmd.Payload.(*AmendRequest); ok {
+					book.amendOrder(req)
+				}
+			case CmdCancelOrder:
+				if orderID, ok := cmd.Payload.(string); ok {
+					book.cancelOrder(orderID)
+				}
+			case CmdDepth:
+				if limit, ok := cmd.Payload.(uint32); ok {
+					result := book.depth(limit)
+					// Respond synchronously if a response channel is provided
+					if cmd.Resp != nil {
+						select {
+						case cmd.Resp <- &Response{Data: result}:
+						default:
+							// Non-blocking send, if no one is listening, just drop it
+						}
+					}
+				}
+			case CmdGetStats:
+				stats := &BookStats{
+					AskDepthCount: book.askQueue.depthCount(),
+					AskOrderCount: book.askQueue.orderCount(),
+					BidDepthCount: book.bidQueue.depthCount(),
+					BidOrderCount: book.bidQueue.orderCount(),
+				}
+				if cmd.Resp != nil {
+					select {
+					case cmd.Resp <- stats:
+					default:
+					}
+				}
 			}
-
-			msg.Resp <- &resp
 		}
 	}
 }
@@ -302,12 +378,26 @@ func (book *OrderBook) drain() error {
 
 	for {
 		select {
-		case order := <-book.orderChan:
-			book.addOrder(order)
-		case req := <-book.amendChan:
-			book.amendOrder(req)
-		case orderID := <-book.cancelChan:
-			book.cancelOrder(orderID)
+		case cmd := <-book.cmdChan:
+			switch cmd.Type {
+			case CmdPlaceOrder:
+				if order, ok := cmd.Payload.(*Order); ok {
+					book.addOrder(order)
+				}
+			case CmdAmendOrder:
+				if req, ok := cmd.Payload.(*AmendRequest); ok {
+					book.amendOrder(req)
+				}
+			case CmdCancelOrder:
+				if orderID, ok := cmd.Payload.(string); ok {
+					book.cancelOrder(orderID)
+				}
+			// CmdDepth is read-only, we can skip it during drain or process it if strictly needed.
+			// Usually during shutdown/drain we only care about state-mutating commands.
+			// However, to strictly drain the channel, we should consume it.
+			case CmdDepth, CmdGetStats:
+				// Read-only commands, no-op during drain
+			}
 		default:
 			// All channels empty, shutdown complete
 			return nil
@@ -330,6 +420,8 @@ func (book *OrderBook) addOrder(order *Order) {
 		logs = book.handlePostOnlyOrder(order)
 	case Market:
 		logs = book.handleMarketOrder(order)
+	case Cancel:
+		// Not a valid order type for placement
 	}
 
 	if len(logs) > 0 {

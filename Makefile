@@ -15,3 +15,5 @@ lint:
 
 test:
 	go test -race -coverprofile=cover.out -covermode=atomic ./...
+
+release: lint test

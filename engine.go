@@ -78,10 +78,13 @@ func (engine *MatchingEngine) OrderBook(marketID string) *OrderBook {
 	book, found := engine.orderbooks.Load(marketID)
 	if !found {
 		newbook := NewOrderBook(engine.publishTrader)
-		book, _ = engine.orderbooks.LoadOrStore(marketID, newbook)
-		go func() {
-			_ = newbook.Start()
-		}()
+		var loaded bool
+		book, loaded = engine.orderbooks.LoadOrStore(marketID, newbook)
+		if !loaded {
+			go func() {
+				_ = newbook.Start()
+			}()
+		}
 	}
 
 	orderbook, _ := book.(*OrderBook)

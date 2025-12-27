@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [unreleased]
+
+- perf: implement thread-safe `GetStats()` using unified command channel to eliminate race conditions in tests.
+- refactor: replace `time.Sleep` with `assert.Eventually` in unit tests for faster and more deterministic execution.
+
 ## v0.7.0 (2025-12-14)
 
 - **breaking**: replace `OrderBookID` with `SequenceID` in `BookLog`. All events now have a globally increasing `SequenceID` for ordering, deduplication, and rebuild synchronization. Use `LogType` to determine if the event affects order book state.

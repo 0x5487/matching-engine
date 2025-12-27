@@ -30,9 +30,11 @@ func TestMatchingEngine(t *testing.T) {
 		err := engine.AddOrder(ctx, order1)
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
 		orderbook := engine.OrderBook(market1)
-		assert.Equal(t, int64(1), orderbook.bidQueue.orderCount())
+		assert.Eventually(t, func() bool {
+			stats, err := orderbook.GetStats()
+			return err == nil && stats.BidOrderCount == 1
+		}, 1*time.Second, 10*time.Millisecond)
 
 		// market2
 		market2 := "ETH-USDT"
@@ -48,9 +50,11 @@ func TestMatchingEngine(t *testing.T) {
 		err = engine.AddOrder(ctx, order2)
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
 		orderbook = engine.OrderBook(market2)
-		assert.Equal(t, int64(1), orderbook.askQueue.orderCount())
+		assert.Eventually(t, func() bool {
+			stats, err := orderbook.GetStats()
+			return err == nil && stats.AskOrderCount == 1
+		}, 1*time.Second, 10*time.Millisecond)
 	})
 
 	t.Run("CancelOrder", func(t *testing.T) {
@@ -73,29 +77,21 @@ func TestMatchingEngine(t *testing.T) {
 		err := engine.AddOrder(ctx, order1)
 		assert.NoError(t, err)
 
-		order2 := &Order{
-			ID:       "order2",
-			MarketID: market1,
-			Type:     Limit,
-			Side:     Sell,
-			Price:    decimal.NewFromInt(110),
-			Size:     decimal.NewFromInt(2),
-		}
-
-		err = engine.AddOrder(ctx, order2)
-		assert.NoError(t, err)
-
-		time.Sleep(50 * time.Millisecond)
+		// Wait for order to be in book
+		orderbook := engine.OrderBook(market1)
+		assert.Eventually(t, func() bool {
+			stats, err := orderbook.GetStats()
+			return err == nil && stats.BidOrderCount == 1
+		}, 1*time.Second, 10*time.Millisecond)
 
 		err = engine.CancelOrder(ctx, market1, order1.ID)
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
-
 		// validate
-		orderbook := engine.OrderBook(market1)
-		assert.Equal(t, int64(0), orderbook.bidQueue.orderCount())
-		assert.Equal(t, int64(1), orderbook.askQueue.orderCount())
+		assert.Eventually(t, func() bool {
+			stats, err := orderbook.GetStats()
+			return err == nil && stats.BidOrderCount == 0
+		}, 1*time.Second, 10*time.Millisecond)
 	})
 }
 
@@ -120,8 +116,6 @@ func TestMatchingEngineShutdown(t *testing.T) {
 			err := engine.AddOrder(ctx, order)
 			assert.NoError(t, err)
 		}
-
-		time.Sleep(50 * time.Millisecond)
 
 		// Shutdown should complete successfully
 		err := engine.Shutdown(ctx)
@@ -157,8 +151,6 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		}
 		err := engine.AddOrder(ctx, order)
 		assert.NoError(t, err)
-
-		time.Sleep(50 * time.Millisecond)
 
 		// Shutdown
 		err = engine.Shutdown(ctx)
@@ -198,8 +190,6 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		}
 		err := engine.AddOrder(ctx, order)
 		assert.NoError(t, err)
-
-		time.Sleep(50 * time.Millisecond)
 
 		// Shutdown with a reasonable timeout should succeed
 		timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

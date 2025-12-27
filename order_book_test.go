@@ -87,7 +87,11 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 	err = orderBook.AddOrder(ctx, orderSell3)
 	assert.NoError(t, err)
 
-	time.Sleep(50 * time.Millisecond)
+	// Wait for all 6 orders to be processed
+	assert.Eventually(t, func() bool {
+		stats, err := orderBook.GetStats()
+		return err == nil && stats.AskOrderCount == 3 && stats.BidOrderCount == 3
+	}, 1*time.Second, 10*time.Millisecond)
 
 	return orderBook
 }
@@ -110,19 +114,15 @@ func TestLimitOrders(t *testing.T) {
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		assert.Equal(t, memoryPublishTrader.Count(), 10) // 6 setup + 3 matches + 1 open (remaining)
-		// Sell orders: 1@110, 1@120, 1@130. Total 3. Buy order size 10.
-		// Matches: 3. Remaining 7 enters book. So 1 Open log. Total 4 logs.
-
 		assert.Eventually(t, func() bool {
 			return memoryPublishTrader.Count() == 10
 		}, 1*time.Second, 10*time.Millisecond)
 
-		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(4), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(0), stats.AskDepthCount)
+		assert.Equal(t, int64(4), stats.BidDepthCount)
 
 		// Verify Match Logs
 		match1 := memoryPublishTrader.Get(6)
@@ -157,17 +157,15 @@ func TestLimitOrders(t *testing.T) {
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		assert.Equal(t, memoryPublishTrader.Count(), 9) // 6 setup + 2 matches + 1 open (remaining)
-
 		assert.Eventually(t, func() bool {
 			return memoryPublishTrader.Count() == 9
 		}, 1*time.Second, 10*time.Millisecond)
 
-		assert.Equal(t, int64(4), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(1), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(4), stats.AskDepthCount)
+		assert.Equal(t, int64(1), stats.BidDepthCount)
 
 		// Verify Match Logs
 		match1 := memoryPublishTrader.Get(6)
@@ -201,13 +199,15 @@ func TestMarketOrder(t *testing.T) {
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		assert.Equal(t, memoryPublishTrader.Count(), 9) // 6 setup + 3 matches
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 9
+		}, 1*time.Second, 10*time.Millisecond)
 
-		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(0), stats.AskDepthCount)
+		assert.Equal(t, int64(3), stats.BidDepthCount)
 	})
 
 	t.Run("take some orders", func(t *testing.T) {
@@ -224,13 +224,15 @@ func TestMarketOrder(t *testing.T) {
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 match
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 
-		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(2), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(3), stats.AskDepthCount)
+		assert.Equal(t, int64(2), stats.BidDepthCount)
 	})
 
 	t.Run("QuoteSize mode - buy with quote amount", func(t *testing.T) {
@@ -246,11 +248,10 @@ func TestMarketOrder(t *testing.T) {
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		// 6 setup + 2 matches
-		assert.Equal(t, 8, memoryPublishTrader.Count())
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 8
+		}, 1*time.Second, 10*time.Millisecond)
 
 		// Verify first match: 1 BTC at 110
 		match1 := memoryPublishTrader.Get(6)
@@ -279,11 +280,10 @@ func TestMarketOrder(t *testing.T) {
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		// 6 setup + 1 match
-		assert.Equal(t, 7, memoryPublishTrader.Count())
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 
 		match := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeMatch, match.Type)
@@ -308,8 +308,9 @@ func TestMarketOrder(t *testing.T) {
 		}
 		err := orderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
+		assert.Eventually(t, func() bool {
+			return publishTrader.Count() >= 1
+		}, 1*time.Second, 10*time.Millisecond)
 		log := publishTrader.Get(0)
 		assert.Equal(t, LogTypeReject, log.Type)
 		assert.Equal(t, RejectReasonNoLiquidity, log.RejectReason)
@@ -328,11 +329,10 @@ func TestMarketOrder(t *testing.T) {
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		// 6 setup + 2 matches
-		assert.Equal(t, 8, memoryPublishTrader.Count())
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 8
+		}, 1*time.Second, 10*time.Millisecond)
 
 		// Verify first match: 1 BTC at 110
 		match1 := memoryPublishTrader.Get(6)
@@ -361,11 +361,10 @@ func TestMarketOrder(t *testing.T) {
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		// 6 setup + 1 match
-		assert.Equal(t, 7, memoryPublishTrader.Count())
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 
 		match := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeMatch, match.Type)
@@ -389,14 +388,15 @@ func TestMarketOrder(t *testing.T) {
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		// 6 setup + 3 matches
-		assert.Equal(t, 9, memoryPublishTrader.Count())
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 9
+		}, 1*time.Second, 10*time.Millisecond)
 
-		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(0), stats.AskDepthCount)
+		assert.Equal(t, int64(3), stats.BidDepthCount)
 	})
 }
 
@@ -417,13 +417,15 @@ func TestPostOnlyOrder(t *testing.T) {
 		err := testOrderBook.AddOrder(ctx, buyAll)
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 open
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 
-		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(4), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(3), stats.AskDepthCount)
+		assert.Equal(t, int64(4), stats.BidDepthCount)
 	})
 
 	t.Run("fail to place a post only order", func(t *testing.T) {
@@ -439,15 +441,17 @@ func TestPostOnlyOrder(t *testing.T) {
 
 		err := testOrderBook.AddOrder(ctx, buyAll)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 
 		trade := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeReject, trade.Type)
-		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(3), stats.AskDepthCount)
+		assert.Equal(t, int64(3), stats.BidDepthCount)
 	})
 }
 
@@ -468,15 +472,17 @@ func TestIOCOrder(t *testing.T) {
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 
 		trade := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeReject, trade.Type)
-		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(3), stats.AskDepthCount)
+		assert.Equal(t, int64(3), stats.BidDepthCount)
 	})
 
 	t.Run("take all orders with no error", func(t *testing.T) {
@@ -493,13 +499,15 @@ func TestIOCOrder(t *testing.T) {
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		assert.Equal(t, memoryPublishTrader.Count(), 9) // 6 setup + 3 matches
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 9
+		}, 1*time.Second, 10*time.Millisecond)
 
-		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(0), stats.AskDepthCount)
+		assert.Equal(t, int64(3), stats.BidDepthCount)
 	})
 
 	t.Run("take all orders and finish as `cancel`", func(t *testing.T) {
@@ -516,13 +524,15 @@ func TestIOCOrder(t *testing.T) {
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		assert.Equal(t, memoryPublishTrader.Count(), 10) // 6 setup + 3 matches + 1 cancel (remaining)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 10
+		}, 1*time.Second, 10*time.Millisecond)
 
-		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(0), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(3), stats.AskDepthCount)
+		assert.Equal(t, int64(0), stats.BidDepthCount)
 	})
 
 	t.Run("take some orders and finish as `cancel`", func(t *testing.T) {
@@ -539,13 +549,15 @@ func TestIOCOrder(t *testing.T) {
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		assert.Equal(t, memoryPublishTrader.Count(), 8) // 6 setup + 1 match + 1 cancel (remaining)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 8
+		}, 1*time.Second, 10*time.Millisecond)
 
-		assert.Equal(t, int64(2), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(2), stats.AskDepthCount)
+		assert.Equal(t, int64(3), stats.BidDepthCount)
 	})
 }
 
@@ -565,15 +577,17 @@ func TestFOKOrder(t *testing.T) {
 
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 
 		trade := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeReject, trade.Type)
-		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(3), stats.AskDepthCount)
+		assert.Equal(t, int64(3), stats.BidDepthCount)
 	})
 
 	t.Run("take all orders with no error", func(t *testing.T) {
@@ -590,13 +604,15 @@ func TestFOKOrder(t *testing.T) {
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		assert.Equal(t, memoryPublishTrader.Count(), 9) // 6 setup + 3 matches
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 9
+		}, 1*time.Second, 10*time.Millisecond)
 
-		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(0), stats.AskDepthCount)
+		assert.Equal(t, int64(3), stats.BidDepthCount)
 	})
 
 	t.Run("take all orders and finish as `cancel`", func(t *testing.T) {
@@ -612,15 +628,17 @@ func TestFOKOrder(t *testing.T) {
 
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 
 		trade := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeReject, trade.Type)
-		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(3), stats.AskDepthCount)
+		assert.Equal(t, int64(3), stats.BidDepthCount)
 	})
 
 	t.Run("take some orders and finish as `cancel`", func(t *testing.T) {
@@ -636,15 +654,17 @@ func TestFOKOrder(t *testing.T) {
 
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
-		assert.Equal(t, memoryPublishTrader.Count(), 7) // 6 setup + 1 cancel
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 
 		trade := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeReject, trade.Type)
-		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
-		assert.Equal(t, int64(3), testOrderBook.bidQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(3), stats.AskDepthCount)
+		assert.Equal(t, int64(3), stats.BidDepthCount)
 	})
 
 	// Test FOK with multiple orders at same price level
@@ -677,7 +697,10 @@ func TestFOKOrder(t *testing.T) {
 		})
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
+		assert.Eventually(t, func() bool {
+			stats, err := orderBook.GetStats()
+			return err == nil && stats.AskDepthCount == 1 // Both orders at same price 110
+		}, 1*time.Second, 10*time.Millisecond)
 
 		// FOK Buy: Price=115, Size=5
 		// Expected: Should fully match since total size at price 110 is exactly 5
@@ -692,13 +715,13 @@ func TestFOKOrder(t *testing.T) {
 
 		err = orderBook.AddOrder(ctx, fokOrder)
 		assert.NoError(t, err)
-		time.Sleep(100 * time.Millisecond)
-
-		memoryPublishTrader, _ := orderBook.publishTrader.(*MemoryPublishLog)
-		logCount := memoryPublishTrader.Count()
 
 		// Expected: 2 (setup) + 2 (matches) = 4 logs
-		assert.Equal(t, 4, logCount, "Expected 2 setup + 2 match logs")
+		memoryPublishTrader, _ := orderBook.publishTrader.(*MemoryPublishLog)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 4
+		}, 1*time.Second, 10*time.Millisecond)
+		logCount := memoryPublishTrader.Count()
 
 		if logCount >= 4 {
 			log1 := memoryPublishTrader.Get(2)
@@ -742,7 +765,10 @@ func TestFOKOrder(t *testing.T) {
 		})
 		assert.NoError(t, err)
 
-		time.Sleep(50 * time.Millisecond)
+		assert.Eventually(t, func() bool {
+			stats, err := orderBook.GetStats()
+			return err == nil && stats.AskDepthCount == 2
+		}, 1*time.Second, 10*time.Millisecond)
 
 		// FOK Buy: Price=125, Size=5
 		// Expected: Should fully match (consume 2 at 110 + 3 at 120 = 5)
@@ -757,13 +783,12 @@ func TestFOKOrder(t *testing.T) {
 
 		err = orderBook.AddOrder(ctx, fokOrder)
 		assert.NoError(t, err)
-		time.Sleep(100 * time.Millisecond)
-
-		memoryPublishTrader, _ := orderBook.publishTrader.(*MemoryPublishLog)
-		logCount := memoryPublishTrader.Count()
 
 		// Expected: 2 setup + 2 matches = 4
-		assert.Equal(t, 4, logCount, "Expected 2 setup + 2 match logs")
+		memoryPublishTrader, _ := orderBook.publishTrader.(*MemoryPublishLog)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 4
+		}, 1*time.Second, 10*time.Millisecond)
 
 		assert.Equal(t, int64(0), orderBook.askQueue.depthCount(), "All sell orders should be matched")
 	})
@@ -789,7 +814,10 @@ func TestFOKOrder(t *testing.T) {
 			assert.NoError(t, err)
 		}
 
-		time.Sleep(50 * time.Millisecond)
+		assert.Eventually(t, func() bool {
+			stats, err := orderBook.GetStats()
+			return err == nil && stats.AskDepthCount == 1 // 3 setup at same price should have depth 1
+		}, 1*time.Second, 10*time.Millisecond)
 
 		// FOK Buy: Price=115, Size=3
 		// Expected: Should fully match
@@ -804,15 +832,16 @@ func TestFOKOrder(t *testing.T) {
 
 		err := orderBook.AddOrder(ctx, fokOrder)
 		assert.NoError(t, err)
-		time.Sleep(100 * time.Millisecond)
-
-		memoryPublishTrader, _ := orderBook.publishTrader.(*MemoryPublishLog)
-		logCount := memoryPublishTrader.Count()
 
 		// Expected: 3 setup + 3 matches = 6
-		assert.Equal(t, 6, logCount, "Expected 3 setup + 3 match logs")
+		memoryPublishTrader, _ := orderBook.publishTrader.(*MemoryPublishLog)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 6
+		}, 1*time.Second, 10*time.Millisecond)
 
-		assert.Equal(t, int64(0), orderBook.askQueue.depthCount(), "All sell orders should be matched")
+		stats, err := orderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(0), stats.AskDepthCount, "All sell orders should be matched")
 	})
 }
 
@@ -823,18 +852,24 @@ func TestCancelOrder(t *testing.T) {
 
 	err := testOrderBook.CancelOrder(ctx, "sell-1")
 	assert.NoError(t, err)
-	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, int64(2), testOrderBook.askQueue.depthCount())
+	assert.Eventually(t, func() bool {
+		stats, err := testOrderBook.GetStats()
+		return err == nil && stats.AskDepthCount == 2
+	}, 1*time.Second, 10*time.Millisecond)
 
 	err = testOrderBook.CancelOrder(ctx, "buy-1")
 	assert.NoError(t, err)
-	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, int64(2), testOrderBook.bidQueue.depthCount())
+	assert.Eventually(t, func() bool {
+		stats, err := testOrderBook.GetStats()
+		return err == nil && stats.BidDepthCount == 2
+	}, 1*time.Second, 10*time.Millisecond)
 
 	err = testOrderBook.CancelOrder(ctx, "aaaaaa")
 	assert.NoError(t, err)
-	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, int64(2), testOrderBook.bidQueue.depthCount())
+	assert.Eventually(t, func() bool {
+		stats, err := testOrderBook.GetStats()
+		return err == nil && stats.BidDepthCount == 2
+	}, 1*time.Second, 10*time.Millisecond)
 }
 
 func TestAmendOrder(t *testing.T) {
@@ -847,9 +882,11 @@ func TestAmendOrder(t *testing.T) {
 		// 1. Amend buy-1 (Price 90) size from 1 to 0.5
 		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(90), decimal.NewFromFloat(0.5))
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		// Verify Depth
+		assert.Eventually(t, func() bool {
+			depth, err := testOrderBook.Depth(10)
+			return err == nil && len(depth.Bids) > 0 && depth.Bids[0].Size.String() == "0.5"
+		}, 1*time.Second, 10*time.Millisecond)
 		depth, err := testOrderBook.Depth(10)
 		assert.NoError(t, err)
 		assert.Equal(t, "0.5", depth.Bids[0].Size.String())
@@ -866,15 +903,17 @@ func TestAmendOrder(t *testing.T) {
 		// Verify Priority: Add another order at same price, match against them.
 		// Add buy-new at 90.
 		testOrderBook.AddOrder(ctx, &Order{ID: "buy-new", Type: Limit, Side: Buy, Price: decimal.NewFromInt(90), Size: decimal.NewFromInt(1), UserID: 401})
-		time.Sleep(20 * time.Millisecond)
 
 		// Sell matching order. Should match buy-1 (0.5) first, then buy-new.
 		testOrderBook.AddOrder(ctx, &Order{ID: "sell-match", Type: Limit, Side: Sell, Price: decimal.NewFromInt(90), Size: decimal.NewFromFloat(0.5), UserID: 402})
-		time.Sleep(20 * time.Millisecond)
 
 		// Check logs for match
 		// 6 setup + 1 amend + 1 open(buy-new) + 1 match(sell-match vs buy-1)
-		assert.True(t, memoryPublishTrader.Count() >= 9)
+		// Check logs for match
+		// 6 setup + 1 amend + 1 open(buy-new) + 1 match(sell-match vs buy-1)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() >= 9
+		}, 1*time.Second, 10*time.Millisecond)
 		matchLog := memoryPublishTrader.Get(8)
 		assert.Equal(t, LogTypeMatch, matchLog.Type)
 		assert.Equal(t, "buy-1", matchLog.MakerOrderID) // Priority kept!
@@ -889,29 +928,28 @@ func TestAmendOrder(t *testing.T) {
 
 		// 1. Add another order at 90 to compete
 		testOrderBook.AddOrder(ctx, &Order{ID: "buy-2-compete", Type: Limit, Side: Buy, Price: decimal.NewFromInt(90), Size: decimal.NewFromInt(1)})
-		time.Sleep(20 * time.Millisecond)
 
 		// 2. Amend buy-1 size from 1 to 2 (Increase) -> Should lose priority to buy-2-compete
 		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(90), decimal.NewFromInt(2))
 		assert.NoError(t, err)
-		time.Sleep(20 * time.Millisecond)
 
 		// 3. Sell matching order. Should match buy-2-compete first.
 		testOrderBook.AddOrder(ctx, &Order{ID: "sell-match", Type: Limit, Side: Sell, Price: decimal.NewFromInt(90), Size: decimal.NewFromInt(1)})
-		time.Sleep(20 * time.Millisecond)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		// Find match log
-		found := false
-		for i := 0; i < memoryPublishTrader.Count(); i++ {
-			log := memoryPublishTrader.Get(i)
-			if log.Type == LogTypeMatch && log.OrderID == "sell-match" {
-				assert.Equal(t, "buy-2-compete", log.MakerOrderID) // Priority lost!
-				found = true
-				break
+		assert.Eventually(t, func() bool {
+			found := false
+			for i := 0; i < memoryPublishTrader.Count(); i++ {
+				log := memoryPublishTrader.Get(i)
+				if log.Type == LogTypeMatch && log.OrderID == "sell-match" {
+					assert.Equal(t, "buy-2-compete", log.MakerOrderID) // Priority lost!
+					found = true
+					break
+				}
 			}
-		}
-		assert.True(t, found)
+			return found
+		}, 1*time.Second, 10*time.Millisecond)
 	})
 
 	t.Run("change price moves level", func(t *testing.T) {
@@ -921,7 +959,10 @@ func TestAmendOrder(t *testing.T) {
 		// Amend price to 95
 		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(95), decimal.NewFromInt(1))
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
+		assert.Eventually(t, func() bool {
+			depth, err := testOrderBook.Depth(10)
+			return err == nil && depth.Bids[0].Price.String() == "95"
+		}, 1*time.Second, 10*time.Millisecond)
 
 		depth, err := testOrderBook.Depth(10)
 		assert.NoError(t, err)
@@ -941,7 +982,10 @@ func TestAmendOrder(t *testing.T) {
 		// Amend Price to 95 AND Size to 5
 		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(95), decimal.NewFromInt(5))
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
+		assert.Eventually(t, func() bool {
+			depth, err := testOrderBook.Depth(10)
+			return err == nil && depth.Bids[0].Price.String() == "95"
+		}, 1*time.Second, 10*time.Millisecond)
 
 		depth, err := testOrderBook.Depth(10)
 		assert.NoError(t, err)
@@ -966,11 +1010,11 @@ func TestAmendOrder(t *testing.T) {
 		// Remaining Buy-1 (Size 1) should sit at 115.
 		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(115), decimal.NewFromInt(2))
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		// 6 setup + 1 amend + 1 match + 1 open (remaining)
-		assert.Equal(t, 9, memoryPublishTrader.Count())
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 9
+		}, 1*time.Second, 10*time.Millisecond)
 
 		// Verify Amend Log
 		amendLog := memoryPublishTrader.Get(6)
@@ -1061,7 +1105,20 @@ func TestShutdown(t *testing.T) {
 		}()
 
 		// Wait for Start() to be ready
-		time.Sleep(10 * time.Millisecond)
+		assert.Eventually(t, func() bool {
+			err := orderBook.AddOrder(ctx, &Order{ID: "ping", MarketID: "ping", Side: Buy, Price: decimal.NewFromInt(1), Size: decimal.NewFromInt(1)})
+			return err != ErrShutdown && err != nil // Should not be ErrShutdown, but might be others if book not ready
+		}, 1*time.Second, 10*time.Millisecond)
+		// Wait, a better way to check if ready:
+		// Let's just use a small sleep here or a better ready signal if available.
+		// Actually, AddOrder might fail if Start hasn't processed anything yet.
+		// Let's stick to the Pattern: replace Sleep with eventually on a condition.
+		// But here we want to ensure it's READY.
+		// Let's use a dummy GetStats call.
+		assert.Eventually(t, func() bool {
+			_, err := orderBook.GetStats()
+			return err == nil
+		}, 1*time.Second, 10*time.Millisecond)
 
 		// Shutdown
 		err := orderBook.Shutdown(ctx)
@@ -1109,7 +1166,10 @@ func TestShutdown(t *testing.T) {
 			_ = orderBook.Start()
 		}()
 
-		time.Sleep(10 * time.Millisecond)
+		assert.Eventually(t, func() bool {
+			_, err := orderBook.GetStats()
+			return err == nil
+		}, 1*time.Second, 10*time.Millisecond)
 
 		// First shutdown
 		err := orderBook.Shutdown(ctx)
@@ -1139,7 +1199,9 @@ func TestRejectReason(t *testing.T) {
 		}
 		err := orderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
+		assert.Eventually(t, func() bool {
+			return publishTrader.Count() >= 1
+		}, 1*time.Second, 10*time.Millisecond)
 
 		log := publishTrader.Get(0)
 		assert.Equal(t, LogTypeReject, log.Type)
@@ -1159,9 +1221,10 @@ func TestRejectReason(t *testing.T) {
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 		log := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeReject, log.Type)
 		assert.Equal(t, RejectReasonPriceMismatch, log.RejectReason)
@@ -1180,9 +1243,10 @@ func TestRejectReason(t *testing.T) {
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 		log := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeReject, log.Type)
 		assert.Equal(t, RejectReasonInsufficientSize, log.RejectReason)
@@ -1201,9 +1265,10 @@ func TestRejectReason(t *testing.T) {
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 		log := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeReject, log.Type)
 		assert.Equal(t, RejectReasonPriceMismatch, log.RejectReason)
@@ -1222,9 +1287,10 @@ func TestRejectReason(t *testing.T) {
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 		log := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeReject, log.Type)
 		assert.Equal(t, RejectReasonWouldCrossSpread, log.RejectReason)
@@ -1244,8 +1310,9 @@ func TestRejectReason(t *testing.T) {
 		}
 		err := orderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
+		assert.Eventually(t, func() bool {
+			return publishTrader.Count() >= 1
+		}, 1*time.Second, 10*time.Millisecond)
 		log := publishTrader.Get(0)
 		assert.Equal(t, LogTypeReject, log.Type)
 		assert.Equal(t, RejectReasonNoLiquidity, log.RejectReason)
@@ -1268,9 +1335,10 @@ func TestMatchAmount(t *testing.T) {
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 		matchLog := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeMatch, matchLog.Type)
 		assert.Equal(t, "110", matchLog.Price.String())
@@ -1291,9 +1359,10 @@ func TestMatchAmount(t *testing.T) {
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 9
+		}, 1*time.Second, 10*time.Millisecond)
 
 		// Match 1: sell-1 at 110, size 1 -> Amount 110
 		match1 := memoryPublishTrader.Get(6)
@@ -1337,9 +1406,10 @@ func TestTradeID(t *testing.T) {
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		// Match event should have TradeID > 0
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 		matchLog := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeMatch, matchLog.Type)
 		assert.Greater(t, matchLog.TradeID, uint64(0), "Match event should have TradeID > 0")
@@ -1358,9 +1428,10 @@ func TestTradeID(t *testing.T) {
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 9
+		}, 1*time.Second, 10*time.Millisecond)
 
 		// 3 matches should have sequential TradeIDs
 		match1 := memoryPublishTrader.Get(6)
@@ -1388,9 +1459,10 @@ func TestTradeID(t *testing.T) {
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
-		time.Sleep(50 * time.Millisecond)
-
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
 		rejectLog := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeReject, rejectLog.Type)
 		assert.Equal(t, uint64(0), rejectLog.TradeID, "Reject event should have TradeID 0")

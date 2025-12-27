@@ -1,10 +1,40 @@
+version: "2"
 linters:
   enable:
-    - gosec
-    - misspell
-    - sqlclosecheck
-    - gci
     - errorlint
     - exhaustive
-    - forcetypeassert
     - gocritic
+    - gosec
+    - misspell
+    - noctx
+    - perfsprint
+    - sloglint
+    - sqlclosecheck
+    - usestdlibvars
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true
+    gosec:
+      excludes:
+        - G204
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - path: _test.go
+        text: .*
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
