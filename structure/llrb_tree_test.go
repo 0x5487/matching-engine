@@ -235,10 +235,8 @@ func TestPriceLevelTree_DescendingInsert(t *testing.T) {
 
 // Benchmark against current operations
 func BenchmarkPriceLevelTree_Insert(b *testing.B) {
-	tree := NewPriceLevelTree(int32(b.N + 1000))
-
-	prices := make([]udecimal.Decimal, b.N)
-	for i := 0; i < b.N; i++ {
+	prices := make([]udecimal.Decimal, 1000)
+	for i := 0; i < 1000; i++ {
 		prices[i] = udecimal.MustFromInt64(int64(i), 0)
 	}
 
@@ -246,25 +244,28 @@ func BenchmarkPriceLevelTree_Insert(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		tree.Insert(prices[i])
+		tree := NewPriceLevelTree(1100)
+		for _, p := range prices {
+			tree.Insert(p)
+		}
 	}
 }
 
 func BenchmarkPriceLevelTree_Search(b *testing.B) {
 	tree := NewPriceLevelTree(10000)
-
-	// Pre-populate
 	for i := int64(0); i < 1000; i++ {
 		tree.Insert(udecimal.MustFromInt64(i, 0))
 	}
-
 	searchTarget := udecimal.MustFromInt64(500, 0)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		tree.Contains(searchTarget)
+		// Do 1000 searches per op to normalize units
+		for j := 0; j < 1000; j++ {
+			tree.Contains(searchTarget)
+		}
 	}
 }
 

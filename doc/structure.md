@@ -34,11 +34,11 @@
 
 | 操作 | LLRB | Pooled Skiplist | Original Skiplist |
 |:---|:---|:---|:---|
-| **Insert (1000)** | **215 µs, 0 allocs** | 282 µs, 4 allocs | 407 µs, 3004 allocs |
-| **Search** | **113 ns, 0 allocs** | 208 ns, 0 allocs | 458 ns, 1 alloc |
-| **Delete (500)** | 223 µs, 0 allocs | **51 µs, 0 allocs** ✅ | 55 µs, 531 allocs |
-| **DeleteMin (drain)** | 197 µs, 0 allocs | **11 µs, 0 allocs** ✅ | 26 µs, 62 allocs |
-| **Mixed Workload** | 464 µs, 0 allocs | **418 µs, 4 allocs** ✅ | 660 µs, 3641 allocs |
+| **Insert (1000)** | **215 µs, 0 allocs** | 323 µs, 4 allocs | 407 µs, 3004 allocs |
+| **Search** | **121 ns, 0 allocs** | 237 ns, 0 allocs | 458 ns, 1 alloc |
+| **Delete (500)** | 202 µs, 0 allocs | **55 µs, 0 allocs** ✅ | 55 µs, 531 allocs |
+| **DeleteMin (drain)** | 194 µs, 0 allocs | **11 µs, 0 allocs** ✅ | 26 µs, 62 allocs |
+| **Mixed Workload** | 502 µs, 0 allocs | **536 µs, 4 allocs** | 660 µs, 3641 allocs |
 
 > [!NOTE]
 > Pooled Skiplist 的 4 allocs 是初始化時的 Slice 分配，**熱路徑上無分配**。
