@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shopspring/decimal"
+	"github.com/quagmt/udecimal"
 )
 
 // OrderBookLog represents an event in the order book.
@@ -14,23 +14,23 @@ import (
 // - Open, Match, Cancel, Amend: affect order book state
 // - Reject: does not affect order book state
 type OrderBookLog struct {
-	SequenceID   uint64          `json:"seq_id"`
-	TradeID      uint64          `json:"trade_id,omitempty"` // Sequential trade ID, only set for Match events
-	Type         LogType         `json:"type"`               // Event type: open, match, cancel, amend, reject
-	MarketID     string          `json:"market_id"`
-	Side         Side            `json:"side"`
-	Price        decimal.Decimal `json:"price"`
-	Size         decimal.Decimal `json:"size"`
-	Amount       decimal.Decimal `json:"amount,omitempty"` // Price * Size, only set for Match events
-	OldPrice     decimal.Decimal `json:"old_price,omitempty"`
-	OldSize      decimal.Decimal `json:"old_size,omitempty"`
-	OrderID      string          `json:"order_id"`
-	UserID       int64           `json:"user_id"`
-	OrderType    OrderType       `json:"order_type,omitempty"` // Order type: limit, market, ioc, fok
-	MakerOrderID string          `json:"maker_order_id,omitempty"`
-	MakerUserID  int64           `json:"maker_user_id,omitempty"`
-	RejectReason RejectReason    `json:"reject_reason,omitempty"` // Reason for rejection, only set for Reject events
-	CreatedAt    time.Time       `json:"created_at"`
+	SequenceID   uint64           `json:"seq_id"`
+	TradeID      uint64           `json:"trade_id,omitempty"` // Sequential trade ID, only set for Match events
+	Type         LogType          `json:"type"`               // Event type: open, match, cancel, amend, reject
+	MarketID     string           `json:"market_id"`
+	Side         Side             `json:"side"`
+	Price        udecimal.Decimal `json:"price"`
+	Size         udecimal.Decimal `json:"size"`
+	Amount       udecimal.Decimal `json:"amount,omitempty"` // Price * Size, only set for Match events
+	OldPrice     udecimal.Decimal `json:"old_price,omitempty"`
+	OldSize      udecimal.Decimal `json:"old_size,omitempty"`
+	OrderID      string           `json:"order_id"`
+	UserID       int64            `json:"user_id"`
+	OrderType    OrderType        `json:"order_type,omitempty"` // Order type: limit, market, ioc, fok
+	MakerOrderID string           `json:"maker_order_id,omitempty"`
+	MakerUserID  int64            `json:"maker_user_id,omitempty"`
+	RejectReason RejectReason     `json:"reject_reason,omitempty"` // Reason for rejection, only set for Reject events
+	CreatedAt    time.Time        `json:"created_at"`
 }
 
 var bookLogPool = sync.Pool{
@@ -69,7 +69,7 @@ func releaseLogSlice(ps *[]*OrderBookLog) {
 	logSlicePool.Put(ps)
 }
 
-func NewOpenLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size decimal.Decimal, orderType OrderType) *OrderBookLog {
+func NewOpenLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size udecimal.Decimal, orderType OrderType) *OrderBookLog {
 	log := acquireBookLog()
 	log.SequenceID = seqID
 	log.Type = LogTypeOpen
@@ -84,7 +84,7 @@ func NewOpenLog(seqID uint64, marketID string, orderID string, userID int64, sid
 	return log
 }
 
-func NewMatchLog(seqID uint64, tradeID uint64, marketID string, takerID string, takerUserID int64, takerSide Side, takerType OrderType, makerID string, makerUserID int64, price decimal.Decimal, size decimal.Decimal) *OrderBookLog {
+func NewMatchLog(seqID uint64, tradeID uint64, marketID string, takerID string, takerUserID int64, takerSide Side, takerType OrderType, makerID string, makerUserID int64, price udecimal.Decimal, size udecimal.Decimal) *OrderBookLog {
 	log := acquireBookLog()
 	log.SequenceID = seqID
 	log.TradeID = tradeID
@@ -103,7 +103,7 @@ func NewMatchLog(seqID uint64, tradeID uint64, marketID string, takerID string, 
 	return log
 }
 
-func NewCancelLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size decimal.Decimal, orderType OrderType) *OrderBookLog {
+func NewCancelLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size udecimal.Decimal, orderType OrderType) *OrderBookLog {
 	log := acquireBookLog()
 	log.SequenceID = seqID
 	log.Type = LogTypeCancel
@@ -118,7 +118,7 @@ func NewCancelLog(seqID uint64, marketID string, orderID string, userID int64, s
 	return log
 }
 
-func NewAmendLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size decimal.Decimal, oldPrice decimal.Decimal, oldSize decimal.Decimal, orderType OrderType) *OrderBookLog {
+func NewAmendLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size udecimal.Decimal, oldPrice udecimal.Decimal, oldSize udecimal.Decimal, orderType OrderType) *OrderBookLog {
 	log := acquireBookLog()
 	log.SequenceID = seqID
 	log.Type = LogTypeAmend

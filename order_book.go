@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/shopspring/decimal"
+	"github.com/quagmt/udecimal"
 )
 
 // orderPool is used to reduce Order allocations in the hot path.
@@ -78,7 +78,7 @@ func (book *OrderBook) AddOrder(ctx context.Context, cmd *PlaceOrderCommand) err
 
 // AmendOrder submits a request to modify an existing order asynchronously.
 func (book *OrderBook) AmendOrder(ctx context.Context, cmd *AmendOrderCommand) error {
-	if len(cmd.OrderID) == 0 || cmd.NewSize.LessThanOrEqual(decimal.Zero) || cmd.NewPrice.LessThanOrEqual(decimal.Zero) {
+	if len(cmd.OrderID) == 0 || cmd.NewSize.LessThanOrEqual(udecimal.Zero) || cmd.NewPrice.LessThanOrEqual(udecimal.Zero) {
 		return ErrInvalidParam
 	}
 
@@ -505,7 +505,7 @@ func (book *OrderBook) handleLimitOrder(order *Order) *[]*OrderBookLog {
 			order.Size = order.Size.Sub(tOrd.Size)
 			releaseOrder(tOrd) // tOrd fully consumed
 
-			if order.Size.Equal(decimal.Zero) {
+			if order.Size.Equal(udecimal.Zero) {
 				releaseOrder(order) // order fully consumed
 				break
 			}
@@ -573,7 +573,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) *[]*OrderBookLog {
 			order.Size = order.Size.Sub(tOrd.Size)
 			releaseOrder(tOrd) // tOrd fully consumed
 
-			if order.Size.Equal(decimal.Zero) {
+			if order.Size.Equal(udecimal.Zero) {
 				releaseOrder(order) // order fully consumed
 				break
 			}
@@ -607,7 +607,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) *[]*OrderBookLog {
 	el := targetQueue.depthList.Front()
 	remainingSize := order.Size
 
-	for remainingSize.GreaterThan(decimal.Zero) {
+	for remainingSize.GreaterThan(udecimal.Zero) {
 		if el == nil {
 			// Not enough liquidity - Reject does not change order book state
 			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, RejectReasonInsufficientSize)
@@ -652,7 +652,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) *[]*OrderBookLog {
 			order.Size = order.Size.Sub(tOrd.Size)
 			releaseOrder(tOrd) // tOrd fully consumed
 
-			if order.Size.Equal(decimal.Zero) {
+			if order.Size.Equal(udecimal.Zero) {
 				releaseOrder(order) // order fully consumed
 				break
 			}
@@ -719,7 +719,7 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) *[]*OrderBookLog {
 // handleMarketOrder handles Market orders. It matches against the best available prices until filled or liquidity is exhausted.
 // If quoteSize is set (and Size is zero), the order is filled by quote currency amount.
 // If Size is set (and quoteSize is zero), the order is filled by base currency quantity.
-func (book *OrderBook) handleMarketOrder(order *Order, quoteSize decimal.Decimal) *[]*OrderBookLog {
+func (book *OrderBook) handleMarketOrder(order *Order, quoteSize udecimal.Decimal) *[]*OrderBookLog {
 	targetQueue := book.bidQueue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -729,7 +729,7 @@ func (book *OrderBook) handleMarketOrder(order *Order, quoteSize decimal.Decimal
 	logsPtr := acquireLogSlice()
 
 	// Determine if using quote size mode (amount in quote currency) or base size mode (quantity in base currency)
-	useQuoteSize := quoteSize.GreaterThan(decimal.Zero) && order.Size.IsZero()
+	useQuoteSize := quoteSize.GreaterThan(udecimal.Zero) && order.Size.IsZero()
 	remainingQuote := quoteSize
 	remainingBase := order.Size
 
@@ -761,12 +761,12 @@ func (book *OrderBook) handleMarketOrder(order *Order, quoteSize decimal.Decimal
 				log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size)
 				*logsPtr = append(*logsPtr, log)
 				remainingQuote = remainingQuote.Sub(amount)
-				if remainingQuote.Equal(decimal.Zero) {
+				if remainingQuote.Equal(udecimal.Zero) {
 					break
 				}
 			} else {
 				// Partial fill of maker order
-				tSize := remainingQuote.Div(tOrd.Price)
+				tSize, _ := remainingQuote.Div(tOrd.Price)
 
 				log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tSize)
 				log.Amount = remainingQuote // Override amount to be exact
@@ -783,7 +783,7 @@ func (book *OrderBook) handleMarketOrder(order *Order, quoteSize decimal.Decimal
 				log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size)
 				*logsPtr = append(*logsPtr, log)
 				remainingBase = remainingBase.Sub(tOrd.Size)
-				if remainingBase.Equal(decimal.Zero) {
+				if remainingBase.Equal(udecimal.Zero) {
 					break
 				}
 			} else {

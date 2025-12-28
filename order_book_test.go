@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shopspring/decimal"
+	"github.com/quagmt/udecimal"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -22,8 +22,8 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 		ID:     "buy-1",
 		Type:   Limit,
 		Side:   Buy,
-		Size:   decimal.NewFromInt(1),
-		Price:  decimal.NewFromInt(90),
+		Size:   udecimal.MustFromInt64(1, 0),
+		Price:  udecimal.MustFromInt64(90, 0),
 		UserID: 101,
 	}
 
@@ -34,8 +34,8 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 		ID:     "buy-2",
 		Type:   Limit,
 		Side:   Buy,
-		Size:   decimal.NewFromInt(1),
-		Price:  decimal.NewFromInt(80),
+		Size:   udecimal.MustFromInt64(1, 0),
+		Price:  udecimal.MustFromInt64(80, 0),
 		UserID: 102,
 	}
 
@@ -46,8 +46,8 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 		ID:     "buy-3",
 		Type:   Limit,
 		Side:   Buy,
-		Size:   decimal.NewFromInt(1),
-		Price:  decimal.NewFromInt(70),
+		Size:   udecimal.MustFromInt64(1, 0),
+		Price:  udecimal.MustFromInt64(70, 0),
 		UserID: 103,
 	}
 
@@ -58,8 +58,8 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 		ID:     "sell-1",
 		Type:   Limit,
 		Side:   Sell,
-		Size:   decimal.NewFromInt(1),
-		Price:  decimal.NewFromInt(110),
+		Size:   udecimal.MustFromInt64(1, 0),
+		Price:  udecimal.MustFromInt64(110, 0),
 		UserID: 201,
 	}
 	err = orderBook.AddOrder(ctx, orderSell1)
@@ -69,8 +69,8 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 		ID:     "sell-2",
 		Type:   Limit,
 		Side:   Sell,
-		Size:   decimal.NewFromInt(1),
-		Price:  decimal.NewFromInt(120),
+		Size:   udecimal.MustFromInt64(1, 0),
+		Price:  udecimal.MustFromInt64(120, 0),
 		UserID: 202,
 	}
 	err = orderBook.AddOrder(ctx, orderSell2)
@@ -80,8 +80,8 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 		ID:     "sell-3",
 		Type:   Limit,
 		Side:   Sell,
-		Size:   decimal.NewFromInt(1),
-		Price:  decimal.NewFromInt(130),
+		Size:   udecimal.MustFromInt64(1, 0),
+		Price:  udecimal.MustFromInt64(130, 0),
 		UserID: 203,
 	}
 	err = orderBook.AddOrder(ctx, orderSell3)
@@ -113,8 +113,8 @@ func TestLimitOrders(t *testing.T) {
 				ID:     "buyAll",
 				Type:   Limit,
 				Side:   Buy,
-				Price:  decimal.NewFromInt(1000),
-				Size:   decimal.NewFromInt(10),
+				Price:  udecimal.MustFromInt64(1000, 0),
+				Size:   udecimal.MustFromInt64(10, 0),
 				UserID: 300,
 			},
 		}
@@ -158,8 +158,8 @@ func TestLimitOrders(t *testing.T) {
 			ID:     "mysell",
 			Type:   Limit,
 			Side:   Sell,
-			Size:   decimal.NewFromInt(5),
-			Price:  decimal.NewFromInt(75),
+			Size:   udecimal.MustFromInt64(5, 0),
+			Price:  udecimal.MustFromInt64(75, 0),
 			UserID: 301,
 		}
 		err := testOrderBook.AddOrder(ctx, order)
@@ -200,8 +200,8 @@ func TestMarketOrder(t *testing.T) {
 			ID:        "buyAll",
 			Type:      Market,
 			Side:      Buy,
-			Price:     decimal.NewFromInt(0),
-			QuoteSize: decimal.NewFromInt(110).Add(decimal.NewFromInt(120)).Add(decimal.NewFromInt(130)), // 360 USDT to spend
+			Price:     udecimal.MustFromInt64(0, 0),
+			QuoteSize: udecimal.MustFromInt64(110, 0).Add(udecimal.MustFromInt64(120, 0)).Add(udecimal.MustFromInt64(130, 0)), // 360 USDT to spend
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
@@ -225,8 +225,8 @@ func TestMarketOrder(t *testing.T) {
 			ID:        "mysell",
 			Type:      Market,
 			Side:      Sell,
-			Price:     decimal.NewFromInt(0),
-			QuoteSize: decimal.NewFromInt(90), // 90 USDT worth
+			Price:     udecimal.MustFromInt64(0, 0),
+			QuoteSize: udecimal.MustFromInt64(90, 0), // 90 USDT worth
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
@@ -252,7 +252,7 @@ func TestMarketOrder(t *testing.T) {
 			ID:        "market-quote-buy",
 			Type:      Market,
 			Side:      Buy,
-			QuoteSize: decimal.NewFromInt(230), // 110 + 120 = 230 USDT
+			QuoteSize: udecimal.MustFromInt64(230, 0), // 110 + 120 = 230 USDT
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -284,7 +284,7 @@ func TestMarketOrder(t *testing.T) {
 			ID:        "market-quote-partial",
 			Type:      Market,
 			Side:      Buy,
-			QuoteSize: decimal.NewFromInt(55), // 55 USDT = 0.5 BTC at 110
+			QuoteSize: udecimal.MustFromInt64(55, 0), // 55 USDT = 0.5 BTC at 110
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -312,7 +312,7 @@ func TestMarketOrder(t *testing.T) {
 			ID:        "market-quote-no-liq",
 			Type:      Market,
 			Side:      Buy,
-			QuoteSize: decimal.NewFromInt(100),
+			QuoteSize: udecimal.MustFromInt64(100, 0),
 		}
 		err := orderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -333,7 +333,7 @@ func TestMarketOrder(t *testing.T) {
 			ID:   "market-base-buy",
 			Type: Market,
 			Side: Buy,
-			Size: decimal.NewFromInt(2), // 2 BTC
+			Size: udecimal.MustFromInt64(2, 0), // 2 BTC
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -365,7 +365,7 @@ func TestMarketOrder(t *testing.T) {
 			ID:   "market-base-partial",
 			Type: Market,
 			Side: Buy,
-			Size: decimal.NewFromFloat(0.5), // 0.5 BTC
+			Size: udecimal.MustFromFloat64(0.5), // 0.5 BTC
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -392,7 +392,7 @@ func TestMarketOrder(t *testing.T) {
 			ID:   "market-base-all",
 			Type: Market,
 			Side: Buy,
-			Size: decimal.NewFromInt(3), // 3 BTC
+			Size: udecimal.MustFromInt64(3, 0), // 3 BTC
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -418,8 +418,8 @@ func TestPostOnlyOrder(t *testing.T) {
 			ID:    "post_only",
 			Type:  PostOnly,
 			Side:  Buy,
-			Price: decimal.NewFromInt(100),
-			Size:  decimal.NewFromInt(1),
+			Price: udecimal.MustFromInt64(100, 0),
+			Size:  udecimal.MustFromInt64(1, 0),
 		}
 
 		err := testOrderBook.AddOrder(ctx, buyAll)
@@ -443,8 +443,8 @@ func TestPostOnlyOrder(t *testing.T) {
 			ID:    "post_only",
 			Type:  PostOnly,
 			Side:  Buy,
-			Price: decimal.NewFromInt(115),
-			Size:  decimal.NewFromInt(1),
+			Price: udecimal.MustFromInt64(115, 0),
+			Size:  udecimal.MustFromInt64(1, 0),
 		}
 
 		err := testOrderBook.AddOrder(ctx, buyAll)
@@ -473,8 +473,8 @@ func TestIOCOrder(t *testing.T) {
 			ID:    "ioc",
 			Type:  IOC,
 			Side:  Buy,
-			Price: decimal.NewFromInt(100),
-			Size:  decimal.NewFromInt(1),
+			Price: udecimal.MustFromInt64(100, 0),
+			Size:  udecimal.MustFromInt64(1, 0),
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
@@ -500,8 +500,8 @@ func TestIOCOrder(t *testing.T) {
 			ID:    "ioc",
 			Type:  IOC,
 			Side:  Buy,
-			Price: decimal.NewFromInt(1000),
-			Size:  decimal.NewFromInt(3),
+			Price: udecimal.MustFromInt64(1000, 0),
+			Size:  udecimal.MustFromInt64(3, 0),
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
@@ -525,8 +525,8 @@ func TestIOCOrder(t *testing.T) {
 			ID:    "ioc",
 			Type:  IOC,
 			Side:  Sell,
-			Price: decimal.NewFromInt(10),
-			Size:  decimal.NewFromInt(4),
+			Price: udecimal.MustFromInt64(10, 0),
+			Size:  udecimal.MustFromInt64(4, 0),
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
@@ -550,8 +550,8 @@ func TestIOCOrder(t *testing.T) {
 			ID:    "ioc",
 			Type:  IOC,
 			Side:  Buy,
-			Price: decimal.NewFromInt(115),
-			Size:  decimal.NewFromInt(2),
+			Price: udecimal.MustFromInt64(115, 0),
+			Size:  udecimal.MustFromInt64(2, 0),
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
@@ -579,8 +579,8 @@ func TestFOKOrder(t *testing.T) {
 			ID:    "fok",
 			Type:  FOK,
 			Side:  Buy,
-			Price: decimal.NewFromInt(100),
-			Size:  decimal.NewFromInt(1),
+			Price: udecimal.MustFromInt64(100, 0),
+			Size:  udecimal.MustFromInt64(1, 0),
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
@@ -605,8 +605,8 @@ func TestFOKOrder(t *testing.T) {
 			ID:    "fok",
 			Type:  FOK,
 			Side:  Buy,
-			Price: decimal.NewFromInt(1000),
-			Size:  decimal.NewFromInt(3),
+			Price: udecimal.MustFromInt64(1000, 0),
+			Size:  udecimal.MustFromInt64(3, 0),
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
@@ -630,8 +630,8 @@ func TestFOKOrder(t *testing.T) {
 			ID:    "fok",
 			Type:  FOK,
 			Side:  Sell,
-			Price: decimal.NewFromInt(10),
-			Size:  decimal.NewFromInt(4),
+			Price: udecimal.MustFromInt64(10, 0),
+			Size:  udecimal.MustFromInt64(4, 0),
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
@@ -656,8 +656,8 @@ func TestFOKOrder(t *testing.T) {
 			ID:    "ioc",
 			Type:  FOK,
 			Side:  Buy,
-			Price: decimal.NewFromInt(115),
-			Size:  decimal.NewFromInt(2),
+			Price: udecimal.MustFromInt64(115, 0),
+			Size:  udecimal.MustFromInt64(2, 0),
 		}
 
 		err := testOrderBook.AddOrder(ctx, order)
@@ -689,8 +689,8 @@ func TestFOKOrder(t *testing.T) {
 			ID:     "sell-1",
 			Type:   Limit,
 			Side:   Sell,
-			Size:   decimal.NewFromInt(3),
-			Price:  decimal.NewFromInt(110),
+			Size:   udecimal.MustFromInt64(3, 0),
+			Price:  udecimal.MustFromInt64(110, 0),
 			UserID: 201,
 		})
 		assert.NoError(t, err)
@@ -699,8 +699,8 @@ func TestFOKOrder(t *testing.T) {
 			ID:     "sell-2",
 			Type:   Limit,
 			Side:   Sell,
-			Size:   decimal.NewFromInt(2),
-			Price:  decimal.NewFromInt(110),
+			Size:   udecimal.MustFromInt64(2, 0),
+			Price:  udecimal.MustFromInt64(110, 0),
 			UserID: 202,
 		})
 		assert.NoError(t, err)
@@ -716,8 +716,8 @@ func TestFOKOrder(t *testing.T) {
 			ID:     "fok-buy",
 			Type:   FOK,
 			Side:   Buy,
-			Price:  decimal.NewFromInt(115),
-			Size:   decimal.NewFromInt(5),
+			Price:  udecimal.MustFromInt64(115, 0),
+			Size:   udecimal.MustFromInt64(5, 0),
 			UserID: 301,
 		}
 
@@ -757,8 +757,8 @@ func TestFOKOrder(t *testing.T) {
 			ID:     "sell-1",
 			Type:   Limit,
 			Side:   Sell,
-			Size:   decimal.NewFromInt(2),
-			Price:  decimal.NewFromInt(110),
+			Size:   udecimal.MustFromInt64(2, 0),
+			Price:  udecimal.MustFromInt64(110, 0),
 			UserID: 201,
 		})
 		assert.NoError(t, err)
@@ -767,8 +767,8 @@ func TestFOKOrder(t *testing.T) {
 			ID:     "sell-2",
 			Type:   Limit,
 			Side:   Sell,
-			Size:   decimal.NewFromInt(3),
-			Price:  decimal.NewFromInt(120),
+			Size:   udecimal.MustFromInt64(3, 0),
+			Price:  udecimal.MustFromInt64(120, 0),
 			UserID: 202,
 		})
 		assert.NoError(t, err)
@@ -784,8 +784,8 @@ func TestFOKOrder(t *testing.T) {
 			ID:     "fok-buy",
 			Type:   FOK,
 			Side:   Buy,
-			Price:  decimal.NewFromInt(125),
-			Size:   decimal.NewFromInt(5),
+			Price:  udecimal.MustFromInt64(125, 0),
+			Size:   udecimal.MustFromInt64(5, 0),
 			UserID: 301,
 		}
 
@@ -812,11 +812,11 @@ func TestFOKOrder(t *testing.T) {
 		// Setup: 3 orders at price 110, each size=1, totalSize=3
 		for i := 1; i <= 3; i++ {
 			err := orderBook.AddOrder(ctx, &PlaceOrderCommand{
-				ID:     "sell-" + decimal.NewFromInt(int64(i)).String(),
+				ID:     "sell-" + udecimal.MustFromInt64(int64(i), 0).String(),
 				Type:   Limit,
 				Side:   Sell,
-				Size:   decimal.NewFromInt(1),
-				Price:  decimal.NewFromInt(110),
+				Size:   udecimal.MustFromInt64(1, 0),
+				Price:  udecimal.MustFromInt64(110, 0),
 				UserID: int64(200 + i),
 			})
 			assert.NoError(t, err)
@@ -833,8 +833,8 @@ func TestFOKOrder(t *testing.T) {
 			ID:     "fok-buy",
 			Type:   FOK,
 			Side:   Buy,
-			Price:  decimal.NewFromInt(115),
-			Size:   decimal.NewFromInt(3),
+			Price:  udecimal.MustFromInt64(115, 0),
+			Size:   udecimal.MustFromInt64(3, 0),
 			UserID: 301,
 		}
 
@@ -888,7 +888,7 @@ func TestAmendOrder(t *testing.T) {
 		// Initial: Buy 90(1), 80(1), 70(1). Sell 110(1), 120(1), 130(1)
 
 		// 1. Amend buy-1 (Price 90) size from 1 to 0.5
-		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: decimal.NewFromInt(90), NewSize: decimal.NewFromFloat(0.5)})
+		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: udecimal.MustFromInt64(90, 0), NewSize: udecimal.MustFromFloat64(0.5)})
 		assert.NoError(t, err)
 		// Verify Depth
 		assert.Eventually(t, func() bool {
@@ -910,10 +910,10 @@ func TestAmendOrder(t *testing.T) {
 
 		// Verify Priority: Add another order at same price, match against them.
 		// Add buy-new at 90.
-		testOrderBook.AddOrder(ctx, &PlaceOrderCommand{ID: "buy-new", Type: Limit, Side: Buy, Price: decimal.NewFromInt(90), Size: decimal.NewFromInt(1), UserID: 401})
+		testOrderBook.AddOrder(ctx, &PlaceOrderCommand{ID: "buy-new", Type: Limit, Side: Buy, Price: udecimal.MustFromInt64(90, 0), Size: udecimal.MustFromInt64(1, 0), UserID: 401})
 
 		// Sell matching order. Should match buy-1 (0.5) first, then buy-new.
-		testOrderBook.AddOrder(ctx, &PlaceOrderCommand{ID: "sell-match", Type: Limit, Side: Sell, Price: decimal.NewFromInt(90), Size: decimal.NewFromFloat(0.5), UserID: 402})
+		testOrderBook.AddOrder(ctx, &PlaceOrderCommand{ID: "sell-match", Type: Limit, Side: Sell, Price: udecimal.MustFromInt64(90, 0), Size: udecimal.MustFromFloat64(0.5), UserID: 402})
 
 		// Check logs for match
 		// 6 setup + 1 amend + 1 open(buy-new) + 1 match(sell-match vs buy-1)
@@ -935,14 +935,14 @@ func TestAmendOrder(t *testing.T) {
 		// Initial: Buy 90(1)
 
 		// 1. Add another order at 90 to compete
-		testOrderBook.AddOrder(ctx, &PlaceOrderCommand{ID: "buy-2-compete", Type: Limit, Side: Buy, Price: decimal.NewFromInt(90), Size: decimal.NewFromInt(1)})
+		testOrderBook.AddOrder(ctx, &PlaceOrderCommand{ID: "buy-2-compete", Type: Limit, Side: Buy, Price: udecimal.MustFromInt64(90, 0), Size: udecimal.MustFromInt64(1, 0)})
 
 		// 2. Amend buy-1 size from 1 to 2 (Increase) -> Should lose priority to buy-2-compete
-		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: decimal.NewFromInt(90), NewSize: decimal.NewFromInt(2)})
+		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: udecimal.MustFromInt64(90, 0), NewSize: udecimal.MustFromInt64(2, 0)})
 		assert.NoError(t, err)
 
 		// 3. Sell matching order. Should match buy-2-compete first.
-		testOrderBook.AddOrder(ctx, &PlaceOrderCommand{ID: "sell-match", Type: Limit, Side: Sell, Price: decimal.NewFromInt(90), Size: decimal.NewFromInt(1)})
+		testOrderBook.AddOrder(ctx, &PlaceOrderCommand{ID: "sell-match", Type: Limit, Side: Sell, Price: udecimal.MustFromInt64(90, 0), Size: udecimal.MustFromInt64(1, 0)})
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		// Find match log
@@ -965,7 +965,7 @@ func TestAmendOrder(t *testing.T) {
 		// Buy-1 at 90.
 
 		// Amend price to 95
-		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: decimal.NewFromInt(95), NewSize: decimal.NewFromInt(1)})
+		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: udecimal.MustFromInt64(95, 0), NewSize: udecimal.MustFromInt64(1, 0)})
 		assert.NoError(t, err)
 		assert.Eventually(t, func() bool {
 			depth, err := testOrderBook.Depth(10)
@@ -988,7 +988,7 @@ func TestAmendOrder(t *testing.T) {
 		// Buy-1 at 90, Size 1.
 
 		// Amend Price to 95 AND Size to 5
-		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: decimal.NewFromInt(95), NewSize: decimal.NewFromInt(5)})
+		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: udecimal.MustFromInt64(95, 0), NewSize: udecimal.MustFromInt64(5, 0)})
 		assert.NoError(t, err)
 		assert.Eventually(t, func() bool {
 			depth, err := testOrderBook.Depth(10)
@@ -1016,7 +1016,7 @@ func TestAmendOrder(t *testing.T) {
 		// Amend Buy-1 (90) to 115 (Crosses Sell-1 at 110) with Size 2
 		// Should match Sell-1 (Price 110, Size 1) fully.
 		// Remaining Buy-1 (Size 1) should sit at 115.
-		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: decimal.NewFromInt(115), NewSize: decimal.NewFromInt(2)})
+		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: udecimal.MustFromInt64(115, 0), NewSize: udecimal.MustFromInt64(2, 0)})
 		assert.NoError(t, err)
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		// 6 setup + 1 amend + 1 match + 1 open (remaining)
@@ -1081,8 +1081,8 @@ func TestShutdown(t *testing.T) {
 				ID:     "order-" + string(rune('a'+i)),
 				Type:   Limit,
 				Side:   Buy,
-				Size:   decimal.NewFromInt(1),
-				Price:  decimal.NewFromInt(int64(100 - i)),
+				Size:   udecimal.MustFromInt64(1, 0),
+				Price:  udecimal.MustFromInt64(int64(100-i), 0),
 				UserID: int64(i),
 			}
 			err := orderBook.AddOrder(ctx, order)
@@ -1127,8 +1127,8 @@ func TestShutdown(t *testing.T) {
 			ID:     "after-shutdown",
 			Type:   Limit,
 			Side:   Buy,
-			Size:   decimal.NewFromInt(1),
-			Price:  decimal.NewFromInt(100),
+			Size:   udecimal.MustFromInt64(1, 0),
+			Price:  udecimal.MustFromInt64(100, 0),
 			UserID: 999,
 		}
 		err = orderBook.AddOrder(ctx, order)
@@ -1192,8 +1192,8 @@ func TestRejectReason(t *testing.T) {
 			ID:    "ioc-1",
 			Type:  IOC,
 			Side:  Buy,
-			Price: decimal.NewFromInt(100),
-			Size:  decimal.NewFromInt(1),
+			Price: udecimal.MustFromInt64(100, 0),
+			Size:  udecimal.MustFromInt64(1, 0),
 		}
 		err := orderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -1214,8 +1214,8 @@ func TestRejectReason(t *testing.T) {
 			ID:    "ioc-price",
 			Type:  IOC,
 			Side:  Buy,
-			Price: decimal.NewFromInt(100),
-			Size:  decimal.NewFromInt(1),
+			Price: udecimal.MustFromInt64(100, 0),
+			Size:  udecimal.MustFromInt64(1, 0),
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -1236,8 +1236,8 @@ func TestRejectReason(t *testing.T) {
 			ID:    "fok-size",
 			Type:  FOK,
 			Side:  Buy,
-			Price: decimal.NewFromInt(1000),
-			Size:  decimal.NewFromInt(10),
+			Price: udecimal.MustFromInt64(1000, 0),
+			Size:  udecimal.MustFromInt64(10, 0),
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -1258,8 +1258,8 @@ func TestRejectReason(t *testing.T) {
 			ID:    "fok-price",
 			Type:  FOK,
 			Side:  Buy,
-			Price: decimal.NewFromInt(100),
-			Size:  decimal.NewFromInt(1),
+			Price: udecimal.MustFromInt64(100, 0),
+			Size:  udecimal.MustFromInt64(1, 0),
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -1280,8 +1280,8 @@ func TestRejectReason(t *testing.T) {
 			ID:    "post-only-cross",
 			Type:  PostOnly,
 			Side:  Buy,
-			Price: decimal.NewFromInt(115),
-			Size:  decimal.NewFromInt(1),
+			Price: udecimal.MustFromInt64(115, 0),
+			Size:  udecimal.MustFromInt64(1, 0),
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -1304,7 +1304,7 @@ func TestRejectReason(t *testing.T) {
 			ID:   "market-1",
 			Type: Market,
 			Side: Buy,
-			Size: decimal.NewFromInt(100),
+			Size: udecimal.MustFromInt64(100, 0),
 		}
 		err := orderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -1328,8 +1328,8 @@ func TestMatchAmount(t *testing.T) {
 			ID:    "buy-match",
 			Type:  Limit,
 			Side:  Buy,
-			Price: decimal.NewFromInt(115),
-			Size:  decimal.NewFromInt(1),
+			Price: udecimal.MustFromInt64(115, 0),
+			Size:  udecimal.MustFromInt64(1, 0),
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -1352,8 +1352,8 @@ func TestMatchAmount(t *testing.T) {
 			ID:    "buy-all",
 			Type:  Limit,
 			Side:  Buy,
-			Price: decimal.NewFromInt(1000),
-			Size:  decimal.NewFromInt(3),
+			Price: udecimal.MustFromInt64(1000, 0),
+			Size:  udecimal.MustFromInt64(3, 0),
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -1399,8 +1399,8 @@ func TestTradeID(t *testing.T) {
 			ID:    "buy-match",
 			Type:  Limit,
 			Side:  Buy,
-			Price: decimal.NewFromInt(115),
-			Size:  decimal.NewFromInt(1),
+			Price: udecimal.MustFromInt64(115, 0),
+			Size:  udecimal.MustFromInt64(1, 0),
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -1421,8 +1421,8 @@ func TestTradeID(t *testing.T) {
 			ID:    "buy-all",
 			Type:  Limit,
 			Side:  Buy,
-			Price: decimal.NewFromInt(1000),
-			Size:  decimal.NewFromInt(3),
+			Price: udecimal.MustFromInt64(1000, 0),
+			Size:  udecimal.MustFromInt64(3, 0),
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -1452,8 +1452,8 @@ func TestTradeID(t *testing.T) {
 			ID:    "fok-reject",
 			Type:  FOK,
 			Side:  Buy,
-			Price: decimal.NewFromInt(100),
-			Size:  decimal.NewFromInt(1),
+			Price: udecimal.MustFromInt64(100, 0),
+			Size:  udecimal.MustFromInt64(1, 0),
 		}
 		err := testOrderBook.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -1481,8 +1481,8 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 			ID:     "bid-1",
 			Type:   Limit,
 			Side:   Buy,
-			Price:  decimal.NewFromInt(100),
-			Size:   decimal.NewFromInt(10),
+			Price:  udecimal.MustFromInt64(100, 0),
+			Size:   udecimal.MustFromInt64(10, 0),
 			UserID: 1,
 		})
 		assert.NoError(t, err)
@@ -1491,8 +1491,8 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 			ID:     "ask-1",
 			Type:   Limit,
 			Side:   Sell,
-			Price:  decimal.NewFromInt(110),
-			Size:   decimal.NewFromInt(5),
+			Price:  udecimal.MustFromInt64(110, 0),
+			Size:   udecimal.MustFromInt64(5, 0),
 			UserID: 2,
 		})
 		assert.NoError(t, err)
@@ -1531,11 +1531,11 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 		// Verify Order details
 		bid := restoredBook.bidQueue.order("bid-1")
 		assert.NotNil(t, bid)
-		assert.Equal(t, decimal.NewFromInt(100), bid.Price)
+		assert.Equal(t, udecimal.MustFromInt64(100, 0), bid.Price)
 
 		ask := restoredBook.askQueue.order("ask-1")
 		assert.NotNil(t, ask)
-		assert.Equal(t, decimal.NewFromInt(110), ask.Price)
+		assert.Equal(t, udecimal.MustFromInt64(110, 0), ask.Price)
 
 		// 4. Start Restored Book and verify it functions
 		go func() { _ = restoredBook.Start() }()
@@ -1550,8 +1550,8 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 			ID:    "buy-match",
 			Type:  Limit,
 			Side:  Buy,
-			Price: decimal.NewFromInt(115),
-			Size:  decimal.NewFromInt(1),
+			Price: udecimal.MustFromInt64(115, 0),
+			Size:  udecimal.MustFromInt64(1, 0),
 		})
 		assert.NoError(t, err)
 
@@ -1565,7 +1565,7 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 
 		// Verify ask size reduced
 		askAfter := restoredBook.askQueue.order("ask-1")
-		assert.Equal(t, decimal.NewFromInt(4).String(), askAfter.Size.String())
+		assert.Equal(t, udecimal.MustFromInt64(4, 0).String(), askAfter.Size.String())
 	})
 }
 
@@ -1582,8 +1582,8 @@ func TestOrderValidation(t *testing.T) {
 			ID:     "dup-id",
 			Type:   Limit,
 			Side:   Buy,
-			Size:   decimal.NewFromInt(1),
-			Price:  decimal.NewFromInt(100),
+			Size:   udecimal.MustFromInt64(1, 0),
+			Price:  udecimal.MustFromInt64(100, 0),
 			UserID: 1,
 		}
 		err := orderBook.AddOrder(ctx, order1)
@@ -1620,7 +1620,7 @@ func TestOrderValidation(t *testing.T) {
 	})
 
 	t.Run("RejectAmendNonExistentOrder", func(t *testing.T) {
-		err := orderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "non-existent", UserID: 1, NewPrice: decimal.NewFromInt(100), NewSize: decimal.NewFromInt(2)})
+		err := orderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "non-existent", UserID: 1, NewPrice: udecimal.MustFromInt64(100, 0), NewSize: udecimal.MustFromInt64(2, 0)})
 		assert.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
@@ -1641,8 +1641,8 @@ func TestOrderValidation(t *testing.T) {
 			ID:     id,
 			Type:   Limit,
 			Side:   Buy,
-			Size:   decimal.NewFromInt(1),
-			Price:  decimal.NewFromInt(100),
+			Size:   udecimal.MustFromInt64(1, 0),
+			Price:  udecimal.MustFromInt64(100, 0),
 			UserID: 1,
 		})
 
@@ -1657,7 +1657,7 @@ func TestOrderValidation(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Try to amend with UserID 2
-		err = orderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: id, UserID: 2, NewPrice: decimal.NewFromInt(110), NewSize: decimal.NewFromInt(1)})
+		err = orderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: id, UserID: 2, NewPrice: udecimal.MustFromInt64(110, 0), NewSize: udecimal.MustFromInt64(1, 0)})
 		assert.NoError(t, err)
 
 		// Verify rejections

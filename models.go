@@ -3,7 +3,7 @@ package match
 import (
 	"time"
 
-	"github.com/shopspring/decimal"
+	"github.com/quagmt/udecimal"
 )
 
 const (
@@ -36,26 +36,26 @@ const (
 // PlaceOrderCommand is the input command for placing an order.
 // QuoteSize is only used for Market orders to specify amount in quote currency.
 type PlaceOrderCommand struct {
-	MarketID  string          `json:"market_id"`
-	ID        string          `json:"id"`
-	Side      Side            `json:"side"`
-	Type      OrderType       `json:"type"`
-	Price     decimal.Decimal `json:"price"`                // Limit order price
-	Size      decimal.Decimal `json:"size"`                 // Base currency quantity (e.g., BTC)
-	QuoteSize decimal.Decimal `json:"quote_size,omitempty"` // Quote currency amount (e.g., USDT), only for Market orders
-	UserID    int64           `json:"user_id"`
+	MarketID  string           `json:"market_id"`
+	ID        string           `json:"id"`
+	Side      Side             `json:"side"`
+	Type      OrderType        `json:"type"`
+	Price     udecimal.Decimal `json:"price"`                // Limit order price
+	Size      udecimal.Decimal `json:"size"`                 // Base currency quantity (e.g., BTC)
+	QuoteSize udecimal.Decimal `json:"quote_size,omitempty"` // Quote currency amount (e.g., USDT), only for Market orders
+	UserID    int64            `json:"user_id"`
 }
 
 // Order represents the state of an order in the order book.
 // This is the serializable state used for snapshots.
 type Order struct {
-	ID        string          `json:"id"`
-	Side      Side            `json:"side"`
-	Price     decimal.Decimal `json:"price"`
-	Size      decimal.Decimal `json:"size"` // Remaining size
-	Type      OrderType       `json:"type"`
-	UserID    int64           `json:"user_id"`
-	Timestamp int64           `json:"timestamp"` // Unix nano, creation time
+	ID        string           `json:"id"`
+	Side      Side             `json:"side"`
+	Price     udecimal.Decimal `json:"price"`
+	Size      udecimal.Decimal `json:"size"` // Remaining size
+	Type      OrderType        `json:"type"`
+	UserID    int64            `json:"user_id"`
+	Timestamp int64            `json:"timestamp"` // Unix nano, creation time
 
 	// Intrusive linked list pointers (ignored by JSON)
 	next *Order
@@ -105,8 +105,8 @@ type Depth struct {
 type AmendOrderCommand struct {
 	OrderID  string
 	UserID   int64
-	NewPrice decimal.Decimal
-	NewSize  decimal.Decimal
+	NewPrice udecimal.Decimal
+	NewSize  udecimal.Decimal
 }
 
 type CancelOrderCommand struct {
@@ -117,8 +117,8 @@ type CancelOrderCommand struct {
 // DepthChange represents a change in the order book depth.
 type DepthChange struct {
 	Side     Side
-	Price    decimal.Decimal
-	SizeDiff decimal.Decimal
+	Price    udecimal.Decimal
+	SizeDiff udecimal.Decimal
 }
 
 // CommandType represents the type of command sent to the order book.

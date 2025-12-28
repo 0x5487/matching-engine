@@ -3,7 +3,7 @@ package match
 import (
 	"testing"
 
-	"github.com/shopspring/decimal"
+	"github.com/quagmt/udecimal"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -12,26 +12,26 @@ func TestBuyerQueue(t *testing.T) {
 
 	q.insertOrder(&Order{
 		ID:    "101",
-		Price: decimal.NewFromInt(10),
-		Size:  decimal.NewFromInt(10),
+		Price: udecimal.MustFromInt64(10, 0),
+		Size:  udecimal.MustFromInt64(10, 0),
 	}, false)
 
 	q.insertOrder(&Order{
 		ID:    "201",
-		Price: decimal.NewFromInt(20),
-		Size:  decimal.NewFromInt(10),
+		Price: udecimal.MustFromInt64(20, 0),
+		Size:  udecimal.MustFromInt64(10, 0),
 	}, false)
 
 	q.insertOrder(&Order{
 		ID:    "301",
-		Price: decimal.NewFromInt(30),
-		Size:  decimal.NewFromInt(10),
+		Price: udecimal.MustFromInt64(30, 0),
+		Size:  udecimal.MustFromInt64(10, 0),
 	}, false)
 
 	q.insertOrder(&Order{
 		ID:    "202",
-		Price: decimal.NewFromInt(20),
-		Size:  decimal.NewFromInt(100),
+		Price: udecimal.MustFromInt64(20, 0),
+		Size:  udecimal.MustFromInt64(100, 0),
 	}, false)
 
 	assert.Equal(t, int64(4), q.orderCount())
@@ -50,7 +50,7 @@ func TestBuyerQueue(t *testing.T) {
 	assert.Equal(t, "201", ord.ID)
 	assert.Equal(t, "20", ord.Price.String())
 	assert.Equal(t, "10", ord.Size.String())
-	ord.Size = decimal.NewFromInt(2)
+	ord.Size = udecimal.MustFromInt64(2, 0)
 	q.insertOrder(ord, true)
 
 	ord = q.popHeadOrder()
@@ -74,26 +74,26 @@ func TestSellerQueue(t *testing.T) {
 
 	q.insertOrder(&Order{
 		ID:    "101",
-		Price: decimal.NewFromInt(10),
-		Size:  decimal.NewFromInt(10),
+		Price: udecimal.MustFromInt64(10, 0),
+		Size:  udecimal.MustFromInt64(10, 0),
 	}, false)
 
 	q.insertOrder(&Order{
 		ID:    "201",
-		Price: decimal.NewFromInt(20),
-		Size:  decimal.NewFromInt(10),
+		Price: udecimal.MustFromInt64(20, 0),
+		Size:  udecimal.MustFromInt64(10, 0),
 	}, false)
 
 	q.insertOrder(&Order{
 		ID:    "301",
-		Price: decimal.NewFromInt(30),
-		Size:  decimal.NewFromInt(10),
+		Price: udecimal.MustFromInt64(30, 0),
+		Size:  udecimal.MustFromInt64(10, 0),
 	}, false)
 
 	q.insertOrder(&Order{
 		ID:    "202",
-		Price: decimal.NewFromInt(20),
-		Size:  decimal.NewFromInt(100),
+		Price: udecimal.MustFromInt64(20, 0),
+		Size:  udecimal.MustFromInt64(100, 0),
 	}, false)
 
 	assert.Equal(t, int64(4), q.orderCount())
@@ -110,7 +110,7 @@ func TestSellerQueue(t *testing.T) {
 	assert.Equal(t, "201", ord.ID)
 	assert.Equal(t, "20", ord.Price.String())
 	assert.Equal(t, "10", ord.Size.String())
-	ord.Size = decimal.NewFromInt(2)
+	ord.Size = udecimal.MustFromInt64(2, 0)
 	q.insertOrder(ord, true)
 
 	ord = q.popHeadOrder()

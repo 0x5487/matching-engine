@@ -2,7 +2,7 @@ package match
 
 import (
 	"github.com/huandu/skiplist"
-	"github.com/shopspring/decimal"
+	"github.com/quagmt/udecimal"
 )
 
 type UpdateEvent struct {
@@ -11,7 +11,7 @@ type UpdateEvent struct {
 }
 
 type priceUnit struct {
-	totalSize decimal.Decimal
+	totalSize udecimal.Decimal
 	head      *Order
 	tail      *Order
 	count     int64
@@ -19,8 +19,8 @@ type priceUnit struct {
 
 type DepthItem struct {
 	ID    uint32
-	Price decimal.Decimal
-	Size  decimal.Decimal
+	Price udecimal.Decimal
+	Size  udecimal.Decimal
 }
 
 type queue struct {
@@ -38,8 +38,8 @@ func NewBuyerQueue() *queue {
 	return &queue{
 		side: Buy,
 		depthList: skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs interface{}) int {
-			d1, _ := lhs.(decimal.Decimal)
-			d2, _ := rhs.(decimal.Decimal)
+			d1, _ := lhs.(udecimal.Decimal)
+			d2, _ := rhs.(udecimal.Decimal)
 
 			if d1.LessThan(d2) {
 				return 1
@@ -60,8 +60,8 @@ func NewSellerQueue() *queue {
 	return &queue{
 		side: Sell,
 		depthList: skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs interface{}) int {
-			d1, _ := lhs.(decimal.Decimal)
-			d2, _ := rhs.(decimal.Decimal)
+			d1, _ := lhs.(udecimal.Decimal)
+			d2, _ := rhs.(udecimal.Decimal)
 
 			if d1.GreaterThan(d2) {
 				return 1
@@ -137,7 +137,7 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 
 // removeOrder removes an order from the queue by price and ID.
 // It also cleans up the price unit if it becomes empty.
-func (q *queue) removeOrder(price decimal.Decimal, id string) {
+func (q *queue) removeOrder(price udecimal.Decimal, id string) {
 	skipElement, ok := q.priceList[price.String()]
 	if !ok {
 		return
@@ -180,7 +180,7 @@ func (q *queue) removeOrder(price decimal.Decimal, id string) {
 
 // updateOrderSize updates the size of an order in-place.
 // This is used when the size is decreased, preserving the order's priority.
-func (q *queue) updateOrderSize(id string, newSize decimal.Decimal) {
+func (q *queue) updateOrderSize(id string, newSize udecimal.Decimal) {
 	order, ok := q.orders[id]
 	if !ok {
 		return

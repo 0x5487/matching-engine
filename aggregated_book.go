@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 
 	"github.com/igrmk/treemap/v2"
-	"github.com/shopspring/decimal"
+	"github.com/quagmt/udecimal"
 )
 
 // Snapshot represents a point-in-time state of the order book.
@@ -27,8 +27,8 @@ type RebuildFunc func() (*Snapshot, error)
 // order book state from BookLog events received via message queue.
 type AggregatedBook struct {
 	seqID atomic.Uint64 // Last processed SequenceID for gap detection and deduplication
-	ask   *treemap.TreeMap[decimal.Decimal, decimal.Decimal]
-	bid   *treemap.TreeMap[decimal.Decimal, decimal.Decimal]
+	ask   *treemap.TreeMap[udecimal.Decimal, udecimal.Decimal]
+	bid   *treemap.TreeMap[udecimal.Decimal, udecimal.Decimal]
 
 	// OnRebuild is called when a rebuild is needed (e.g., sequence gap detected).
 	// The callback should return a snapshot from which the book will be rebuilt.
@@ -39,10 +39,10 @@ type AggregatedBook struct {
 // NewAggregatedBook creates a new AggregatedBook instance with empty ask and bid sides.
 func NewAggregatedBook() *AggregatedBook {
 	return &AggregatedBook{
-		ask: treemap.NewWithKeyCompare[decimal.Decimal, decimal.Decimal](func(a, b decimal.Decimal) bool {
+		ask: treemap.NewWithKeyCompare[udecimal.Decimal, udecimal.Decimal](func(a, b udecimal.Decimal) bool {
 			return a.LessThan(b) // Ascending: lowest price first (best ask)
 		}),
-		bid: treemap.NewWithKeyCompare[decimal.Decimal, decimal.Decimal](func(a, b decimal.Decimal) bool {
+		bid: treemap.NewWithKeyCompare[udecimal.Decimal, udecimal.Decimal](func(a, b udecimal.Decimal) bool {
 			return a.GreaterThan(b) // Descending: highest price first (best bid)
 		}),
 	}
@@ -109,8 +109,8 @@ func (ab *AggregatedBook) Replay(log *OrderBookLog) error {
 
 // Depth returns the aggregated size at a specific price level for the given side.
 // Returns zero if the price level does not exist.
-func (ab *AggregatedBook) Depth(side Side, price decimal.Decimal) (decimal.Decimal, error) {
-	var tree *treemap.TreeMap[decimal.Decimal, decimal.Decimal]
+func (ab *AggregatedBook) Depth(side Side, price udecimal.Decimal) (udecimal.Decimal, error) {
+	var tree *treemap.TreeMap[udecimal.Decimal, udecimal.Decimal]
 	if side == Buy {
 		tree = ab.bid
 	} else {
@@ -119,7 +119,7 @@ func (ab *AggregatedBook) Depth(side Side, price decimal.Decimal) (decimal.Decim
 
 	size, found := tree.Get(price)
 	if !found {
-		return decimal.Zero, nil
+		return udecimal.Zero, nil
 	}
 	return size, nil
 }

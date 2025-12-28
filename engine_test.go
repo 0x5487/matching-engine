@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shopspring/decimal"
+	"github.com/quagmt/udecimal"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -29,8 +29,8 @@ func TestMatchingEngine(t *testing.T) {
 			ID:       "order1",
 			Type:     Limit,
 			Side:     Buy,
-			Price:    decimal.NewFromInt(100),
-			Size:     decimal.NewFromInt(2),
+			Price:    udecimal.MustFromInt64(100, 0),
+			Size:     udecimal.MustFromInt64(2, 0),
 		}
 
 		err = engine.AddOrder(ctx, order1)
@@ -52,8 +52,8 @@ func TestMatchingEngine(t *testing.T) {
 			ID:       "order2",
 			Type:     Limit,
 			Side:     Sell,
-			Price:    decimal.NewFromInt(110),
-			Size:     decimal.NewFromInt(2),
+			Price:    udecimal.MustFromInt64(110, 0),
+			Size:     udecimal.MustFromInt64(2, 0),
 		}
 
 		err = engine.AddOrder(ctx, order2)
@@ -81,8 +81,8 @@ func TestMatchingEngine(t *testing.T) {
 			ID:       "order1",
 			Type:     Limit,
 			Side:     Buy,
-			Price:    decimal.NewFromInt(100),
-			Size:     decimal.NewFromInt(2),
+			Price:    udecimal.MustFromInt64(100, 0),
+			Size:     udecimal.MustFromInt64(2, 0),
 			UserID:   1,
 		}
 
@@ -149,8 +149,8 @@ func TestMatchingEngineShutdown(t *testing.T) {
 				ID:       "order-" + market,
 				Type:     Limit,
 				Side:     Buy,
-				Price:    decimal.NewFromInt(int64(100 + i*10)),
-				Size:     decimal.NewFromInt(1),
+				Price:    udecimal.MustFromInt64(int64(100+i*10), 0),
+				Size:     udecimal.MustFromInt64(1, 0),
 			}
 			err = engine.AddOrder(ctx, order)
 			assert.NoError(t, err)
@@ -166,8 +166,8 @@ func TestMatchingEngineShutdown(t *testing.T) {
 			ID:       "after-shutdown",
 			Type:     Limit,
 			Side:     Buy,
-			Price:    decimal.NewFromInt(100),
-			Size:     decimal.NewFromInt(1),
+			Price:    udecimal.MustFromInt64(100, 0),
+			Size:     udecimal.MustFromInt64(1, 0),
 		}
 		err = engine.AddOrder(ctx, order)
 		assert.Equal(t, ErrShutdown, err)
@@ -188,8 +188,8 @@ func TestMatchingEngineShutdown(t *testing.T) {
 			ID:       "order1",
 			Type:     Limit,
 			Side:     Buy,
-			Price:    decimal.NewFromInt(100),
-			Size:     decimal.NewFromInt(1),
+			Price:    udecimal.MustFromInt64(100, 0),
+			Size:     udecimal.MustFromInt64(1, 0),
 		}
 		err = engine.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -204,8 +204,8 @@ func TestMatchingEngineShutdown(t *testing.T) {
 			ID:       "new-market-order",
 			Type:     Limit,
 			Side:     Buy,
-			Price:    decimal.NewFromInt(100),
-			Size:     decimal.NewFromInt(1),
+			Price:    udecimal.MustFromInt64(100, 0),
+			Size:     udecimal.MustFromInt64(1, 0),
 		}
 		err = engine.AddOrder(ctx, newMarketOrder)
 		assert.Equal(t, ErrShutdown, err)
@@ -230,8 +230,8 @@ func TestMatchingEngineShutdown(t *testing.T) {
 			ID:       "order1",
 			Type:     Limit,
 			Side:     Buy,
-			Price:    decimal.NewFromInt(100),
-			Size:     decimal.NewFromInt(1),
+			Price:    udecimal.MustFromInt64(100, 0),
+			Size:     udecimal.MustFromInt64(1, 0),
 		}
 		err = engine.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -270,8 +270,8 @@ func TestEngineSnapshotRestore(t *testing.T) {
 		ID:       "btc-buy-1",
 		Side:     Buy,
 		Type:     Limit,
-		Price:    decimal.NewFromInt(50000),
-		Size:     decimal.NewFromInt(1),
+		Price:    udecimal.MustFromInt64(50000, 0),
+		Size:     udecimal.MustFromInt64(1, 0),
 		UserID:   1,
 	})
 	assert.NoError(t, err)
@@ -282,8 +282,8 @@ func TestEngineSnapshotRestore(t *testing.T) {
 		ID:       "eth-sell-1",
 		Side:     Sell,
 		Type:     Limit,
-		Price:    decimal.NewFromInt(3000),
-		Size:     decimal.NewFromInt(10),
+		Price:    udecimal.MustFromInt64(3000, 0),
+		Size:     udecimal.MustFromInt64(10, 0),
 		UserID:   2,
 	})
 	assert.NoError(t, err)
@@ -341,8 +341,8 @@ func TestEngineSnapshotRestore(t *testing.T) {
 		ID:       "btc-sell-match",
 		Side:     Sell,
 		Type:     Limit,
-		Price:    decimal.NewFromInt(50000),
-		Size:     decimal.NewFromInt(1),
+		Price:    udecimal.MustFromInt64(50000, 0),
+		Size:     udecimal.MustFromInt64(1, 0),
 		UserID:   3,
 	})
 	assert.NoError(t, err)

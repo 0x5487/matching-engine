@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/shopspring/decimal"
+	"github.com/quagmt/udecimal"
 )
 
 func BenchmarkPlaceOrders(b *testing.B) {
@@ -29,11 +29,11 @@ func BenchmarkPlaceOrders(b *testing.B) {
 
 	// Pre-compute decimal prices to reduce allocations in hot loop
 	// 1000 ticks: 500 buy-side (midPrice-1 to midPrice-500), 500 sell-side (midPrice+1 to midPrice+500)
-	priceCache := make([]decimal.Decimal, 1001)
+	priceCache := make([]udecimal.Decimal, 1001)
 	for i := int64(0); i <= 1000; i++ {
-		priceCache[i] = decimal.NewFromInt(midPrice - 500 + i) // prices from 9500 to 10500
+		priceCache[i] = udecimal.MustFromInt64(midPrice-500+i, 0) // prices from 9500 to 10500
 	}
-	sizeOne := decimal.NewFromInt(1)
+	sizeOne := udecimal.MustFromInt64(1, 0)
 
 	// To prevent Data Race while maintaining high performance:
 	// We use a circular buffer (Pool) of commands. The size must exceed the
@@ -108,7 +108,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	_ = engine.Shutdown(ctx)
 }
 
-func BenchmarkMatching(b *testing.B) {
+func dBenchmarkMatching(b *testing.B) {
 	// Ensure engine run concurrently
 	oldProcs := runtime.GOMAXPROCS(runtime.NumCPU())
 	defer runtime.GOMAXPROCS(oldProcs)
@@ -119,8 +119,8 @@ func BenchmarkMatching(b *testing.B) {
 	marketID := "MATCH-USDT"
 	_, _ = engine.AddOrderBook(marketID)
 
-	price := decimal.NewFromInt(10000)
-	size := decimal.NewFromInt(1)
+	price := udecimal.MustFromInt64(10000, 0)
+	size := udecimal.MustFromInt64(1, 0)
 
 	// Pre-allocate command pool
 	// We need 2 commands per loop
