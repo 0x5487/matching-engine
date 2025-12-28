@@ -37,7 +37,7 @@ type queue struct {
 func NewBuyerQueue() *queue {
 	return &queue{
 		side: Buy,
-		depthList: skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs interface{}) int {
+		depthList: skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs any) int {
 			d1, _ := lhs.(udecimal.Decimal)
 			d2, _ := rhs.(udecimal.Decimal)
 
@@ -59,7 +59,7 @@ func NewBuyerQueue() *queue {
 func NewSellerQueue() *queue {
 	return &queue{
 		side: Sell,
-		depthList: skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs interface{}) int {
+		depthList: skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs any) int {
 			d1, _ := lhs.(udecimal.Decimal)
 			d2, _ := rhs.(udecimal.Decimal)
 
