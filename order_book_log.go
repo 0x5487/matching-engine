@@ -50,6 +50,25 @@ func releaseBookLog(log *OrderBookLog) {
 	bookLogPool.Put(log)
 }
 
+// logSlicePool pools the *[]*OrderBookLog pointers to reduce allocations.
+var logSlicePool = sync.Pool{
+	New: func() any {
+		s := make([]*OrderBookLog, 0, 8)
+		return &s
+	},
+}
+
+func acquireLogSlice() *[]*OrderBookLog {
+	return logSlicePool.Get().(*[]*OrderBookLog)
+}
+
+func releaseLogSlice(ps *[]*OrderBookLog) {
+	s := *ps
+	// Clear the slice but keep capacity for reuse.
+	*ps = s[:0]
+	logSlicePool.Put(ps)
+}
+
 func NewOpenLog(seqID uint64, marketID string, order *Order) *OrderBookLog {
 	log := acquireBookLog()
 	log.SequenceID = seqID

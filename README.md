@@ -129,4 +129,4 @@ func (h *MyHandler) Publish(logs ...*match.BookLog) {
 
 ## Benchmark
 
-Please refer to [doc](./doc/benchmark/bench.md)
+Please refer to [doc](./doc/benchmark.md)

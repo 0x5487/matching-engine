@@ -56,6 +56,10 @@ type Order struct {
 	Type      OrderType       `json:"type"`
 	UserID    int64           `json:"user_id"`
 	Timestamp int64           `json:"timestamp"` // Unix nano, creation time
+
+	// Intrusive linked list pointers (ignored by JSON)
+	next *Order
+	prev *Order
 }
 
 type LogType string

@@ -1,8 +1,6 @@
 package match
 
 import (
-	"container/list"
-
 	"github.com/huandu/skiplist"
 	"github.com/shopspring/decimal"
 )
@@ -14,7 +12,9 @@ type UpdateEvent struct {
 
 type priceUnit struct {
 	totalSize decimal.Decimal
-	list      *list.List
+	head      *Order
+	tail      *Order
+	count     int64
 }
 
 type DepthItem struct {
@@ -29,7 +29,7 @@ type queue struct {
 	depths      int64
 	depthList   *skiplist.SkipList
 	priceList   map[string]*skiplist.Element
-	orders      map[string]*list.Element
+	orders      map[string]*Order
 }
 
 // NewBuyerQueue creates a new queue for buy orders (bids).
@@ -50,7 +50,7 @@ func NewBuyerQueue() *queue {
 			return 0
 		})),
 		priceList: make(map[string]*skiplist.Element),
-		orders:    make(map[string]*list.Element),
+		orders:    make(map[string]*Order),
 	}
 }
 
@@ -72,19 +72,13 @@ func NewSellerQueue() *queue {
 			return 0
 		})),
 		priceList: make(map[string]*skiplist.Element),
-		orders:    make(map[string]*list.Element),
+		orders:    make(map[string]*Order),
 	}
 }
 
 // order finds an order by its ID.
 func (q *queue) order(id string) *Order {
-	el, ok := q.orders[id]
-	if ok {
-		order, _ := el.Value.(*Order)
-		return order
-	}
-
-	return nil
+	return q.orders[id]
 }
 
 // insertOrder inserts an order into the queue.
@@ -92,29 +86,48 @@ func (q *queue) order(id string) *Order {
 func (q *queue) insertOrder(order *Order, isFront bool) {
 	el, ok := q.priceList[order.Price.String()]
 	if ok {
-		var orderElement *list.Element
 		unit, _ := el.Value.(*priceUnit)
 		if isFront {
-			orderElement = unit.list.PushFront(order)
+			// Push Front
+			order.next = unit.head
+			order.prev = nil
+			if unit.head != nil {
+				unit.head.prev = order
+			}
+			unit.head = order
+			if unit.tail == nil {
+				unit.tail = order
+			}
 		} else {
-			orderElement = unit.list.PushBack(order)
+			// Push Back
+			order.prev = unit.tail
+			order.next = nil
+			if unit.tail != nil {
+				unit.tail.next = order
+			}
+			unit.tail = order
+			if unit.head == nil {
+				unit.head = order
+			}
 		}
 
 		unit.totalSize = unit.totalSize.Add(order.Size)
-		q.orders[order.ID] = orderElement
-
+		unit.count++
+		q.orders[order.ID] = order
 		q.totalOrders++
 	} else {
-		unit := priceUnit{
-			list: list.New(),
+		unit := &priceUnit{
+			head:      order,
+			tail:      order,
+			totalSize: order.Size,
+			count:     1,
 		}
+		order.next = nil
+		order.prev = nil
 
-		orderElement := unit.list.PushFront(order)
-		unit.totalSize = order.Size
+		q.orders[order.ID] = order
 
-		q.orders[order.ID] = orderElement
-
-		el := q.depthList.Set(order.Price, &unit)
+		el := q.depthList.Set(order.Price, unit)
 		q.priceList[order.Price.String()] = el
 
 		q.totalOrders++
@@ -126,35 +139,52 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 // It also cleans up the price unit if it becomes empty.
 func (q *queue) removeOrder(price decimal.Decimal, id string) {
 	skipElement, ok := q.priceList[price.String()]
-	if ok {
-		unit, _ := skipElement.Value.(*priceUnit)
+	if !ok {
+		return
+	}
+	unit, _ := skipElement.Value.(*priceUnit)
 
-		orderElement, ok := q.orders[id]
-		order, _ := orderElement.Value.(*Order)
-		if ok {
-			unit.list.Remove(orderElement)
-			unit.totalSize = unit.totalSize.Sub(order.Size)
-			delete(q.orders, id)
-			q.totalOrders--
-		}
+	order, ok := q.orders[id]
+	if !ok {
+		return
+	}
 
-		if unit.list.Len() == 0 {
-			q.depthList.RemoveElement(skipElement)
-			delete(q.priceList, order.Price.String())
-			q.depths--
-		}
+	// Remove from linked list
+	if order.prev != nil {
+		order.prev.next = order.next
+	} else {
+		unit.head = order.next
+	}
 
+	if order.next != nil {
+		order.next.prev = order.prev
+	} else {
+		unit.tail = order.prev
+	}
+
+	// Clear pointers to avoid leaks and for safety in pool
+	order.next = nil
+	order.prev = nil
+
+	unit.totalSize = unit.totalSize.Sub(order.Size)
+	unit.count--
+	delete(q.orders, id)
+	q.totalOrders--
+
+	if unit.count == 0 {
+		q.depthList.RemoveElement(skipElement)
+		delete(q.priceList, price.String())
+		q.depths--
 	}
 }
 
 // updateOrderSize updates the size of an order in-place.
 // This is used when the size is decreased, preserving the order's priority.
 func (q *queue) updateOrderSize(id string, newSize decimal.Decimal) {
-	el, ok := q.orders[id]
+	order, ok := q.orders[id]
 	if !ok {
 		return
 	}
-	order, _ := el.Value.(*Order)
 
 	skipElement, ok := q.priceList[order.Price.String()]
 	if ok {
@@ -173,8 +203,7 @@ func (q *queue) peekHeadOrder() *Order {
 	}
 
 	unit, _ := el.Value.(*priceUnit)
-	order, _ := unit.list.Front().Value.(*Order)
-	return order
+	return unit.head
 }
 
 // popHeadOrder removes and returns the order at the front of the queue.
@@ -209,9 +238,8 @@ func (q *queue) toSnapshot() []Order {
 		unit := elem.Value.(*priceUnit)
 
 		// Iterate over all orders at this price level
-		orderElem := unit.list.Front()
-		for orderElem != nil {
-			order := orderElem.Value.(*Order)
+		order := unit.head
+		for order != nil {
 			snapshots = append(snapshots, Order{
 				ID:        order.ID,
 				Side:      order.Side,
@@ -221,7 +249,7 @@ func (q *queue) toSnapshot() []Order {
 				Type:      order.Type,
 				Timestamp: order.Timestamp,
 			})
-			orderElem = orderElem.Next()
+			order = order.next
 		}
 
 		elem = elem.Next()
@@ -239,10 +267,9 @@ func (q *queue) depth(limit uint32) []*DepthItem {
 	var i uint32 = 0
 	for i < limit && el != nil {
 		unit, _ := el.Value.(*priceUnit)
-		order, _ := unit.list.Front().Value.(*Order)
 		d := DepthItem{
 			ID:    i,
-			Price: order.Price,
+			Price: unit.head.Price,
 			Size:  unit.totalSize,
 		}
 

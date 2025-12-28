@@ -35,17 +35,27 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	}
 	sizeOne := decimal.NewFromInt(1)
 
-	// Reuse a single PlaceOrderCommand struct
-	order := &PlaceOrderCommand{
-		MarketID: marketID,
-		Type:     Limit,
-		Size:     sizeOne,
+	// To prevent Data Race while maintaining high performance:
+	// We use a circular buffer (Pool) of commands. The size must exceed the
+	// Engine's channel capacity (32768) + some buffer.
+	const poolSize = 65536
+	cmdPool := make([]PlaceOrderCommand, poolSize)
+	for i := 0; i < poolSize; i++ {
+		cmdPool[i] = PlaceOrderCommand{
+			MarketID: marketID,
+			ID:       strconv.Itoa(i), // Pre-generate IDs
+			Type:     Limit,
+			Size:     sizeOne,
+		}
 	}
 
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
 		var priceIdx int
+
+		// Select a unique slot from the pool to avoid data races with async engine
+		order := &cmdPool[i%poolSize]
 
 		// 80/20 Distribution
 		r := rng.Intn(100)
@@ -73,7 +83,6 @@ func BenchmarkPlaceOrders(b *testing.B) {
 			}
 		}
 
-		order.ID = strconv.FormatInt(int64(i), 10)
 		order.Price = priceCache[priceIdx]
 		order.UserID = int64(rng.Intn(1000) + 1)
 
