@@ -28,7 +28,7 @@ type queue struct {
 	totalOrders int64
 	depths      int64
 	depthList   *skiplist.SkipList
-	priceList   map[string]*skiplist.Element
+	priceList   map[udecimal.Decimal]*skiplist.Element
 	orders      map[string]*Order
 }
 
@@ -49,7 +49,7 @@ func NewBuyerQueue() *queue {
 
 			return 0
 		})),
-		priceList: make(map[string]*skiplist.Element),
+		priceList: make(map[udecimal.Decimal]*skiplist.Element),
 		orders:    make(map[string]*Order),
 	}
 }
@@ -71,7 +71,7 @@ func NewSellerQueue() *queue {
 
 			return 0
 		})),
-		priceList: make(map[string]*skiplist.Element),
+		priceList: make(map[udecimal.Decimal]*skiplist.Element),
 		orders:    make(map[string]*Order),
 	}
 }
@@ -84,7 +84,7 @@ func (q *queue) order(id string) *Order {
 // insertOrder inserts an order into the queue.
 // It updates the price list and depth list.
 func (q *queue) insertOrder(order *Order, isFront bool) {
-	el, ok := q.priceList[order.Price.String()]
+	el, ok := q.priceList[order.Price]
 	if ok {
 		unit, _ := el.Value.(*priceUnit)
 		if isFront {
@@ -128,7 +128,7 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 		q.orders[order.ID] = order
 
 		el := q.depthList.Set(order.Price, unit)
-		q.priceList[order.Price.String()] = el
+		q.priceList[order.Price] = el
 
 		q.totalOrders++
 		q.depths++
@@ -138,7 +138,7 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 // removeOrder removes an order from the queue by price and ID.
 // It also cleans up the price unit if it becomes empty.
 func (q *queue) removeOrder(price udecimal.Decimal, id string) {
-	skipElement, ok := q.priceList[price.String()]
+	skipElement, ok := q.priceList[price]
 	if !ok {
 		return
 	}
@@ -173,7 +173,7 @@ func (q *queue) removeOrder(price udecimal.Decimal, id string) {
 
 	if unit.count == 0 {
 		q.depthList.RemoveElement(skipElement)
-		delete(q.priceList, price.String())
+		delete(q.priceList, price)
 		q.depths--
 	}
 }
@@ -186,7 +186,7 @@ func (q *queue) updateOrderSize(id string, newSize udecimal.Decimal) {
 		return
 	}
 
-	skipElement, ok := q.priceList[order.Price.String()]
+	skipElement, ok := q.priceList[order.Price]
 	if ok {
 		unit, _ := skipElement.Value.(*priceUnit)
 		diff := order.Size.Sub(newSize)

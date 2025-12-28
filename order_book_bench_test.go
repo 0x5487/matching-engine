@@ -108,7 +108,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	_ = engine.Shutdown(ctx)
 }
 
-func dBenchmarkMatching(b *testing.B) {
+func BenchmarkMatching(b *testing.B) {
 	// Ensure engine run concurrently
 	oldProcs := runtime.GOMAXPROCS(runtime.NumCPU())
 	defer runtime.GOMAXPROCS(oldProcs)
