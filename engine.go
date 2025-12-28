@@ -28,67 +28,69 @@ func NewMatchingEngine(publishTrader PublishLog) *MatchingEngine {
 }
 
 // AddOrder adds an order to the appropriate order book based on the market ID.
-// Returns ErrShutdown if the engine is shutting down.
+// Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
 func (engine *MatchingEngine) AddOrder(ctx context.Context, cmd *PlaceOrderCommand) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown
 	}
 	orderbook := engine.OrderBook(cmd.MarketID)
 	if orderbook == nil {
-		return ErrShutdown
+		return ErrNotFound
 	}
 	return orderbook.AddOrder(ctx, cmd)
 }
 
 // AmendOrder modifies an existing order in the appropriate order book.
-// Returns ErrShutdown if the engine is shutting down.
+// Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
 func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, cmd *AmendOrderCommand) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown
 	}
 	orderbook := engine.OrderBook(marketID)
 	if orderbook == nil {
-		return ErrShutdown
+		return ErrNotFound
 	}
 	return orderbook.AmendOrder(ctx, cmd)
 }
 
 // CancelOrder cancels an order in the appropriate order book.
-// Returns ErrShutdown if the engine is shutting down.
+// Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
 func (engine *MatchingEngine) CancelOrder(ctx context.Context, marketID string, cmd *CancelOrderCommand) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown
 	}
 	orderbook := engine.OrderBook(marketID)
 	if orderbook == nil {
-		return ErrShutdown
+		return ErrNotFound
 	}
 	return orderbook.CancelOrder(ctx, cmd)
 }
 
-// OrderBook retrieves the order book for a specific market ID, creating it if it doesn't exist.
-// Returns nil if the engine is shutting down.
-func (engine *MatchingEngine) OrderBook(marketID string) *OrderBook {
-	// Do not create new order books during shutdown
+// AddOrderBook creates and starts a new order book for the specified market ID.
+// Returns the new order book or ErrShutdown if the engine is shutting down.
+func (engine *MatchingEngine) AddOrderBook(marketID string) (*OrderBook, error) {
 	if engine.isShutdown.Load() {
-		book, found := engine.orderbooks.Load(marketID)
-		if !found {
-			return nil
-		}
-		orderbook, _ := book.(*OrderBook)
-		return orderbook
+		return nil, ErrShutdown
 	}
 
+	newbook := NewOrderBook(marketID, engine.publishTrader)
+	book, loaded := engine.orderbooks.LoadOrStore(marketID, newbook)
+	if !loaded {
+		go func() {
+			_ = newbook.Start()
+		}()
+		return newbook, nil
+	}
+
+	return book.(*OrderBook), nil
+}
+
+// OrderBook retrieves the order book for a specific market ID.
+// Returns nil if the market does not exist.
+func (engine *MatchingEngine) OrderBook(marketID string) *OrderBook {
 	book, found := engine.orderbooks.Load(marketID)
 	if !found {
-		newbook := NewOrderBook(marketID, engine.publishTrader)
-		var loaded bool
-		book, loaded = engine.orderbooks.LoadOrStore(marketID, newbook)
-		if !loaded {
-			go func() {
-				_ = newbook.Start()
-			}()
-		}
+		return nil
 	}
 
 	orderbook, _ := book.(*OrderBook)

@@ -21,6 +21,9 @@ func TestMatchingEngine(t *testing.T) {
 
 		// market1
 		market1 := "BTC-USDT"
+		_, err := engine.AddOrderBook(market1)
+		assert.NoError(t, err)
+
 		order1 := &PlaceOrderCommand{
 			MarketID: market1,
 			ID:       "order1",
@@ -30,7 +33,7 @@ func TestMatchingEngine(t *testing.T) {
 			Size:     decimal.NewFromInt(2),
 		}
 
-		err := engine.AddOrder(ctx, order1)
+		err = engine.AddOrder(ctx, order1)
 		assert.NoError(t, err)
 
 		orderbook := engine.OrderBook(market1)
@@ -41,6 +44,9 @@ func TestMatchingEngine(t *testing.T) {
 
 		// market2
 		market2 := "ETH-USDT"
+		_, err = engine.AddOrderBook(market2)
+		assert.NoError(t, err)
+
 		order2 := &PlaceOrderCommand{
 			MarketID: market2,
 			ID:       "order2",
@@ -67,6 +73,8 @@ func TestMatchingEngine(t *testing.T) {
 		ctx := context.Background()
 
 		market1 := "BTC-USDT"
+		_, err := engine.AddOrderBook(market1)
+		assert.NoError(t, err)
 
 		order1 := &PlaceOrderCommand{
 			MarketID: market1,
@@ -78,7 +86,7 @@ func TestMatchingEngine(t *testing.T) {
 			UserID:   1,
 		}
 
-		err := engine.AddOrder(ctx, order1)
+		err = engine.AddOrder(ctx, order1)
 		assert.NoError(t, err)
 
 		// Wait for order to be in book
@@ -97,6 +105,30 @@ func TestMatchingEngine(t *testing.T) {
 			return err == nil && stats.BidOrderCount == 0
 		}, 1*time.Second, 10*time.Millisecond)
 	})
+
+	t.Run("MarketNotFound", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		engine := NewMatchingEngine(publishTrader)
+		ctx := context.Background()
+
+		market := "NON-EXISTENT"
+
+		// AddOrder
+		err := engine.AddOrder(ctx, &PlaceOrderCommand{MarketID: market, ID: "o1"})
+		assert.Equal(t, ErrNotFound, err)
+
+		// AmendOrder
+		err = engine.AmendOrder(ctx, market, &AmendOrderCommand{OrderID: "o1"})
+		assert.Equal(t, ErrNotFound, err)
+
+		// CancelOrder
+		err = engine.CancelOrder(ctx, market, &CancelOrderCommand{OrderID: "o1"})
+		assert.Equal(t, ErrNotFound, err)
+
+		// Get OrderBook
+		book := engine.OrderBook(market)
+		assert.Nil(t, book)
+	})
 }
 
 func TestMatchingEngineShutdown(t *testing.T) {
@@ -109,6 +141,9 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		// Create orders in multiple markets
 		markets := []string{"BTC-USDT", "ETH-USDT", "SOL-USDT"}
 		for i, market := range markets {
+			_, err := engine.AddOrderBook(market)
+			assert.NoError(t, err)
+
 			order := &PlaceOrderCommand{
 				MarketID: market,
 				ID:       "order-" + market,
@@ -117,7 +152,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 				Price:    decimal.NewFromInt(int64(100 + i*10)),
 				Size:     decimal.NewFromInt(1),
 			}
-			err := engine.AddOrder(ctx, order)
+			err = engine.AddOrder(ctx, order)
 			assert.NoError(t, err)
 		}
 
@@ -145,6 +180,9 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		ctx := context.Background()
 
 		// Create one market first
+		_, err := engine.AddOrderBook("BTC-USDT")
+		assert.NoError(t, err)
+
 		order := &PlaceOrderCommand{
 			MarketID: "BTC-USDT",
 			ID:       "order1",
@@ -153,7 +191,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 			Price:    decimal.NewFromInt(100),
 			Size:     decimal.NewFromInt(1),
 		}
-		err := engine.AddOrder(ctx, order)
+		err = engine.AddOrder(ctx, order)
 		assert.NoError(t, err)
 
 		// Shutdown
@@ -184,6 +222,9 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		ctx := context.Background()
 
 		// Create an order to ensure at least one market exists
+		_, err := engine.AddOrderBook("BTC-USDT")
+		assert.NoError(t, err)
+
 		order := &PlaceOrderCommand{
 			MarketID: "BTC-USDT",
 			ID:       "order1",
@@ -192,7 +233,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 			Price:    decimal.NewFromInt(100),
 			Size:     decimal.NewFromInt(1),
 		}
-		err := engine.AddOrder(ctx, order)
+		err = engine.AddOrder(ctx, order)
 		assert.NoError(t, err)
 
 		// Shutdown with a reasonable timeout should succeed
@@ -217,6 +258,11 @@ func TestEngineSnapshotRestore(t *testing.T) {
 	// 1. Setup State: Create 2 OrderBooks with Orders
 	market1 := "BTC-USDT"
 	market2 := "ETH-USDT"
+
+	_, err = engine.AddOrderBook(market1)
+	assert.NoError(t, err)
+	_, err = engine.AddOrderBook(market2)
+	assert.NoError(t, err)
 
 	// Add orders to Market 1
 	err = engine.AddOrder(ctx, &PlaceOrderCommand{
