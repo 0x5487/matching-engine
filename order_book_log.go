@@ -69,68 +69,68 @@ func releaseLogSlice(ps *[]*OrderBookLog) {
 	logSlicePool.Put(ps)
 }
 
-func NewOpenLog(seqID uint64, marketID string, order *Order) *OrderBookLog {
+func NewOpenLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size decimal.Decimal, orderType OrderType) *OrderBookLog {
 	log := acquireBookLog()
 	log.SequenceID = seqID
 	log.Type = LogTypeOpen
 	log.MarketID = marketID
-	log.Side = order.Side
-	log.Price = order.Price
-	log.Size = order.Size
-	log.OrderID = order.ID
-	log.UserID = order.UserID
-	log.OrderType = order.Type
+	log.Side = side
+	log.Price = price
+	log.Size = size
+	log.OrderID = orderID
+	log.UserID = userID
+	log.OrderType = orderType
 	log.CreatedAt = time.Now().UTC()
 	return log
 }
 
-func NewMatchLog(seqID uint64, tradeID uint64, marketID string, takerOrder *Order, makerOrder *Order, price decimal.Decimal, size decimal.Decimal) *OrderBookLog {
+func NewMatchLog(seqID uint64, tradeID uint64, marketID string, takerID string, takerUserID int64, takerSide Side, takerType OrderType, makerID string, makerUserID int64, price decimal.Decimal, size decimal.Decimal) *OrderBookLog {
 	log := acquireBookLog()
 	log.SequenceID = seqID
 	log.TradeID = tradeID
 	log.Type = LogTypeMatch
 	log.MarketID = marketID
-	log.Side = takerOrder.Side
+	log.Side = takerSide
 	log.Price = price
 	log.Size = size
 	log.Amount = price.Mul(size)
-	log.OrderID = takerOrder.ID
-	log.UserID = takerOrder.UserID
-	log.OrderType = takerOrder.Type
-	log.MakerOrderID = makerOrder.ID
-	log.MakerUserID = makerOrder.UserID
+	log.OrderID = takerID
+	log.UserID = takerUserID
+	log.OrderType = takerType
+	log.MakerOrderID = makerID
+	log.MakerUserID = makerUserID
 	log.CreatedAt = time.Now().UTC()
 	return log
 }
 
-func NewCancelLog(seqID uint64, marketID string, order *Order) *OrderBookLog {
+func NewCancelLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size decimal.Decimal, orderType OrderType) *OrderBookLog {
 	log := acquireBookLog()
 	log.SequenceID = seqID
 	log.Type = LogTypeCancel
 	log.MarketID = marketID
-	log.Side = order.Side
-	log.Price = order.Price
-	log.Size = order.Size
-	log.OrderID = order.ID
-	log.UserID = order.UserID
-	log.OrderType = order.Type
+	log.Side = side
+	log.Price = price
+	log.Size = size
+	log.OrderID = orderID
+	log.UserID = userID
+	log.OrderType = orderType
 	log.CreatedAt = time.Now().UTC()
 	return log
 }
 
-func NewAmendLog(seqID uint64, marketID string, order *Order, oldPrice decimal.Decimal, oldSize decimal.Decimal) *OrderBookLog {
+func NewAmendLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size decimal.Decimal, oldPrice decimal.Decimal, oldSize decimal.Decimal, orderType OrderType) *OrderBookLog {
 	log := acquireBookLog()
 	log.SequenceID = seqID
 	log.Type = LogTypeAmend
 	log.MarketID = marketID
-	log.Side = order.Side
-	log.Price = order.Price
-	log.Size = order.Size
+	log.Side = side
+	log.Price = price
+	log.Size = size
 	log.OldPrice = oldPrice
 	log.OldSize = oldSize
-	log.OrderID = order.ID
-	log.UserID = order.UserID
-	log.OrderType = order.Type
+	log.OrderID = orderID
+	log.UserID = userID
+	log.OrderType = orderType
 	log.CreatedAt = time.Now().UTC()
 	return log
 }

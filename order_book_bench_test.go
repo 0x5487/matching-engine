@@ -107,3 +107,66 @@ func BenchmarkPlaceOrders(b *testing.B) {
 
 	_ = engine.Shutdown(ctx)
 }
+
+func BenchmarkMatching(b *testing.B) {
+	// Ensure engine run concurrently
+	oldProcs := runtime.GOMAXPROCS(runtime.NumCPU())
+	defer runtime.GOMAXPROCS(oldProcs)
+
+	ctx := context.Background()
+	publishTrader := NewDiscardPublishLog()
+	engine := NewMatchingEngine(publishTrader)
+	marketID := "MATCH-USDT"
+	_, _ = engine.AddOrderBook(marketID)
+
+	price := decimal.NewFromInt(10000)
+	size := decimal.NewFromInt(1)
+
+	// Pre-allocate command pool
+	// We need 2 commands per loop
+	poolSize := 4096
+	cmds := make([]PlaceOrderCommand, poolSize)
+	for i := 0; i < poolSize; i += 2 {
+		// Sell
+		cmds[i] = PlaceOrderCommand{
+			MarketID: marketID,
+			ID:       "sell-" + strconv.Itoa(i),
+			UserID:   1,
+			Side:     Sell,
+			Price:    price,
+			Size:     size,
+			Type:     Limit,
+		}
+		// Buy matches Sell
+		cmds[i+1] = PlaceOrderCommand{
+			MarketID: marketID,
+			ID:       "buy-" + strconv.Itoa(i+1),
+			UserID:   2,
+			Side:     Buy,
+			Price:    price,
+			Size:     size,
+			Type:     Limit,
+		}
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		idx := (i * 2) % poolSize
+
+		// Place Sell (Resting)
+		_ = engine.AddOrder(ctx, &cmds[idx])
+
+		// Place Buy (Matches immediately)
+		_ = engine.AddOrder(ctx, &cmds[idx+1])
+	}
+
+	b.StopTimer()
+
+	// Report ops/sec (each loop is 2 orders)
+	totalSeconds := b.Elapsed().Seconds()
+	if totalSeconds > 0 {
+		ops := float64(b.N) * 2
+		b.ReportMetric(ops/totalSeconds, "orders/sec")
+	}
+}

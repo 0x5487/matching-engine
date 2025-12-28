@@ -374,7 +374,7 @@ func (book *OrderBook) amendOrder(req *AmendOrderCommand) {
 		order.Size = req.NewSize
 
 		// Publish Amend Log FIRST to establish the new state
-		log := NewAmendLog(book.seqID.Add(1), book.marketID, order, oldPrice, oldSize)
+		log := NewAmendLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, oldPrice, oldSize, order.Type)
 		book.publishTrader.Publish(log)
 		releaseBookLog(log)
 
@@ -406,7 +406,7 @@ func (book *OrderBook) amendOrder(req *AmendOrderCommand) {
 		}
 
 		// Publish Amend Log
-		log := NewAmendLog(book.seqID.Add(1), book.marketID, order, oldPrice, oldSize)
+		log := NewAmendLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, oldPrice, oldSize, order.Type)
 		book.publishTrader.Publish(log)
 		releaseBookLog(log)
 	}
@@ -423,7 +423,7 @@ func (book *OrderBook) cancelOrder(req *CancelOrderCommand) {
 			return
 		}
 		book.askQueue.removeOrder(order.Price, req.OrderID)
-		log := NewCancelLog(book.seqID.Add(1), book.marketID, order)
+		log := NewCancelLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type)
 		book.publishTrader.Publish(log)
 		releaseBookLog(log)
 		releaseOrder(order)
@@ -439,7 +439,7 @@ func (book *OrderBook) cancelOrder(req *CancelOrderCommand) {
 			return
 		}
 		book.bidQueue.removeOrder(order.Price, req.OrderID)
-		log := NewCancelLog(book.seqID.Add(1), book.marketID, order)
+		log := NewCancelLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type)
 		book.publishTrader.Publish(log)
 		releaseBookLog(log)
 		releaseOrder(order)
@@ -481,7 +481,7 @@ func (book *OrderBook) handleLimitOrder(order *Order) *[]*OrderBookLog {
 
 		if tOrd == nil {
 			myQueue.insertOrder(order, false)
-			log := NewOpenLog(book.seqID.Add(1), book.marketID, order)
+			log := NewOpenLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type)
 			*logsPtr = append(*logsPtr, log)
 			return logsPtr
 		}
@@ -491,7 +491,7 @@ func (book *OrderBook) handleLimitOrder(order *Order) *[]*OrderBookLog {
 			order.Side == Sell && order.Price.GreaterThan(tOrd.Price) {
 			// Price doesn't match, add order to book without popping
 			myQueue.insertOrder(order, false)
-			log := NewOpenLog(book.seqID.Add(1), book.marketID, order)
+			log := NewOpenLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type)
 			*logsPtr = append(*logsPtr, log)
 			return logsPtr
 		}
@@ -500,7 +500,7 @@ func (book *OrderBook) handleLimitOrder(order *Order) *[]*OrderBookLog {
 		tOrd = targetQueue.popHeadOrder()
 
 		if order.Size.GreaterThanOrEqual(tOrd.Size) {
-			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order, tOrd, tOrd.Price, tOrd.Size)
+			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size)
 			*logsPtr = append(*logsPtr, log)
 			order.Size = order.Size.Sub(tOrd.Size)
 			releaseOrder(tOrd) // tOrd fully consumed
@@ -510,7 +510,7 @@ func (book *OrderBook) handleLimitOrder(order *Order) *[]*OrderBookLog {
 				break
 			}
 		} else {
-			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order, tOrd, tOrd.Price, order.Size)
+			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, order.Size)
 			*logsPtr = append(*logsPtr, log)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			targetQueue.insertOrder(tOrd, true)
@@ -568,7 +568,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) *[]*OrderBookLog {
 		tOrd = targetQueue.popHeadOrder()
 
 		if order.Size.GreaterThanOrEqual(tOrd.Size) {
-			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order, tOrd, tOrd.Price, tOrd.Size)
+			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size)
 			*logsPtr = append(*logsPtr, log)
 			order.Size = order.Size.Sub(tOrd.Size)
 			releaseOrder(tOrd) // tOrd fully consumed
@@ -578,7 +578,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) *[]*OrderBookLog {
 				break
 			}
 		} else {
-			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order, tOrd, tOrd.Price, order.Size)
+			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, order.Size)
 			*logsPtr = append(*logsPtr, log)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			targetQueue.insertOrder(tOrd, true)
@@ -647,7 +647,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) *[]*OrderBookLog {
 		tOrd := targetQueue.popHeadOrder()
 
 		if order.Size.GreaterThanOrEqual(tOrd.Size) {
-			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order, tOrd, tOrd.Price, tOrd.Size)
+			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size)
 			*logsPtr = append(*logsPtr, log)
 			order.Size = order.Size.Sub(tOrd.Size)
 			releaseOrder(tOrd) // tOrd fully consumed
@@ -657,7 +657,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) *[]*OrderBookLog {
 				break
 			}
 		} else {
-			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order, tOrd, tOrd.Price, order.Size)
+			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, order.Size)
 			*logsPtr = append(*logsPtr, log)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			targetQueue.insertOrder(tOrd, true)
@@ -690,7 +690,7 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) *[]*OrderBookLog {
 	if tOrd == nil {
 		// No opposing orders, safe to add
 		myQueue.insertOrder(order, false)
-		log := NewOpenLog(book.seqID.Add(1), book.marketID, order)
+		log := NewOpenLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type)
 		*logsPtr = append(*logsPtr, log)
 		return logsPtr
 	}
@@ -700,7 +700,7 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) *[]*OrderBookLog {
 		order.Side == Sell && order.Price.GreaterThan(tOrd.Price) {
 		// Price doesn't cross, safe to add as maker
 		myQueue.insertOrder(order, false)
-		log := NewOpenLog(book.seqID.Add(1), book.marketID, order)
+		log := NewOpenLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type)
 		*logsPtr = append(*logsPtr, log)
 		return logsPtr
 	}
@@ -758,7 +758,7 @@ func (book *OrderBook) handleMarketOrder(order *Order, quoteSize decimal.Decimal
 
 			if remainingQuote.GreaterThanOrEqual(amount) {
 				// Consume entire maker order
-				log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order, tOrd, tOrd.Price, tOrd.Size)
+				log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size)
 				*logsPtr = append(*logsPtr, log)
 				remainingQuote = remainingQuote.Sub(amount)
 				if remainingQuote.Equal(decimal.Zero) {
@@ -768,7 +768,7 @@ func (book *OrderBook) handleMarketOrder(order *Order, quoteSize decimal.Decimal
 				// Partial fill of maker order
 				tSize := remainingQuote.Div(tOrd.Price)
 
-				log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order, tOrd, tOrd.Price, tSize)
+				log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tSize)
 				log.Amount = remainingQuote // Override amount to be exact
 				*logsPtr = append(*logsPtr, log)
 
@@ -780,7 +780,7 @@ func (book *OrderBook) handleMarketOrder(order *Order, quoteSize decimal.Decimal
 			// Base size mode: order.Size is the quantity in base currency (e.g., BTC)
 			if remainingBase.GreaterThanOrEqual(tOrd.Size) {
 				// Consume entire maker order
-				log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order, tOrd, tOrd.Price, tOrd.Size)
+				log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size)
 				*logsPtr = append(*logsPtr, log)
 				remainingBase = remainingBase.Sub(tOrd.Size)
 				if remainingBase.Equal(decimal.Zero) {
@@ -788,7 +788,7 @@ func (book *OrderBook) handleMarketOrder(order *Order, quoteSize decimal.Decimal
 				}
 			} else {
 				// Partial fill of maker order
-				log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order, tOrd, tOrd.Price, remainingBase)
+				log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, remainingBase)
 				*logsPtr = append(*logsPtr, log)
 
 				tOrd.Size = tOrd.Size.Sub(remainingBase)
