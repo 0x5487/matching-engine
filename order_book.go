@@ -4,11 +4,25 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/shopspring/decimal"
 )
+
+// orderPool is used to reduce Order allocations in the hot path.
+// Note: We acquire but don't release back to pool because Order objects
+// may be referenced by logs or stored in queues. GC will reclaim them.
+var orderPool = sync.Pool{
+	New: func() any {
+		return &Order{}
+	},
+}
+
+func acquireOrder() *Order {
+	return orderPool.Get().(*Order)
+}
 
 // OrderBook type
 type OrderBook struct {
@@ -279,16 +293,15 @@ func (book *OrderBook) addOrder(cmd *PlaceOrderCommand) {
 		return
 	}
 
-	// Convert command to order state
-	order := &Order{
-		ID:        cmd.ID,
-		Side:      cmd.Side,
-		Price:     cmd.Price,
-		Size:      cmd.Size,
-		Type:      cmd.Type,
-		UserID:    cmd.UserID,
-		Timestamp: time.Now().UnixNano(),
-	}
+	// Convert command to order state using pool
+	order := acquireOrder()
+	order.ID = cmd.ID
+	order.Side = cmd.Side
+	order.Price = cmd.Price
+	order.Size = cmd.Size
+	order.Type = cmd.Type
+	order.UserID = cmd.UserID
+	order.Timestamp = time.Now().UnixNano()
 
 	var logs []*OrderBookLog
 
