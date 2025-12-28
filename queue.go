@@ -1,7 +1,9 @@
 package match
 
 import (
-	"github.com/huandu/skiplist"
+	"time"
+
+	"github.com/0x5487/matching-engine/structure"
 	"github.com/quagmt/udecimal"
 )
 
@@ -24,32 +26,27 @@ type DepthItem struct {
 }
 
 type queue struct {
-	side        Side
-	totalOrders int64
-	depths      int64
-	depthList   *skiplist.SkipList
-	priceList   map[udecimal.Decimal]*skiplist.Element
-	orders      map[string]*Order
+	side          Side
+	totalOrders   int64
+	depths        int64
+	orderedPrices *structure.PooledSkiplist       // Ordered price levels
+	priceList     map[udecimal.Decimal]*priceUnit // Quick lookup by price
+	orders        map[string]*Order
 }
+
+const defaultPriceCapacity = 3000
 
 // NewBuyerQueue creates a new queue for buy orders (bids).
 // The orders are sorted by price in descending order (highest price first).
 func NewBuyerQueue() *queue {
 	return &queue{
 		side: Buy,
-		depthList: skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs any) int {
-			d1, _ := lhs.(udecimal.Decimal)
-			d2, _ := rhs.(udecimal.Decimal)
-
-			if d1.LessThan(d2) {
-				return 1
-			} else if d1.GreaterThan(d2) {
-				return -1
-			}
-
-			return 0
-		})),
-		priceList: make(map[udecimal.Decimal]*skiplist.Element),
+		orderedPrices: structure.NewPooledSkiplistWithOptions(
+			defaultPriceCapacity,
+			time.Now().UnixNano(),
+			structure.SkiplistOptions{Descending: true}, // Highest first
+		),
+		priceList: make(map[udecimal.Decimal]*priceUnit),
 		orders:    make(map[string]*Order),
 	}
 }
@@ -59,19 +56,11 @@ func NewBuyerQueue() *queue {
 func NewSellerQueue() *queue {
 	return &queue{
 		side: Sell,
-		depthList: skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs any) int {
-			d1, _ := lhs.(udecimal.Decimal)
-			d2, _ := rhs.(udecimal.Decimal)
-
-			if d1.GreaterThan(d2) {
-				return 1
-			} else if d1.LessThan(d2) {
-				return -1
-			}
-
-			return 0
-		})),
-		priceList: make(map[udecimal.Decimal]*skiplist.Element),
+		orderedPrices: structure.NewPooledSkiplist(
+			defaultPriceCapacity,
+			time.Now().UnixNano(),
+		), // Default: Lowest first
+		priceList: make(map[udecimal.Decimal]*priceUnit),
 		orders:    make(map[string]*Order),
 	}
 }
@@ -84,9 +73,8 @@ func (q *queue) order(id string) *Order {
 // insertOrder inserts an order into the queue.
 // It updates the price list and depth list.
 func (q *queue) insertOrder(order *Order, isFront bool) {
-	el, ok := q.priceList[order.Price]
+	unit, ok := q.priceList[order.Price]
 	if ok {
-		unit, _ := el.Value.(*priceUnit)
 		if isFront {
 			// Push Front
 			order.next = unit.head
@@ -126,9 +114,8 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 		order.prev = nil
 
 		q.orders[order.ID] = order
-
-		el := q.depthList.Set(order.Price, unit)
-		q.priceList[order.Price] = el
+		q.priceList[order.Price] = unit
+		q.orderedPrices.MustInsert(order.Price)
 
 		q.totalOrders++
 		q.depths++
@@ -138,11 +125,10 @@ func (q *queue) insertOrder(order *Order, isFront bool) {
 // removeOrder removes an order from the queue by price and ID.
 // It also cleans up the price unit if it becomes empty.
 func (q *queue) removeOrder(price udecimal.Decimal, id string) {
-	skipElement, ok := q.priceList[price]
+	unit, ok := q.priceList[price]
 	if !ok {
 		return
 	}
-	unit, _ := skipElement.Value.(*priceUnit)
 
 	order, ok := q.orders[id]
 	if !ok {
@@ -172,7 +158,7 @@ func (q *queue) removeOrder(price udecimal.Decimal, id string) {
 	q.totalOrders--
 
 	if unit.count == 0 {
-		q.depthList.RemoveElement(skipElement)
+		q.orderedPrices.Delete(price)
 		delete(q.priceList, price)
 		q.depths--
 	}
@@ -186,9 +172,8 @@ func (q *queue) updateOrderSize(id string, newSize udecimal.Decimal) {
 		return
 	}
 
-	skipElement, ok := q.priceList[order.Price]
+	unit, ok := q.priceList[order.Price]
 	if ok {
-		unit, _ := skipElement.Value.(*priceUnit)
 		diff := order.Size.Sub(newSize)
 		unit.totalSize = unit.totalSize.Sub(diff)
 		order.Size = newSize
@@ -197,12 +182,15 @@ func (q *queue) updateOrderSize(id string, newSize udecimal.Decimal) {
 
 // peekHeadOrder returns the order at the front of the queue (best price) without removing it.
 func (q *queue) peekHeadOrder() *Order {
-	el := q.depthList.Front()
-	if el == nil {
+	bestPrice, ok := q.orderedPrices.Min()
+	if !ok {
 		return nil
 	}
 
-	unit, _ := el.Value.(*priceUnit)
+	unit, ok := q.priceList[bestPrice]
+	if !ok {
+		return nil
+	}
 	return unit.head
 }
 
@@ -233,9 +221,14 @@ func (q *queue) toSnapshot() []Order {
 	snapshots := make([]Order, 0, q.totalOrders)
 
 	// Iterate over all price levels
-	elem := q.depthList.Front()
-	for elem != nil {
-		unit := elem.Value.(*priceUnit)
+	iter := q.orderedPrices.Iterator()
+	for iter.Valid() {
+		price := iter.Price()
+		unit, ok := q.priceList[price]
+		if !ok {
+			iter.Next()
+			continue
+		}
 
 		// Iterate over all orders at this price level
 		order := unit.head
@@ -252,7 +245,7 @@ func (q *queue) toSnapshot() []Order {
 			order = order.next
 		}
 
-		elem = elem.Next()
+		iter.Next()
 	}
 
 	return snapshots
@@ -262,22 +255,63 @@ func (q *queue) toSnapshot() []Order {
 func (q *queue) depth(limit uint32) []*DepthItem {
 	result := make([]*DepthItem, 0, limit)
 
-	el := q.depthList.Front()
+	iter := q.orderedPrices.Iterator()
 
 	var i uint32 = 0
-	for i < limit && el != nil {
-		unit, _ := el.Value.(*priceUnit)
+	for i < limit && iter.Valid() {
+		price := iter.Price()
+		unit, ok := q.priceList[price]
+		if !ok {
+			iter.Next()
+			continue
+		}
+
 		d := DepthItem{
 			ID:    i,
-			Price: unit.head.Price,
+			Price: price,
 			Size:  unit.totalSize,
 		}
 
 		result = append(result, &d)
 
-		el = el.Next()
+		iter.Next()
 		i++
 	}
 
 	return result
+}
+
+// priceIterator returns an iterator over price levels.
+// Used for FOK order validation.
+func (q *queue) priceIterator() *queuePriceIterator {
+	iter := q.orderedPrices.Iterator()
+	return &queuePriceIterator{
+		skipIter:  iter,
+		priceList: q.priceList,
+	}
+}
+
+// queuePriceIterator iterates over price levels in the queue.
+type queuePriceIterator struct {
+	skipIter  *structure.SkiplistIterator
+	priceList map[udecimal.Decimal]*priceUnit
+}
+
+// Valid returns true if the iterator points to a valid price level.
+func (it *queuePriceIterator) Valid() bool {
+	return it.skipIter.Valid()
+}
+
+// Next advances the iterator to the next price level.
+func (it *queuePriceIterator) Next() {
+	it.skipIter.Next()
+}
+
+// PriceUnit returns the priceUnit at the current iterator position.
+func (it *queuePriceIterator) PriceUnit() *priceUnit {
+	if !it.skipIter.Valid() {
+		return nil
+	}
+	price := it.skipIter.Price()
+	return it.priceList[price]
 }

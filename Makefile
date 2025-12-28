@@ -12,9 +12,9 @@ test:
 release: lint test
 
 prof-mem:
-	go test -v -run=none -bench . -benchmem -memprofile mem.out ./...
+	go test -v -run=none -bench . -benchmem -memprofile mem.out .
 	go tool pprof -alloc_objects -top mem.out
 
 prof-cpu:
-	go test -v -run=none -bench . -benchmem -cpuprofile cpu.out ./...
+	go test -v -run=none -bench . -benchmem -cpuprofile cpu.out .
 	go tool pprof -top cpu.out

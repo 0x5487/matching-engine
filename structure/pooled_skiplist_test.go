@@ -181,6 +181,43 @@ func TestPooledSkiplist_Iterator(t *testing.T) {
 	assert.False(t, iter2.Valid())
 }
 
+func TestPooledSkiplist_Descending(t *testing.T) {
+	// Create descending skiplist (highest first, like buy queue)
+	sl := NewPooledSkiplistWithOptions(100, 42, SkiplistOptions{Descending: true})
+
+	// Insert in random order
+	values := []int64{50, 25, 75, 10, 30, 60, 80, 5, 15}
+	for _, v := range values {
+		sl.MustInsert(udecimal.MustFromInt64(v, 0))
+	}
+
+	// Verify descending order (highest first)
+	expected := []int64{80, 75, 60, 50, 30, 25, 15, 10, 5}
+	i := 0
+	iter := sl.Iterator()
+	for iter.Valid() {
+		assert.True(t, iter.Price().Equal(udecimal.MustFromInt64(expected[i], 0)),
+			"Expected %d at position %d, got %s", expected[i], i, iter.Price().String())
+		i++
+		iter.Next()
+	}
+	assert.Equal(t, len(expected), i)
+
+	// Verify Min returns highest price in descending mode
+	min, ok := sl.Min()
+	assert.True(t, ok)
+	assert.True(t, min.Equal(udecimal.MustFromInt64(80, 0)))
+
+	// Verify Delete works correctly
+	assert.True(t, sl.Delete(udecimal.MustFromInt64(80, 0)))
+	min, _ = sl.Min()
+	assert.True(t, min.Equal(udecimal.MustFromInt64(75, 0)))
+
+	// Verify Contains works
+	assert.True(t, sl.Contains(udecimal.MustFromInt64(50, 0)))
+	assert.False(t, sl.Contains(udecimal.MustFromInt64(80, 0))) // deleted
+}
+
 // Benchmarks
 func BenchmarkPooledSkiplist_Insert(b *testing.B) {
 	prices := make([]udecimal.Decimal, 1000)

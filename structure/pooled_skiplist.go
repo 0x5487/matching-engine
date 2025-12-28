@@ -41,6 +41,10 @@ type SkiplistOptions struct {
 	// OnGrow is called when the skiplist expands.
 	// Can be used for logging or metrics.
 	OnGrow func(oldCap, newCap int32)
+
+	// Descending sets the sort order to descending (highest first).
+	// Default is ascending (lowest first).
+	Descending bool
 }
 
 // PooledSkiplist is an arena-backed skiplist for price levels.
@@ -53,9 +57,11 @@ type PooledSkiplist struct {
 	rng         *rand.Rand         // Random number generator
 	maxCapacity int32              // Max capacity (0 = unlimited)
 	onGrow      func(int32, int32) // Callback on grow
+	descending  bool               // Sort order: true = descending
 }
 
 // NewPooledSkiplist creates a new pooled skiplist with pre-allocated capacity.
+// Default sort order is ascending (lowest first).
 func NewPooledSkiplist(capacity int32, seed int64) *PooledSkiplist {
 	return NewPooledSkiplistWithOptions(capacity, seed, SkiplistOptions{})
 }
@@ -72,6 +78,7 @@ func NewPooledSkiplistWithOptions(capacity int32, seed int64, opts SkiplistOptio
 		rng:         rand.New(rand.NewSource(seed)),
 		maxCapacity: opts.MaxCapacity,
 		onGrow:      opts.OnGrow,
+		descending:  opts.Descending,
 	}
 
 	// Initialize head sentinel at index 0
@@ -88,6 +95,16 @@ func NewPooledSkiplistWithOptions(capacity int32, seed int64, opts SkiplistOptio
 	sl.nodes[totalCap-1].Forward[0] = NullIndex
 
 	return sl
+}
+
+// less returns true if a should come before b in the skiplist.
+// For ascending order: a < b means a comes first
+// For descending order: a > b means a comes first
+func (sl *PooledSkiplist) less(a, b udecimal.Decimal) bool {
+	if sl.descending {
+		return a.GreaterThan(b)
+	}
+	return a.LessThan(b)
 }
 
 // grow expands the arena capacity.
@@ -168,7 +185,7 @@ func (sl *PooledSkiplist) Insert(price udecimal.Decimal) (bool, error) {
 	// Find position and track update path
 	for i := sl.level - 1; i >= 0; i-- {
 		for sl.nodes[x].Forward[i] != NullIndex &&
-			sl.nodes[sl.nodes[x].Forward[i]].Price.LessThan(price) {
+			sl.less(sl.nodes[sl.nodes[x].Forward[i]].Price, price) {
 			x = sl.nodes[x].Forward[i]
 		}
 		update[i] = x
@@ -223,7 +240,7 @@ func (sl *PooledSkiplist) Contains(price udecimal.Decimal) bool {
 
 	for i := sl.level - 1; i >= 0; i-- {
 		for sl.nodes[x].Forward[i] != NullIndex &&
-			sl.nodes[sl.nodes[x].Forward[i]].Price.LessThan(price) {
+			sl.less(sl.nodes[sl.nodes[x].Forward[i]].Price, price) {
 			x = sl.nodes[x].Forward[i]
 		}
 	}
@@ -241,7 +258,7 @@ func (sl *PooledSkiplist) Delete(price udecimal.Decimal) bool {
 	// Find position and track update path
 	for i := sl.level - 1; i >= 0; i-- {
 		for sl.nodes[x].Forward[i] != NullIndex &&
-			sl.nodes[sl.nodes[x].Forward[i]].Price.LessThan(price) {
+			sl.less(sl.nodes[sl.nodes[x].Forward[i]].Price, price) {
 			x = sl.nodes[x].Forward[i]
 		}
 		update[i] = x

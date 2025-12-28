@@ -604,11 +604,12 @@ func (book *OrderBook) handleFOKOrder(order *Order) *[]*OrderBookLog {
 	logsPtr := acquireLogSlice()
 
 	// Phase 1: Validate if the order can be fully filled
-	el := targetQueue.depthList.Front()
+	iter := targetQueue.priceIterator()
 	remainingSize := order.Size
 
 	for remainingSize.GreaterThan(udecimal.Zero) {
-		if el == nil {
+		unit := iter.PriceUnit()
+		if unit == nil {
 			// Not enough liquidity - Reject does not change order book state
 			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, RejectReasonInsufficientSize)
 			log.Side = order.Side
@@ -620,7 +621,6 @@ func (book *OrderBook) handleFOKOrder(order *Order) *[]*OrderBookLog {
 			return logsPtr
 		}
 
-		unit, _ := el.Value.(*priceUnit)
 		tOrd := unit.head
 
 		// Check if the price is acceptable
@@ -639,7 +639,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) *[]*OrderBookLog {
 
 		// Subtract the entire price level's total size from remaining
 		remainingSize = remainingSize.Sub(unit.totalSize)
-		el = el.Next()
+		iter.Next()
 	}
 
 	// Phase 2: Execute the matching (order can be fully filled)
