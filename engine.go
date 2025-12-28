@@ -11,8 +11,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/shopspring/decimal"
 )
 
 // MatchingEngine manages multiple order books for different markets.
@@ -44,7 +42,7 @@ func (engine *MatchingEngine) AddOrder(ctx context.Context, cmd *PlaceOrderComma
 
 // AmendOrder modifies an existing order in the appropriate order book.
 // Returns ErrShutdown if the engine is shutting down.
-func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, orderID string, newPrice decimal.Decimal, newSize decimal.Decimal) error {
+func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, cmd *AmendOrderCommand) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown
 	}
@@ -52,12 +50,12 @@ func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, o
 	if orderbook == nil {
 		return ErrShutdown
 	}
-	return orderbook.AmendOrder(ctx, orderID, newPrice, newSize)
+	return orderbook.AmendOrder(ctx, cmd)
 }
 
 // CancelOrder cancels an order in the appropriate order book.
 // Returns ErrShutdown if the engine is shutting down.
-func (engine *MatchingEngine) CancelOrder(ctx context.Context, marketID string, orderID string) error {
+func (engine *MatchingEngine) CancelOrder(ctx context.Context, marketID string, cmd *CancelOrderCommand) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown
 	}
@@ -65,7 +63,7 @@ func (engine *MatchingEngine) CancelOrder(ctx context.Context, marketID string, 
 	if orderbook == nil {
 		return ErrShutdown
 	}
-	return orderbook.CancelOrder(ctx, orderID)
+	return orderbook.CancelOrder(ctx, cmd)
 }
 
 // OrderBook retrieves the order book for a specific market ID, creating it if it doesn't exist.

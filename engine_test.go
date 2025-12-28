@@ -24,10 +24,10 @@ func TestMatchingEngine(t *testing.T) {
 		order1 := &PlaceOrderCommand{
 			MarketID: market1,
 			ID:       "order1",
-			Type:  Limit,
-			Side:  Buy,
-			Price: decimal.NewFromInt(100),
-			Size:  decimal.NewFromInt(2),
+			Type:     Limit,
+			Side:     Buy,
+			Price:    decimal.NewFromInt(100),
+			Size:     decimal.NewFromInt(2),
 		}
 
 		err := engine.AddOrder(ctx, order1)
@@ -71,10 +71,11 @@ func TestMatchingEngine(t *testing.T) {
 		order1 := &PlaceOrderCommand{
 			MarketID: market1,
 			ID:       "order1",
-			Type:  Limit,
-			Side:  Buy,
-			Price: decimal.NewFromInt(100),
-			Size:  decimal.NewFromInt(2),
+			Type:     Limit,
+			Side:     Buy,
+			Price:    decimal.NewFromInt(100),
+			Size:     decimal.NewFromInt(2),
+			UserID:   1,
 		}
 
 		err := engine.AddOrder(ctx, order1)
@@ -87,7 +88,7 @@ func TestMatchingEngine(t *testing.T) {
 			return err == nil && stats.BidOrderCount == 1
 		}, 1*time.Second, 10*time.Millisecond)
 
-		err = engine.CancelOrder(ctx, market1, order1.ID)
+		err = engine.CancelOrder(ctx, market1, &CancelOrderCommand{OrderID: order1.ID, UserID: order1.UserID})
 		assert.NoError(t, err)
 
 		// validate
@@ -147,10 +148,10 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		order := &PlaceOrderCommand{
 			MarketID: "BTC-USDT",
 			ID:       "order1",
-			Type:  Limit,
-			Side:  Buy,
-			Price: decimal.NewFromInt(100),
-			Size:  decimal.NewFromInt(1),
+			Type:     Limit,
+			Side:     Buy,
+			Price:    decimal.NewFromInt(100),
+			Size:     decimal.NewFromInt(1),
 		}
 		err := engine.AddOrder(ctx, order)
 		assert.NoError(t, err)
@@ -163,10 +164,10 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		newMarketOrder := &PlaceOrderCommand{
 			MarketID: "NEW-MARKET",
 			ID:       "new-market-order",
-			Type:  Limit,
-			Side:  Buy,
-			Price: decimal.NewFromInt(100),
-			Size:  decimal.NewFromInt(1),
+			Type:     Limit,
+			Side:     Buy,
+			Price:    decimal.NewFromInt(100),
+			Size:     decimal.NewFromInt(1),
 		}
 		err = engine.AddOrder(ctx, newMarketOrder)
 		assert.Equal(t, ErrShutdown, err)
@@ -186,10 +187,10 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		order := &PlaceOrderCommand{
 			MarketID: "BTC-USDT",
 			ID:       "order1",
-			Type:  Limit,
-			Side:  Buy,
-			Price: decimal.NewFromInt(100),
-			Size:  decimal.NewFromInt(1),
+			Type:     Limit,
+			Side:     Buy,
+			Price:    decimal.NewFromInt(100),
+			Size:     decimal.NewFromInt(1),
 		}
 		err := engine.AddOrder(ctx, order)
 		assert.NoError(t, err)

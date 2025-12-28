@@ -2,14 +2,10 @@ package match
 
 import (
 	"context"
-	"crypto/rand"
-	"fmt"
-	"math/big"
 	"runtime"
-	"sync/atomic"
+	"strconv"
 	"testing"
 
-	"github.com/rs/xid"
 	"github.com/shopspring/decimal"
 )
 
@@ -20,41 +16,33 @@ const (
 )
 
 func BenchmarkPlaceOrders(b *testing.B) {
-	goprocs := runtime.GOMAXPROCS(0)
+	// Restore GOMAXPROCS to default to allow engine and producer to run concurrently
+	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	for i := start; i < end; i += step {
-		ctx := context.Background()
-		var errCount int64
+	ctx := context.Background()
+	publishTrader := NewDiscardPublishLog()
+	engine := NewMatchingEngine(publishTrader)
 
-		publishTrader := NewDiscardPublishLog()
-		engine := NewMatchingEngine(publishTrader)
+	// Ensure market exists before benchmark
+	_ = engine.OrderBook("BTC-USDT")
 
-		b.Run(fmt.Sprintf("goroutines-%d", i*goprocs), func(b *testing.B) {
-			b.SetParallelism(i)
-			b.RunParallel(func(pb *testing.PB) {
-				for pb.Next() {
-					n, _ := rand.Int(rand.Reader, big.NewInt(100000))
-					price := n.Int64() + 1
+	b.ResetTimer()
 
-					order := &PlaceOrderCommand{
-						ID:    xid.New().String(),
-						Type:  Limit,
-						Side:  Buy,
-						Price: decimal.NewFromInt(price),
-						Size:  decimal.NewFromInt(1),
-					}
+	for i := 0; i < b.N; i++ {
+		// Use simple static data to test engine throughput, not RNG performance
+		order := &PlaceOrderCommand{
+			MarketID: "BTC-USDT",
+			ID:       strconv.Itoa(i),
+			Type:     Limit,
+			Side:     Buy,
+			Price:    decimal.NewFromInt(100),
+			Size:     decimal.NewFromInt(1),
+			UserID:   1,
+		}
 
-					err := engine.AddOrder(ctx, order)
-					if err != nil {
-						atomic.AddInt64(&errCount, int64(1))
-					}
-				}
-			})
-		})
-
-		bid := engine.OrderBook("BTC-USDT").bidQueue
-		b.Logf("order count: %d", bid.orderCount())
-		b.Logf("depth count: %d", bid.depthCount())
-		b.Logf("error count: %d", errCount)
+		_ = engine.AddOrder(ctx, order)
 	}
+
+	b.StopTimer()
+	_ = engine.Shutdown(ctx)
 }

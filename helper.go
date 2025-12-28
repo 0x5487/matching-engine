@@ -3,7 +3,7 @@ package match
 // CalculateDepthChange calculates the depth change based on the book log.
 // It returns a DepthChange struct indicating which side and price level should be updated.
 // Note: For LogTypeMatch, the side returned is the Maker's side (opposite of the log's side).
-func CalculateDepthChange(log *BookLog) DepthChange {
+func CalculateDepthChange(log *OrderBookLog) DepthChange {
 	switch log.Type {
 	case LogTypeOpen:
 		return DepthChange{

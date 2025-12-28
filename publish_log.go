@@ -11,28 +11,28 @@ import "sync"
 // The caller recycles BookLog objects to a sync.Pool after Publish returns,
 // so any asynchronous processing must work with cloned data.
 type PublishLog interface {
-	Publish(...*BookLog)
+	Publish(...*OrderBookLog)
 }
 
 // MemoryPublishLog stores logs in memory, useful for testing.
 type MemoryPublishLog struct {
 	mu     sync.RWMutex
-	Trades []*BookLog
+	Trades []*OrderBookLog
 }
 
 // NewMemoryPublishLog creates a new MemoryPublishLog.
 func NewMemoryPublishLog() *MemoryPublishLog {
 	return &MemoryPublishLog{
-		Trades: make([]*BookLog, 0),
+		Trades: make([]*OrderBookLog, 0),
 	}
 }
 
 // Publish appends logs to the in-memory slice.
-func (m *MemoryPublishLog) Publish(trades ...*BookLog) {
+func (m *MemoryPublishLog) Publish(trades ...*OrderBookLog) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, trade := range trades {
-		cpy := new(BookLog)
+		cpy := new(OrderBookLog)
 		*cpy = *trade
 		m.Trades = append(m.Trades, cpy)
 	}
@@ -46,11 +46,21 @@ func (m *MemoryPublishLog) Count() int {
 }
 
 // Get returns the log at the specified index.
-func (m *MemoryPublishLog) Get(index int) *BookLog {
+func (m *MemoryPublishLog) Get(index int) *OrderBookLog {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	return m.Trades[index]
+}
+
+// Logs returns a copy of all logs stored.
+func (m *MemoryPublishLog) Logs() []*OrderBookLog {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	logs := make([]*OrderBookLog, len(m.Trades))
+	copy(logs, m.Trades)
+	return logs
 }
 
 // DiscardPublishLog discards all logs, useful for benchmarking.
@@ -63,6 +73,6 @@ func NewDiscardPublishLog() *DiscardPublishLog {
 }
 
 // Publish does nothing.
-func (p *DiscardPublishLog) Publish(trades ...*BookLog) {
+func (p *DiscardPublishLog) Publish(trades ...*OrderBookLog) {
 
 }

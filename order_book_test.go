@@ -858,21 +858,21 @@ func TestCancelOrder(t *testing.T) {
 
 	testOrderBook := createTestOrderBook(t)
 
-	err := testOrderBook.CancelOrder(ctx, "sell-1")
+	err := testOrderBook.CancelOrder(ctx, &CancelOrderCommand{OrderID: "sell-1", UserID: 201})
 	assert.NoError(t, err)
 	assert.Eventually(t, func() bool {
 		stats, err := testOrderBook.GetStats()
 		return err == nil && stats.AskDepthCount == 2
 	}, 1*time.Second, 10*time.Millisecond)
 
-	err = testOrderBook.CancelOrder(ctx, "buy-1")
+	err = testOrderBook.CancelOrder(ctx, &CancelOrderCommand{OrderID: "buy-1", UserID: 101})
 	assert.NoError(t, err)
 	assert.Eventually(t, func() bool {
 		stats, err := testOrderBook.GetStats()
 		return err == nil && stats.BidDepthCount == 2
 	}, 1*time.Second, 10*time.Millisecond)
 
-	err = testOrderBook.CancelOrder(ctx, "aaaaaa")
+	err = testOrderBook.CancelOrder(ctx, &CancelOrderCommand{OrderID: "aaaaaa", UserID: 999})
 	assert.NoError(t, err)
 	assert.Eventually(t, func() bool {
 		stats, err := testOrderBook.GetStats()
@@ -888,7 +888,7 @@ func TestAmendOrder(t *testing.T) {
 		// Initial: Buy 90(1), 80(1), 70(1). Sell 110(1), 120(1), 130(1)
 
 		// 1. Amend buy-1 (Price 90) size from 1 to 0.5
-		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(90), decimal.NewFromFloat(0.5))
+		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: decimal.NewFromInt(90), NewSize: decimal.NewFromFloat(0.5)})
 		assert.NoError(t, err)
 		// Verify Depth
 		assert.Eventually(t, func() bool {
@@ -938,7 +938,7 @@ func TestAmendOrder(t *testing.T) {
 		testOrderBook.AddOrder(ctx, &PlaceOrderCommand{ID: "buy-2-compete", Type: Limit, Side: Buy, Price: decimal.NewFromInt(90), Size: decimal.NewFromInt(1)})
 
 		// 2. Amend buy-1 size from 1 to 2 (Increase) -> Should lose priority to buy-2-compete
-		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(90), decimal.NewFromInt(2))
+		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: decimal.NewFromInt(90), NewSize: decimal.NewFromInt(2)})
 		assert.NoError(t, err)
 
 		// 3. Sell matching order. Should match buy-2-compete first.
@@ -965,7 +965,7 @@ func TestAmendOrder(t *testing.T) {
 		// Buy-1 at 90.
 
 		// Amend price to 95
-		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(95), decimal.NewFromInt(1))
+		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: decimal.NewFromInt(95), NewSize: decimal.NewFromInt(1)})
 		assert.NoError(t, err)
 		assert.Eventually(t, func() bool {
 			depth, err := testOrderBook.Depth(10)
@@ -988,7 +988,7 @@ func TestAmendOrder(t *testing.T) {
 		// Buy-1 at 90, Size 1.
 
 		// Amend Price to 95 AND Size to 5
-		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(95), decimal.NewFromInt(5))
+		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: decimal.NewFromInt(95), NewSize: decimal.NewFromInt(5)})
 		assert.NoError(t, err)
 		assert.Eventually(t, func() bool {
 			depth, err := testOrderBook.Depth(10)
@@ -1016,7 +1016,7 @@ func TestAmendOrder(t *testing.T) {
 		// Amend Buy-1 (90) to 115 (Crosses Sell-1 at 110) with Size 2
 		// Should match Sell-1 (Price 110, Size 1) fully.
 		// Remaining Buy-1 (Size 1) should sit at 115.
-		err := testOrderBook.AmendOrder(ctx, "buy-1", decimal.NewFromInt(115), decimal.NewFromInt(2))
+		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: decimal.NewFromInt(115), NewSize: decimal.NewFromInt(2)})
 		assert.NoError(t, err)
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		// 6 setup + 1 amend + 1 match + 1 open (remaining)
@@ -1566,5 +1566,116 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 		// Verify ask size reduced
 		askAfter := restoredBook.askQueue.order("ask-1")
 		assert.Equal(t, decimal.NewFromInt(4).String(), askAfter.Size.String())
+	})
+}
+
+func TestOrderValidation(t *testing.T) {
+	ctx := context.Background()
+	publishTrader := NewMemoryPublishLog()
+	orderBook := NewOrderBook("BTC-USDT", publishTrader)
+	go func() {
+		_ = orderBook.Start()
+	}()
+
+	t.Run("RejectDuplicateOrderID", func(t *testing.T) {
+		order1 := &PlaceOrderCommand{
+			ID:     "dup-id",
+			Type:   Limit,
+			Side:   Buy,
+			Size:   decimal.NewFromInt(1),
+			Price:  decimal.NewFromInt(100),
+			UserID: 1,
+		}
+		err := orderBook.AddOrder(ctx, order1)
+		assert.NoError(t, err)
+
+		// Try to add same ID again
+		err = orderBook.AddOrder(ctx, order1)
+		assert.NoError(t, err)
+
+		assert.Eventually(t, func() bool {
+			logs := publishTrader.Logs()
+			for _, log := range logs {
+				if log.Type == LogTypeReject && log.OrderID == "dup-id" && log.RejectReason == RejectReasonDuplicateID {
+					return true
+				}
+			}
+			return false
+		}, 1*time.Second, 10*time.Millisecond)
+	})
+
+	t.Run("RejectCancelNonExistentOrder", func(t *testing.T) {
+		err := orderBook.CancelOrder(ctx, &CancelOrderCommand{OrderID: "non-existent", UserID: 1})
+		assert.NoError(t, err)
+
+		assert.Eventually(t, func() bool {
+			logs := publishTrader.Logs()
+			for _, log := range logs {
+				if log.Type == LogTypeReject && log.OrderID == "non-existent" && log.RejectReason == RejectReasonOrderNotFound {
+					return true
+				}
+			}
+			return false
+		}, 1*time.Second, 10*time.Millisecond)
+	})
+
+	t.Run("RejectAmendNonExistentOrder", func(t *testing.T) {
+		err := orderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "non-existent", UserID: 1, NewPrice: decimal.NewFromInt(100), NewSize: decimal.NewFromInt(2)})
+		assert.NoError(t, err)
+
+		assert.Eventually(t, func() bool {
+			logs := publishTrader.Logs()
+			for _, log := range logs {
+				if log.Type == LogTypeReject && log.OrderID == "non-existent" && log.RejectReason == RejectReasonOrderNotFound {
+					return true
+				}
+			}
+			return false
+		}, 1*time.Second, 10*time.Millisecond)
+	})
+
+	t.Run("RejectUserIDMismatch", func(t *testing.T) {
+		// Create an order with UserID 1
+		id := "owner-1"
+		orderBook.AddOrder(ctx, &PlaceOrderCommand{
+			ID:     id,
+			Type:   Limit,
+			Side:   Buy,
+			Size:   decimal.NewFromInt(1),
+			Price:  decimal.NewFromInt(100),
+			UserID: 1,
+		})
+
+		// Wait for it to be added
+		assert.Eventually(t, func() bool {
+			stats, _ := orderBook.GetStats()
+			return stats.BidOrderCount > 0
+		}, 1*time.Second, 10*time.Millisecond)
+
+		// Try to cancel with UserID 2
+		err := orderBook.CancelOrder(ctx, &CancelOrderCommand{OrderID: id, UserID: 2})
+		assert.NoError(t, err)
+
+		// Try to amend with UserID 2
+		err = orderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: id, UserID: 2, NewPrice: decimal.NewFromInt(110), NewSize: decimal.NewFromInt(1)})
+		assert.NoError(t, err)
+
+		// Verify rejections
+		assert.Eventually(t, func() bool {
+			logs := publishTrader.Logs()
+			cancelRejected := false
+			amendRejected := false
+			for _, log := range logs {
+				if log.Type == LogTypeReject && log.OrderID == id && log.UserID == 2 && log.RejectReason == RejectReasonOrderNotFound {
+					// We use OrderNotFound for security when UserID mismatches
+					if !cancelRejected {
+						cancelRejected = true
+						continue
+					}
+					amendRejected = true
+				}
+			}
+			return cancelRejected && amendRejected
+		}, 1*time.Second, 10*time.Millisecond)
 	})
 }

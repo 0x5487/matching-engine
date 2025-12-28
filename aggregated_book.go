@@ -99,7 +99,7 @@ func (ab *AggregatedBook) ApplySnapshot(snapshot *Snapshot) error {
 // Replay applies a BookLog event to update the aggregated book state.
 // Events with LogType == LogTypeReject do not affect book state but still update the sequence ID.
 // Returns an error if a sequence gap is detected and rebuild fails.
-func (ab *AggregatedBook) Replay(log *BookLog) error {
+func (ab *AggregatedBook) Replay(log *OrderBookLog) error {
 	// TODO: Implement replay logic with:
 	// 1. Gap detection: if log.SequenceID > expected, trigger Rebuild()
 	// 2. Deduplication: skip if log.SequenceID <= current
