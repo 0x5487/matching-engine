@@ -3,7 +3,6 @@ module github.com/0x5487/matching-engine
 go 1.23
 
 require (
-	github.com/huandu/skiplist v1.2.1
 	github.com/igrmk/treemap/v2 v2.0.1
 	github.com/quagmt/udecimal v1.9.0
 	github.com/stretchr/testify v1.11.1

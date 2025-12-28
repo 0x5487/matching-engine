@@ -11,7 +11,8 @@ import "sync"
 // The caller recycles BookLog objects to a sync.Pool after Publish returns,
 // so any asynchronous processing must work with cloned data.
 type PublishLog interface {
-	Publish(...*OrderBookLog)
+	// Publish publishes order book logs. The slice comes from logSlicePool.
+	Publish([]*OrderBookLog)
 }
 
 // MemoryPublishLog stores logs in memory, useful for testing.
@@ -28,7 +29,7 @@ func NewMemoryPublishLog() *MemoryPublishLog {
 }
 
 // Publish appends logs to the in-memory slice.
-func (m *MemoryPublishLog) Publish(trades ...*OrderBookLog) {
+func (m *MemoryPublishLog) Publish(trades []*OrderBookLog) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, trade := range trades {
@@ -73,6 +74,5 @@ func NewDiscardPublishLog() *DiscardPublishLog {
 }
 
 // Publish does nothing.
-func (p *DiscardPublishLog) Publish(trades ...*OrderBookLog) {
-
+func (p *DiscardPublishLog) Publish(trades []*OrderBookLog) {
 }

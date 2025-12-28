@@ -75,7 +75,7 @@ func NewPooledSkiplistWithOptions(capacity int32, seed int64, opts SkiplistOptio
 		freeHead:    1, // 0 is reserved for head
 		count:       0,
 		level:       1,
-		rng:         rand.New(rand.NewSource(seed)),
+		rng:         rand.New(rand.NewSource(seed)), //nolint:gosec // G404: math/rand is acceptable for skiplist level generation
 		maxCapacity: opts.MaxCapacity,
 		onGrow:      opts.OnGrow,
 		descending:  opts.Descending,
@@ -110,7 +110,7 @@ func (sl *PooledSkiplist) less(a, b udecimal.Decimal) bool {
 // grow expands the arena capacity.
 // Returns error if max capacity would be exceeded.
 func (sl *PooledSkiplist) grow() error {
-	oldCap := int32(len(sl.nodes))
+	oldCap := int32(len(sl.nodes)) //nolint:gosec // G115: safe conversion, capacity is bounded
 	newCap := oldCap * DefaultGrowthFactor
 
 	// Check max capacity limit
@@ -188,7 +188,7 @@ func (sl *PooledSkiplist) Insert(price udecimal.Decimal) (bool, error) {
 			sl.less(sl.nodes[sl.nodes[x].Forward[i]].Price, price) {
 			x = sl.nodes[x].Forward[i]
 		}
-		update[i] = x
+		update[i] = x //nolint:gosec // G602: bounds checked by NullIndex
 	}
 
 	x = sl.nodes[x].Forward[0]
@@ -261,7 +261,7 @@ func (sl *PooledSkiplist) Delete(price udecimal.Decimal) bool {
 			sl.less(sl.nodes[sl.nodes[x].Forward[i]].Price, price) {
 			x = sl.nodes[x].Forward[i]
 		}
-		update[i] = x
+		update[i] = x //nolint:gosec // G602: bounds checked by NullIndex
 	}
 
 	x = sl.nodes[x].Forward[0]
@@ -336,7 +336,7 @@ func (sl *PooledSkiplist) Count() int32 {
 
 // Capacity returns the current capacity of the arena.
 func (sl *PooledSkiplist) Capacity() int32 {
-	return int32(len(sl.nodes)) - 1 // -1 for head sentinel
+	return int32(len(sl.nodes)) - 1 //nolint:gosec // G115: safe conversion, capacity is bounded
 }
 
 // InOrderSlice returns all prices in sorted order.

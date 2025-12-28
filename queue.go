@@ -215,10 +215,9 @@ func (q *queue) depthCount() int64 {
 	return q.depths
 }
 
-// toSnapshot serializes the queue into a slice of Order structs.
-// It iterates through the skip list (price levels) and then the linked list (orders) to preserve priority.
-func (q *queue) toSnapshot() []Order {
-	snapshots := make([]Order, 0, q.totalOrders)
+// toSnapshot serializes the queue into a slice of *Order pointers.
+func (q *queue) toSnapshot() []*Order {
+	snapshots := make([]*Order, 0, q.totalOrders)
 
 	// Iterate over all price levels
 	iter := q.orderedPrices.Iterator()
@@ -233,7 +232,7 @@ func (q *queue) toSnapshot() []Order {
 		// Iterate over all orders at this price level
 		order := unit.head
 		for order != nil {
-			snapshots = append(snapshots, Order{
+			o := &Order{
 				ID:        order.ID,
 				Side:      order.Side,
 				Price:     order.Price,
@@ -241,7 +240,8 @@ func (q *queue) toSnapshot() []Order {
 				UserID:    order.UserID,
 				Type:      order.Type,
 				Timestamp: order.Timestamp,
-			})
+			}
+			snapshots = append(snapshots, o)
 			order = order.next
 		}
 
@@ -307,11 +307,11 @@ func (it *queuePriceIterator) Next() {
 	it.skipIter.Next()
 }
 
-// PriceUnit returns the priceUnit at the current iterator position.
-func (it *queuePriceIterator) PriceUnit() *priceUnit {
+// PriceUnit returns the current price and its priceUnit.
+func (it *queuePriceIterator) PriceUnit() (udecimal.Decimal, *priceUnit) {
 	if !it.skipIter.Valid() {
-		return nil
+		return udecimal.Zero, nil
 	}
 	price := it.skipIter.Price()
-	return it.priceList[price]
+	return price, it.priceList[price]
 }

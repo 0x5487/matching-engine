@@ -36,6 +36,7 @@ const (
 // PlaceOrderCommand is the input command for placing an order.
 // QuoteSize is only used for Market orders to specify amount in quote currency.
 type PlaceOrderCommand struct {
+	SeqID     uint64           `json:"seq_id"` // MQ sequence ID for snapshot/restore
 	MarketID  string           `json:"market_id"`
 	ID        string           `json:"id"`
 	Side      Side             `json:"side"`
@@ -103,15 +104,17 @@ type Depth struct {
 }
 
 type AmendOrderCommand struct {
-	OrderID  string
-	UserID   int64
-	NewPrice udecimal.Decimal
-	NewSize  udecimal.Decimal
+	SeqID    uint64           `json:"seq_id"` // MQ sequence ID for snapshot/restore
+	OrderID  string           `json:"order_id"`
+	UserID   int64            `json:"user_id"`
+	NewPrice udecimal.Decimal `json:"new_price"`
+	NewSize  udecimal.Decimal `json:"new_size"`
 }
 
 type CancelOrderCommand struct {
-	OrderID string
-	UserID  int64
+	SeqID   uint64 `json:"seq_id"` // MQ sequence ID for snapshot/restore
+	OrderID string `json:"order_id"`
+	UserID  int64  `json:"user_id"`
 }
 
 // DepthChange represents a change in the order book depth.
@@ -143,9 +146,27 @@ type BookStats struct {
 
 // Command represents a unified command sent to the order book.
 // It improves deterministic ordering and performance by using a single channel.
+// We use flattened fields to avoid 'any' boxing allocations.
 type Command struct {
-	SeqID   uint64
-	Type    CommandType
-	Payload any
-	Resp    chan any // Optional: for synchronous response (e.g. CmdDepth)
+	SeqID uint64
+	Type  CommandType
+
+	// Place/Add Order fields
+	MarketID  string
+	OrderID   string
+	Side      Side
+	OrderType OrderType
+	Price     udecimal.Decimal
+	Size      udecimal.Decimal
+	QuoteSize udecimal.Decimal
+	UserID    int64
+
+	// Amend Order fields
+	NewPrice udecimal.Decimal
+	NewSize  udecimal.Decimal
+
+	// Query fields
+	DepthLimit uint32
+
+	Resp chan any // Optional: for synchronous response (e.g. CmdDepth)
 }

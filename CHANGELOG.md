@@ -2,11 +2,12 @@
 
 ## [unreleased]
 
+- perf: integrate custom Disruptor (MPSC RingBuffer) replacing Go channels for **~13x lower latency** (44µs → 3µs) and **zero-allocation** on hot paths. See [doc/disruptor.md](doc/disruptor.md).
 - perf: implement thread-safe `GetStats()` using unified command channel to eliminate race conditions in tests.
 - refactor: replace `time.Sleep` with `assert.Eventually` in unit tests for faster and more deterministic execution.
 - feature: implement non-blocking snapshot/restore and refactor order structure/API for better performance and maintainability.
 - perf: replace `shopspring/decimal` with `udecimal` (uint64-based) for **zero-allocation arithmetic**, reducing hot-path allocations from 27/op to 4/op.
-- perf: optimize core engine performance to achieve **~2M orders/sec throughput** and **<5 allocs/op** via intrusive lists, map key optimization, and strict object pooling.
+- perf: optimize core engine performance to achieve **~3M orders/sec throughput** and **0 allocs/op** via intrusive lists, map key optimization, and strict object pooling.
 
 ## v0.7.0 (2025-12-14)
 

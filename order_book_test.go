@@ -106,18 +106,16 @@ func TestLimitOrders(t *testing.T) {
 		assert.Equal(t, uint64(0), testOrderBook.LastCmdSeqID())
 
 		// Send command with SeqID
-		testOrderBook.cmdChan <- Command{
-			SeqID: 100,
-			Type:  CmdPlaceOrder,
-			Payload: &PlaceOrderCommand{
-				ID:     "buyAll",
-				Type:   Limit,
-				Side:   Buy,
-				Price:  udecimal.MustFromInt64(1000, 0),
-				Size:   udecimal.MustFromInt64(10, 0),
-				UserID: 300,
-			},
-		}
+		testOrderBook.cmdBuffer.Publish(Command{
+			SeqID:     100,
+			Type:      CmdPlaceOrder,
+			OrderID:   "buyAll",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     udecimal.MustFromInt64(1000, 0),
+			Size:      udecimal.MustFromInt64(10, 0),
+			UserID:    300,
+		})
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
@@ -1141,6 +1139,10 @@ func TestShutdown(t *testing.T) {
 
 		// Do NOT start the order book - this simulates Start() not being called
 		// The drain will never happen, so Shutdown should timeout
+
+		// Publish a command that won't be consumed because Start() wasn't called.
+		// This ensures ProducerSequence > ConsumerSequence, causing Shutdown to wait.
+		orderBook.cmdBuffer.Publish(Command{Type: CmdGetStats})
 
 		// Set isShutdown manually to simulate partial state
 		// and close done channel

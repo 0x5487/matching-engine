@@ -89,7 +89,7 @@ func (t *PriceLevelTree) isRed(idx int32) bool {
 	if idx == NullIndex {
 		return false
 	}
-	return t.nodes[idx].Color == colorRed
+	return t.nodes[idx].Color
 }
 
 // rotateLeft performs a left rotation.
@@ -170,12 +170,12 @@ func (t *PriceLevelTree) insert(h int32, parent int32, price udecimal.Decimal) (
 	}
 
 	var inserted bool
-	cmp := price.Cmp(t.nodes[h].Price)
-	if cmp < 0 {
+	switch cmp := price.Cmp(t.nodes[h].Price); {
+	case cmp < 0:
 		t.nodes[h].Left, inserted = t.insert(t.nodes[h].Left, h, price)
-	} else if cmp > 0 {
+	case cmp > 0:
 		t.nodes[h].Right, inserted = t.insert(t.nodes[h].Right, h, price)
-	} else {
+	default:
 		// Key already exists
 		return h, false
 	}
@@ -201,12 +201,12 @@ func (t *PriceLevelTree) Contains(price udecimal.Decimal) bool {
 
 func (t *PriceLevelTree) search(h int32, price udecimal.Decimal) int32 {
 	for h != NullIndex {
-		cmp := price.Cmp(t.nodes[h].Price)
-		if cmp < 0 {
+		switch cmp := price.Cmp(t.nodes[h].Price); {
+		case cmp < 0:
 			h = t.nodes[h].Left
-		} else if cmp > 0 {
+		case cmp > 0:
 			h = t.nodes[h].Right
-		} else {
+		default:
 			return h
 		}
 	}
@@ -354,34 +354,6 @@ func (t *PriceLevelTree) deleteWithFlag(h int32, price udecimal.Decimal) (int32,
 	return t.balance(h), found
 }
 
-func (t *PriceLevelTree) delete(h int32, price udecimal.Decimal) int32 {
-	if price.LessThan(t.nodes[h].Price) {
-		if !t.isRed(t.nodes[h].Left) && !t.isRed(t.nodes[t.nodes[h].Left].Left) {
-			h = t.moveRedLeft(h)
-		}
-		t.nodes[h].Left = t.delete(t.nodes[h].Left, price)
-	} else {
-		if t.isRed(t.nodes[h].Left) {
-			h = t.rotateRight(h)
-		}
-		if price.Equal(t.nodes[h].Price) && t.nodes[h].Right == NullIndex {
-			t.free(h)
-			return NullIndex
-		}
-		if !t.isRed(t.nodes[h].Right) && !t.isRed(t.nodes[t.nodes[h].Right].Left) {
-			h = t.moveRedRight(h)
-		}
-		if price.Equal(t.nodes[h].Price) {
-			// Find minimum in right subtree
-			minIdx := t.findMin(t.nodes[h].Right)
-			t.nodes[h].Price = t.nodes[minIdx].Price
-			t.nodes[h].Right = t.deleteMin(t.nodes[h].Right)
-		} else {
-			t.nodes[h].Right = t.delete(t.nodes[h].Right, price)
-		}
-	}
-	return t.balance(h)
-}
 
 func (t *PriceLevelTree) moveRedLeft(h int32) int32 {
 	t.flipColors(h)

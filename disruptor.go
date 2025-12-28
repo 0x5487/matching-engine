@@ -7,15 +7,16 @@ import (
 	"sync/atomic"
 )
 
-// ErrDisruptorTimeout is returned when shutdown times out
+// ErrDisruptorTimeout is returned when shutdown times out.
 var ErrDisruptorTimeout = errors.New("disruptor: shutdown timeout")
 
-// EventHandler 是事件處理器介面
+// EventHandler is the interface for processing events from the RingBuffer.
 type EventHandler[T any] interface {
-	OnEvent(event T)
+	OnEvent(event *T)
 }
 
-// RingBuffer 是 MPSC 的環狀緩衝區
+// RingBuffer is a lock-free MPSC (Multi-Producer Single-Consumer) ring buffer.
+// It provides high-throughput, zero-allocation event passing between goroutines.
 type RingBuffer[T any] struct {
 	// Cache line padding to avoid false sharing
 	_                [56]byte
@@ -29,7 +30,7 @@ type RingBuffer[T any] struct {
 	bufferMask int64
 	capacity   int64
 
-	// Published slice to indicate ready slots
+	// Published array to track slot write completion
 	published []int64
 
 	// Event handler
@@ -39,8 +40,8 @@ type RingBuffer[T any] struct {
 	isShutdown atomic.Bool
 }
 
-// NewRingBuffer 創建新的 MPSC RingBuffer
-// size 必須是 2 的冪次方
+// NewRingBuffer creates a new MPSC RingBuffer.
+// The capacity must be a power of 2.
 func NewRingBuffer[T any](capacity int64, handler EventHandler[T]) *RingBuffer[T] {
 	if capacity <= 0 || (capacity&(capacity-1)) != 0 {
 		panic("size must be a power of 2")
@@ -57,7 +58,7 @@ func NewRingBuffer[T any](capacity int64, handler EventHandler[T]) *RingBuffer[T
 	rb.producerSequence.Store(-1)
 	rb.consumerSequence.Store(-1)
 
-	// 初始化 published 為 -1
+	// Initialize published array to -1
 	for i := range rb.published {
 		atomic.StoreInt64(&rb.published[i], -1)
 	}
@@ -65,65 +66,74 @@ func NewRingBuffer[T any](capacity int64, handler EventHandler[T]) *RingBuffer[T
 	return rb
 }
 
-// Publish 發布事件到 ring buffer (多 producer 安全)
+// Publish publishes an event to the ring buffer (multi-producer safe).
+// This is a convenience method that wraps Claim() and Commit().
 func (rb *RingBuffer[T]) Publish(event T) {
-	// 檢查是否已關機
-	if rb.isShutdown.Load() {
+	seq, slot := rb.Claim()
+	if seq == -1 {
 		return
+	}
+	*slot = event
+	rb.Commit(seq)
+}
+
+// Claim atomically claims a sequence and returns a pointer to the slot.
+// Returns (-1, nil) if the RingBuffer is shut down.
+// The caller should write to the slot and then call Commit(seq).
+func (rb *RingBuffer[T]) Claim() (int64, *T) {
+	// Check if shutdown
+	if rb.isShutdown.Load() {
+		return -1, nil
 	}
 
 	var nextSeq int64
 	for {
-		// 步驟 1: 原子性地申請一個序號 (Claim a sequence)
 		currentProducerSeq := rb.producerSequence.Load()
 		nextSeq = currentProducerSeq + 1
 
-		// 檢查是否有足夠空間
-		// producer 序號不能超過 consumer 序號一個 buffer 的大小
+		// Check if there is enough space
 		wrapPoint := nextSeq - rb.capacity
 		consumerSeq := rb.consumerSequence.Load()
 
 		if wrapPoint > consumerSeq {
-			// Buffer 已滿，等待 consumer 處理
+			// Buffer is full, wait for consumer to catch up
 			runtime.Gosched()
 			continue
 		}
 
-		// 嘗試原子性地更新 producer sequence
+		// Try to atomically update producer sequence
 		if rb.producerSequence.CompareAndSwap(currentProducerSeq, nextSeq) {
-			// 成功獲取序列號
-			break
+			// Successfully claimed the sequence
+			return nextSeq, &rb.buffer[nextSeq&rb.bufferMask]
 		}
-		// CAS 失敗，重試
+		// CAS failed, retry
 		runtime.Gosched()
 	}
-
-	// 步驟 2: 將資料寫入申請到的位置 (Write data to the slot)
-	index := nextSeq & rb.bufferMask
-	rb.buffer[index] = event
-
-	// 步驟 3: 發布 (publish) 此次寫入，讓 consumer 可見
-	// 直接設置 published[index] = nextSeq (無自旋)
-	atomic.StoreInt64(&rb.published[index], nextSeq)
 }
 
-// Start 啟動 consumer worker
+// Commit marks the slot as published, making it visible to the consumer.
+func (rb *RingBuffer[T]) Commit(seq int64) {
+	atomic.StoreInt64(&rb.published[seq&rb.bufferMask], seq)
+}
+
+// Start starts the consumer worker goroutine.
 func (rb *RingBuffer[T]) Start() {
 	go rb.consumerLoop()
 }
 
-// Shutdown 停止 disruptor
+// Shutdown gracefully stops the disruptor, ensuring all pending events are processed.
+// It blocks until all events are processed or the context is cancelled.
 func (rb *RingBuffer[T]) Shutdown(ctx context.Context) error {
-	// 設置關機標誌，阻止新的 publish
+	// Set shutdown flag to block new publishes
 	rb.isShutdown.Store(true)
 
 	for {
 		select {
 		case <-ctx.Done():
-			return ErrDisruptorTimeout
+			return ctx.Err()
 		default:
 			if rb.ConsumerSequence() >= rb.ProducerSequence() {
-				// 確保 consumer 已處理完所有 claimed 事件
+				// Consumer has processed all claimed events
 				return nil
 			}
 			runtime.Gosched()
@@ -131,16 +141,16 @@ func (rb *RingBuffer[T]) Shutdown(ctx context.Context) error {
 	}
 }
 
-// consumerLoop consumer 主循環
+// consumerLoop is the main consumer loop.
 func (rb *RingBuffer[T]) consumerLoop() {
 	nextConsumerSeq := rb.consumerSequence.Load() + 1
 
 	for {
-		// 獲取當前可用的最大序號 (producer 已 claim 的 max)
+		// Get the maximum available sequence (producer's last claimed)
 		availableSeq := rb.producerSequence.Load()
 
 		if rb.isShutdown.Load() {
-			// 關機時處理剩餘事件
+			// Process remaining events during shutdown
 			rb.processRemainingEvents(nextConsumerSeq)
 			return
 		}
@@ -149,59 +159,56 @@ func (rb *RingBuffer[T]) consumerLoop() {
 		for nextConsumerSeq <= availableSeq {
 			index := nextConsumerSeq & rb.bufferMask
 
-			// 自旋等待該槽位被發布 (檢查 published == nextSeq)
+			// Spin-wait for the slot to be published
 			for atomic.LoadInt64(&rb.published[index]) != nextConsumerSeq {
 				runtime.Gosched()
 			}
 
-			// 處理事件
-			event := rb.buffer[index]
-			rb.handler.OnEvent(event)
+			rb.handler.OnEvent(&rb.buffer[index])
 
-			// 更新 consumer sequence
+			// Update consumer sequence
 			rb.consumerSequence.Store(nextConsumerSeq)
 			nextConsumerSeq++
 			processed = true
 		}
 
 		if !processed {
-			// 沒有事件，讓出 CPU
+			// No events available, yield CPU
 			runtime.Gosched()
 		}
 	}
 }
 
-// processRemainingEvents 處理關機時的剩餘事件
+// processRemainingEvents processes any remaining events during shutdown.
 func (rb *RingBuffer[T]) processRemainingEvents(nextConsumerSeq int64) {
 	availableSeq := rb.producerSequence.Load()
 
 	for nextConsumerSeq <= availableSeq {
 		index := nextConsumerSeq & rb.bufferMask
 
-		// 自旋等待該槽位被發布
+		// Spin-wait for the slot to be published
 		for atomic.LoadInt64(&rb.published[index]) != nextConsumerSeq {
 			runtime.Gosched()
 		}
 
-		event := rb.buffer[index]
-		rb.handler.OnEvent(event)
+		rb.handler.OnEvent(&rb.buffer[index])
 
 		rb.consumerSequence.Store(nextConsumerSeq)
 		nextConsumerSeq++
 	}
 }
 
-// ConsumerSequence 獲取當前 consumer sequence (用於監控)
+// ConsumerSequence returns the current consumer sequence (for monitoring).
 func (rb *RingBuffer[T]) ConsumerSequence() int64 {
 	return rb.consumerSequence.Load()
 }
 
-// ProducerSequence 獲取當前 producer sequence (用於監控)
+// ProducerSequence returns the current producer sequence (for monitoring).
 func (rb *RingBuffer[T]) ProducerSequence() int64 {
 	return rb.producerSequence.Load()
 }
 
-// GetPendingEvents 獲取待處理事件數量 (用於監控)
+// GetPendingEvents returns the number of pending events (for monitoring).
 func (rb *RingBuffer[T]) GetPendingEvents() int64 {
 	producerSeq := rb.producerSequence.Load()
 	consumerSeq := rb.consumerSequence.Load()

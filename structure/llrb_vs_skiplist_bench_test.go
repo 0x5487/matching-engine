@@ -3,7 +3,6 @@ package structure
 import (
 	"testing"
 
-	"github.com/huandu/skiplist"
 	"github.com/quagmt/udecimal"
 )
 
@@ -35,27 +34,6 @@ func BenchmarkCompare_Insert_LLRB(b *testing.B) {
 	}
 }
 
-func BenchmarkCompare_Insert_Skiplist(b *testing.B) {
-	prices := make([]udecimal.Decimal, benchSize)
-	for i := 0; i < benchSize; i++ {
-		prices[i] = udecimal.MustFromInt64(int64(i), 0)
-	}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		list := skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs any) int {
-			d1, _ := lhs.(udecimal.Decimal)
-			d2, _ := rhs.(udecimal.Decimal)
-			return d1.Cmp(d2)
-		}))
-		for _, p := range prices {
-			list.Set(p, struct{}{})
-		}
-	}
-}
-
 // ============= SEARCH BENCHMARKS =============
 
 func BenchmarkCompare_Search_LLRB(b *testing.B) {
@@ -71,26 +49,6 @@ func BenchmarkCompare_Search_LLRB(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		tree.Contains(target)
-	}
-}
-
-func BenchmarkCompare_Search_Skiplist(b *testing.B) {
-	list := skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs any) int {
-		d1, _ := lhs.(udecimal.Decimal)
-		d2, _ := rhs.(udecimal.Decimal)
-		return d1.Cmp(d2)
-	}))
-	for i := 0; i < benchSize; i++ {
-		list.Set(udecimal.MustFromInt64(int64(i), 0), struct{}{})
-	}
-
-	target := udecimal.MustFromInt64(500, 0)
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		list.Get(target)
 	}
 }
 
@@ -120,34 +78,6 @@ func BenchmarkCompare_Delete_LLRB(b *testing.B) {
 	}
 }
 
-func BenchmarkCompare_Delete_Skiplist(b *testing.B) {
-	prices := make([]udecimal.Decimal, benchSize)
-	for i := 0; i < benchSize; i++ {
-		prices[i] = udecimal.MustFromInt64(int64(i), 0)
-	}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		list := skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs any) int {
-			d1, _ := lhs.(udecimal.Decimal)
-			d2, _ := rhs.(udecimal.Decimal)
-			return d1.Cmp(d2)
-		}))
-		for _, p := range prices {
-			list.Set(p, struct{}{})
-		}
-		b.StartTimer()
-
-		// Delete half the elements
-		for j := 0; j < benchSize/2; j++ {
-			list.Remove(prices[j])
-		}
-	}
-}
-
 // ============= DELETE MIN BENCHMARKS (Critical for matching) =============
 
 func BenchmarkCompare_DeleteMin_LLRB(b *testing.B) {
@@ -170,35 +100,6 @@ func BenchmarkCompare_DeleteMin_LLRB(b *testing.B) {
 		// Delete all elements from min (simulating order book drain)
 		for tree.Count() > 0 {
 			tree.DeleteMin()
-		}
-	}
-}
-
-func BenchmarkCompare_DeleteMin_Skiplist(b *testing.B) {
-	prices := make([]udecimal.Decimal, benchSize)
-	for i := 0; i < benchSize; i++ {
-		prices[i] = udecimal.MustFromInt64(int64(i), 0)
-	}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		list := skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs any) int {
-			d1, _ := lhs.(udecimal.Decimal)
-			d2, _ := rhs.(udecimal.Decimal)
-			return d1.Cmp(d2)
-		}))
-		for _, p := range prices {
-			list.Set(p, struct{}{})
-		}
-		b.StartTimer()
-
-		// Delete all elements from front (simulating order book drain)
-		for list.Len() > 0 {
-			front := list.Front()
-			list.RemoveElement(front)
 		}
 	}
 }
@@ -235,44 +136,6 @@ func BenchmarkCompare_MixedWorkload_LLRB(b *testing.B) {
 		// Phase 3: Cancel orders (random deletes)
 		for j := benchSize / 2; j < benchSize; j++ {
 			tree.Delete(prices[j])
-		}
-	}
-}
-
-func BenchmarkCompare_MixedWorkload_Skiplist(b *testing.B) {
-	// Pre-compute prices
-	prices := make([]udecimal.Decimal, benchSize)
-	for i := 0; i < benchSize; i++ {
-		prices[i] = udecimal.MustFromInt64(int64(i), 0)
-	}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		list := skiplist.New(skiplist.GreaterThanFunc(func(lhs, rhs any) int {
-			d1, _ := lhs.(udecimal.Decimal)
-			d2, _ := rhs.(udecimal.Decimal)
-			return d1.Cmp(d2)
-		}))
-
-		// Phase 1: Build order book (insert all)
-		for _, p := range prices {
-			list.Set(p, struct{}{})
-		}
-
-		// Phase 2: Matching simulation (search + deleteMin cycle)
-		for j := 0; j < 100; j++ {
-			list.Get(prices[j%benchSize])
-			if list.Len() > 0 {
-				front := list.Front()
-				list.RemoveElement(front)
-			}
-		}
-
-		// Phase 3: Cancel orders (random deletes)
-		for j := benchSize / 2; j < benchSize; j++ {
-			list.Remove(prices[j])
 		}
 	}
 }
