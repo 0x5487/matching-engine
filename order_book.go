@@ -26,12 +26,30 @@ func releaseOrder(o *Order) {
 	orderPool.Put(o)
 }
 
+// DefaultLotSize is the fallback minimum trade unit (1e-8).
+// This prevents infinite loops when quoteSize/price produces very small values.
+var DefaultLotSize = udecimal.MustFromInt64(1, 8) // 0.00000001
+
+// OrderBookOption configures an OrderBook.
+type OrderBookOption func(*OrderBook)
+
+// WithLotSize sets the minimum trade unit for the order book.
+// When a Market order's calculated match size is less than this value,
+// the order will be rejected with remaining funds returned.
+// Default: 1e-8 (0.00000001) as a safety fallback.
+func WithLotSize(size udecimal.Decimal) OrderBookOption {
+	return func(book *OrderBook) {
+		book.lotSize = size
+	}
+}
+
 // OrderBook type
 type OrderBook struct {
 	marketID         string
-	seqID            atomic.Uint64 // Globally increasing sequence ID
-	lastCmdSeqID     atomic.Uint64 // Last sequence ID of the command
-	tradeID          atomic.Uint64 // Sequential trade ID counter
+	lotSize          udecimal.Decimal // Minimum trade unit for Market orders
+	seqID            atomic.Uint64    // Globally increasing sequence ID
+	lastCmdSeqID     atomic.Uint64    // Last sequence ID of the command
+	tradeID          atomic.Uint64    // Sequential trade ID counter
 	isShutdown       atomic.Bool
 	bidQueue         *queue
 	askQueue         *queue
@@ -42,15 +60,21 @@ type OrderBook struct {
 }
 
 // NewOrderBook creates a new order book instance.
-func NewOrderBook(marketID string, publishTrader PublishLog) *OrderBook {
+func NewOrderBook(marketID string, publishTrader PublishLog, opts ...OrderBookOption) *OrderBook {
 	book := &OrderBook{
 		marketID:         marketID,
+		lotSize:          DefaultLotSize,
 		bidQueue:         NewBuyerQueue(),
 		askQueue:         NewSellerQueue(),
 		done:             make(chan struct{}),
 		shutdownComplete: make(chan struct{}),
 		publishTrader:    publishTrader,
 	}
+
+	for _, opt := range opts {
+		opt(book)
+	}
+
 	book.cmdBuffer = NewRingBuffer(32768, book)
 	return book
 }
@@ -714,12 +738,11 @@ func (book *OrderBook) handleMarketOrder(order *Order, quoteSize udecimal.Decima
 			matchSize = tOrd.Size
 		}
 
-		// TODO: Replace IsZero() with minimum trade unit check.
-		// The minimum trade unit should be passed into OrderBook at creation time,
-		// not hardcoded. This would allow different markets to have different precision.
-		if matchSize.IsZero() {
-			// Cannot match anymore (e.g. remaining quote size too small to buy minimum unit)
-			// Must produce Reject Log so OMS can unfreeze the remaining funds.
+		// Check if match size is below minimum trade unit (LotSize)
+		// This prevents infinite loops when quoteSize/price produces very small values.
+		if matchSize.LessThan(book.lotSize) {
+			// Cannot match anymore (remaining quantity below minimum trade unit)
+			// Produce Reject Log so OMS can unfreeze the remaining funds.
 			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, RejectReasonNoLiquidity, timestamp)
 			log.Side, log.Price, log.OrderType = order.Side, order.Price, order.Type
 			if useQuote {

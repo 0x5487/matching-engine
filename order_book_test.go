@@ -1691,3 +1691,128 @@ func TestOrderValidation(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 	})
 }
+
+func TestOrderBook_LotSize(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("default LotSize is 1e-8", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		orderBook := NewOrderBook("BTC-USDT", publishTrader)
+		go func() { _ = orderBook.Start() }()
+
+		// Verify default lotSize is set
+		assert.True(t, orderBook.lotSize.Equal(DefaultLotSize))
+	})
+
+	t.Run("custom LotSize via option", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		customLotSize := udecimal.MustParse("0.0001")
+		orderBook := NewOrderBook("BTC-USDT", publishTrader, WithLotSize(customLotSize))
+		go func() { _ = orderBook.Start() }()
+
+		assert.True(t, orderBook.lotSize.Equal(customLotSize))
+	})
+
+	t.Run("Market order quote mode - reject when matchSize below LotSize", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		// Set LotSize to 0.001 BTC
+		lotSize := udecimal.MustParse("0.001")
+		orderBook := NewOrderBook("BTC-USDT", publishTrader, WithLotSize(lotSize))
+		go func() { _ = orderBook.Start() }()
+
+		// Place a sell order: 0.1 BTC @ 50000 USDT
+		err := orderBook.AddOrder(ctx, &PlaceOrderCommand{
+			ID:    "sell-1",
+			Type:  Limit,
+			Side:  Sell,
+			Size:  udecimal.MustParse("0.1"),
+			Price: udecimal.MustFromInt64(50000, 0),
+		})
+		assert.NoError(t, err)
+
+		assert.Eventually(t, func() bool {
+			stats, _ := orderBook.GetStats()
+			return stats != nil && stats.AskOrderCount == 1
+		}, 1*time.Second, 10*time.Millisecond)
+
+		// Market buy with quoteSize = 0.04 USDT
+		// matchSize = 0.04 / 50000 = 0.0000008 BTC < 0.001 (LotSize)
+		// Should be rejected immediately
+		err = orderBook.AddOrder(ctx, &PlaceOrderCommand{
+			ID:        "market-buy",
+			Type:      Market,
+			Side:      Buy,
+			QuoteSize: udecimal.MustParse("0.04"),
+		})
+		assert.NoError(t, err)
+
+		// Wait for reject log
+		assert.Eventually(t, func() bool {
+			logs := publishTrader.Logs()
+			for _, log := range logs {
+				if log.Type == LogTypeReject && log.OrderID == "market-buy" {
+					// Verify remaining quote size is returned
+					assert.Equal(t, "0.04", log.Size.String())
+					return true
+				}
+			}
+			return false
+		}, 1*time.Second, 10*time.Millisecond)
+
+		// Verify sell order is still intact
+		stats, _ := orderBook.GetStats()
+		assert.Equal(t, int64(1), stats.AskOrderCount)
+	})
+
+	t.Run("Market order quote mode - partial fill then reject remaining", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		// Set LotSize to 0.001 BTC
+		lotSize := udecimal.MustParse("0.001")
+		orderBook := NewOrderBook("BTC-USDT", publishTrader, WithLotSize(lotSize))
+		go func() { _ = orderBook.Start() }()
+
+		// Place a sell order: 0.005 BTC @ 1000 USDT (worth 5 USDT)
+		err := orderBook.AddOrder(ctx, &PlaceOrderCommand{
+			ID:    "sell-1",
+			Type:  Limit,
+			Side:  Sell,
+			Size:  udecimal.MustParse("0.005"),
+			Price: udecimal.MustFromInt64(1000, 0),
+		})
+		assert.NoError(t, err)
+
+		assert.Eventually(t, func() bool {
+			stats, _ := orderBook.GetStats()
+			return stats != nil && stats.AskOrderCount == 1
+		}, 1*time.Second, 10*time.Millisecond)
+
+		// Market buy with quoteSize = 5.5 USDT
+		// First match: 0.005 BTC @ 1000 = 5 USDT
+		// Remaining: 0.5 USDT → matchSize = 0.5/1000 = 0.0005 BTC < 0.001 (LotSize)
+		// Should match first, then reject remaining
+		err = orderBook.AddOrder(ctx, &PlaceOrderCommand{
+			ID:        "market-buy",
+			Type:      Market,
+			Side:      Buy,
+			QuoteSize: udecimal.MustParse("5.5"),
+		})
+		assert.NoError(t, err)
+
+		// Wait for match and reject log
+		assert.Eventually(t, func() bool {
+			logs := publishTrader.Logs()
+			matchFound := false
+			rejectFound := false
+			for _, log := range logs {
+				if log.Type == LogTypeMatch && log.OrderID == "market-buy" {
+					matchFound = true
+				}
+				if log.Type == LogTypeReject && log.OrderID == "market-buy" {
+					// Remaining ~0.5 USDT should be in reject log
+					rejectFound = true
+				}
+			}
+			return matchFound && rejectFound
+		}, 1*time.Second, 10*time.Millisecond)
+	})
+}
