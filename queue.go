@@ -166,6 +166,7 @@ func (q *queue) removeOrder(price udecimal.Decimal, id string) {
 
 // updateOrderSize updates the size of an order in-place.
 // This is used when the size is decreased, preserving the order's priority.
+// The caller should NOT update order.Size before calling this, or this method will not update unit.totalSize correctly.
 func (q *queue) updateOrderSize(id string, newSize udecimal.Decimal) {
 	order, ok := q.orders[id]
 	if !ok {
@@ -233,13 +234,15 @@ func (q *queue) toSnapshot() []*Order {
 		order := unit.head
 		for order != nil {
 			o := &Order{
-				ID:        order.ID,
-				Side:      order.Side,
-				Price:     order.Price,
-				Size:      order.Size,
-				UserID:    order.UserID,
-				Type:      order.Type,
-				Timestamp: order.Timestamp,
+				ID:           order.ID,
+				Side:         order.Side,
+				Price:        order.Price,
+				Size:         order.Size,
+				UserID:       order.UserID,
+				Type:         order.Type,
+				Timestamp:    order.Timestamp,
+				VisibleLimit: order.VisibleLimit,
+				HiddenSize:   order.HiddenSize,
 			}
 			snapshots = append(snapshots, o)
 			order = order.next

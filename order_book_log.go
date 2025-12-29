@@ -30,6 +30,7 @@ type OrderBookLog struct {
 	MakerOrderID string           `json:"maker_order_id,omitempty"`
 	MakerUserID  int64            `json:"maker_user_id,omitempty"`
 	RejectReason RejectReason     `json:"reject_reason,omitempty"` // Reason for rejection, only set for Reject events
+	Timestamp    int64            `json:"timestamp"`               // Command timestamp for determinism
 	CreatedAt    time.Time        `json:"created_at"`
 }
 
@@ -69,7 +70,7 @@ func releaseLogSlice(ps *[]*OrderBookLog) {
 	logSlicePool.Put(ps)
 }
 
-func NewOpenLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size udecimal.Decimal, orderType OrderType) *OrderBookLog {
+func NewOpenLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
 	log.SequenceID = seqID
 	log.Type = LogTypeOpen
@@ -80,11 +81,12 @@ func NewOpenLog(seqID uint64, marketID string, orderID string, userID int64, sid
 	log.OrderID = orderID
 	log.UserID = userID
 	log.OrderType = orderType
+	log.Timestamp = timestamp
 	log.CreatedAt = time.Now().UTC()
 	return log
 }
 
-func NewMatchLog(seqID uint64, tradeID uint64, marketID string, takerID string, takerUserID int64, takerSide Side, takerType OrderType, makerID string, makerUserID int64, price udecimal.Decimal, size udecimal.Decimal) *OrderBookLog {
+func NewMatchLog(seqID uint64, tradeID uint64, marketID string, takerID string, takerUserID int64, takerSide Side, takerType OrderType, makerID string, makerUserID int64, price udecimal.Decimal, size udecimal.Decimal, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
 	log.SequenceID = seqID
 	log.TradeID = tradeID
@@ -99,11 +101,12 @@ func NewMatchLog(seqID uint64, tradeID uint64, marketID string, takerID string, 
 	log.OrderType = takerType
 	log.MakerOrderID = makerID
 	log.MakerUserID = makerUserID
+	log.Timestamp = timestamp
 	log.CreatedAt = time.Now().UTC()
 	return log
 }
 
-func NewCancelLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size udecimal.Decimal, orderType OrderType) *OrderBookLog {
+func NewCancelLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
 	log.SequenceID = seqID
 	log.Type = LogTypeCancel
@@ -114,11 +117,12 @@ func NewCancelLog(seqID uint64, marketID string, orderID string, userID int64, s
 	log.OrderID = orderID
 	log.UserID = userID
 	log.OrderType = orderType
+	log.Timestamp = timestamp
 	log.CreatedAt = time.Now().UTC()
 	return log
 }
 
-func NewAmendLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size udecimal.Decimal, oldPrice udecimal.Decimal, oldSize udecimal.Decimal, orderType OrderType) *OrderBookLog {
+func NewAmendLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size udecimal.Decimal, oldPrice udecimal.Decimal, oldSize udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
 	log.SequenceID = seqID
 	log.Type = LogTypeAmend
@@ -131,11 +135,12 @@ func NewAmendLog(seqID uint64, marketID string, orderID string, userID int64, si
 	log.OrderID = orderID
 	log.UserID = userID
 	log.OrderType = orderType
+	log.Timestamp = timestamp
 	log.CreatedAt = time.Now().UTC()
 	return log
 }
 
-func NewRejectLog(seqID uint64, marketID string, orderID string, userID int64, reason RejectReason) *OrderBookLog {
+func NewRejectLog(seqID uint64, marketID string, orderID string, userID int64, reason RejectReason, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
 	log.SequenceID = seqID
 	log.Type = LogTypeReject
@@ -143,6 +148,7 @@ func NewRejectLog(seqID uint64, marketID string, orderID string, userID int64, r
 	log.OrderID = orderID
 	log.UserID = userID
 	log.RejectReason = reason
+	log.Timestamp = timestamp
 	log.CreatedAt = time.Now().UTC()
 	return log
 }

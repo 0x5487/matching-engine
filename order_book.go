@@ -78,8 +78,10 @@ func (book *OrderBook) AddOrder(ctx context.Context, cmd *PlaceOrderCommand) err
 	event.OrderType = cmd.Type
 	event.Price = cmd.Price
 	event.Size = cmd.Size
+	event.VisibleSize = cmd.VisibleSize
 	event.QuoteSize = cmd.QuoteSize
 	event.UserID = cmd.UserID
+	event.Timestamp = cmd.Timestamp
 
 	book.cmdBuffer.Commit(seq)
 	return nil
@@ -102,6 +104,7 @@ func (book *OrderBook) AmendOrder(ctx context.Context, cmd *AmendOrderCommand) e
 	event.UserID = cmd.UserID
 	event.NewPrice = cmd.NewPrice
 	event.NewSize = cmd.NewSize
+	event.Timestamp = cmd.Timestamp
 
 	book.cmdBuffer.Commit(seq)
 	return nil
@@ -122,6 +125,7 @@ func (book *OrderBook) CancelOrder(ctx context.Context, cmd *CancelOrderCommand)
 	event.Type = CmdCancelOrder
 	event.OrderID = cmd.OrderID
 	event.UserID = cmd.UserID
+	event.Timestamp = cmd.Timestamp
 
 	book.cmdBuffer.Commit(seq)
 	return nil
@@ -239,7 +243,7 @@ func (book *OrderBook) Shutdown(ctx context.Context) error {
 func (book *OrderBook) addOrder(cmd *Command) {
 	if book.bidQueue.order(cmd.OrderID) != nil || book.askQueue.order(cmd.OrderID) != nil {
 		logsPtr := acquireLogSlice()
-		log := NewRejectLog(book.seqID.Add(1), book.marketID, cmd.OrderID, cmd.UserID, RejectReasonDuplicateID)
+		log := NewRejectLog(book.seqID.Add(1), book.marketID, cmd.OrderID, cmd.UserID, RejectReasonDuplicateID, cmd.Timestamp)
 		*logsPtr = append(*logsPtr, log)
 		book.publishTrader.Publish(*logsPtr)
 		releaseBookLog(log)
@@ -254,20 +258,29 @@ func (book *OrderBook) addOrder(cmd *Command) {
 	order.Size = cmd.Size
 	order.Type = cmd.OrderType
 	order.UserID = cmd.UserID
-	order.Timestamp = time.Now().UnixNano()
+	order.Timestamp = cmd.Timestamp
+
+	// For Iceberg orders, store VisibleLimit but DON'T split Size yet.
+	// The split happens when the order enters the book (Maker/Passive phase),
+	// not during aggressive matching (Taker phase).
+	// This follows spec 3.2.A: "Use full Size for aggressive matching."
+	if cmd.VisibleSize.GreaterThan(udecimal.Zero) && cmd.VisibleSize.LessThan(cmd.Size) {
+		order.VisibleLimit = cmd.VisibleSize
+		// HiddenSize and Size adjustment will happen in handleLimitOrder when resting
+	}
 
 	var logsPtr *[]*OrderBookLog
 	switch order.Type {
 	case Limit:
-		logsPtr = book.handleLimitOrder(order)
+		logsPtr = book.handleLimitOrder(order, cmd.Timestamp)
 	case FOK:
-		logsPtr = book.handleFOKOrder(order)
+		logsPtr = book.handleFOKOrder(order, cmd.Timestamp)
 	case IOC:
-		logsPtr = book.handleIOCOrder(order)
+		logsPtr = book.handleIOCOrder(order, cmd.Timestamp)
 	case PostOnly:
-		logsPtr = book.handlePostOnlyOrder(order)
+		logsPtr = book.handlePostOnlyOrder(order, cmd.Timestamp)
 	case Market:
-		logsPtr = book.handleMarketOrder(order, cmd.QuoteSize)
+		logsPtr = book.handleMarketOrder(order, cmd.QuoteSize, cmd.Timestamp)
 	case Cancel:
 		// Cancel type is not expected here, handled by cancelOrder
 	}
@@ -288,7 +301,7 @@ func (book *OrderBook) amendOrder(cmd *Command) {
 	order, ok := book.findOrder(cmd.OrderID)
 	if !ok || order.UserID != cmd.UserID {
 		logsPtr := acquireLogSlice()
-		log := NewRejectLog(book.seqID.Add(1), book.marketID, cmd.OrderID, cmd.UserID, RejectReasonOrderNotFound)
+		log := NewRejectLog(book.seqID.Add(1), book.marketID, cmd.OrderID, cmd.UserID, RejectReasonOrderNotFound, cmd.Timestamp)
 		*logsPtr = append(*logsPtr, log)
 		book.publishTrader.Publish(*logsPtr)
 		releaseBookLog(log)
@@ -302,20 +315,40 @@ func (book *OrderBook) amendOrder(cmd *Command) {
 	}
 
 	oldPrice := order.Price
-	oldSize := order.Size
+	oldTotalSize := order.Size.Add(order.HiddenSize)
+	newTotalSize := cmd.NewSize
 
-	if !oldPrice.Equal(cmd.NewPrice) || cmd.NewSize.GreaterThan(oldSize) {
+	isPriceChange := !oldPrice.Equal(cmd.NewPrice)
+	isSizeIncrease := newTotalSize.GreaterThan(oldTotalSize)
+
+	if isPriceChange || isSizeIncrease {
+		// Path 1: Priority Loss (Re-match)
 		myQueue.removeOrder(oldPrice, order.ID)
 		order.Price = cmd.NewPrice
-		order.Size = cmd.NewSize
-		log := NewAmendLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, oldPrice, oldSize, order.Type)
+		order.Timestamp = cmd.Timestamp
+
+		// Recalculate Iceberg fields for the new total size
+		if order.VisibleLimit.IsZero() {
+			order.Size = newTotalSize
+			order.HiddenSize = udecimal.Zero
+		} else {
+			if newTotalSize.GreaterThan(order.VisibleLimit) {
+				order.Size = order.VisibleLimit
+				order.HiddenSize = newTotalSize.Sub(order.VisibleLimit)
+			} else {
+				order.Size = newTotalSize
+				order.HiddenSize = udecimal.Zero
+			}
+		}
+
+		log := NewAmendLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, newTotalSize, oldPrice, oldTotalSize, order.Type, cmd.Timestamp)
 		amendLogsPtr := acquireLogSlice()
 		*amendLogsPtr = append(*amendLogsPtr, log)
 		book.publishTrader.Publish(*amendLogsPtr)
 		releaseBookLog(log)
 		releaseLogSlice(amendLogsPtr)
 
-		logsPtr := book.handleLimitOrder(order)
+		logsPtr := book.handleLimitOrder(order, cmd.Timestamp)
 		if logsPtr != nil {
 			if len(*logsPtr) > 0 {
 				book.publishTrader.Publish(*logsPtr)
@@ -326,10 +359,22 @@ func (book *OrderBook) amendOrder(cmd *Command) {
 			releaseLogSlice(logsPtr)
 		}
 	} else {
-		if cmd.NewSize.LessThan(oldSize) {
-			myQueue.updateOrderSize(order.ID, cmd.NewSize)
+		// Path 2: Priority Retention (In-place update)
+		if newTotalSize.LessThan(oldTotalSize) {
+			delta := oldTotalSize.Sub(newTotalSize)
+			// Prioritize deducting from HiddenSize
+			if delta.LessThanOrEqual(order.HiddenSize) {
+				order.HiddenSize = order.HiddenSize.Sub(delta)
+			} else {
+				remainingDelta := delta.Sub(order.HiddenSize)
+				order.HiddenSize = udecimal.Zero
+				newVisibleSize := order.Size.Sub(remainingDelta)
+				// Update the queue with the new visible size (this also updates order.Size)
+				myQueue.updateOrderSize(order.ID, newVisibleSize)
+			}
 		}
-		log := NewAmendLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, oldPrice, oldSize, order.Type)
+
+		log := NewAmendLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, newTotalSize, oldPrice, oldTotalSize, order.Type, cmd.Timestamp)
 		amendLogsPtr := acquireLogSlice()
 		*amendLogsPtr = append(*amendLogsPtr, log)
 		book.publishTrader.Publish(*amendLogsPtr)
@@ -343,7 +388,7 @@ func (book *OrderBook) cancelOrder(cmd *Command) {
 	order, ok := book.findOrder(cmd.OrderID)
 	if !ok || order.UserID != cmd.UserID {
 		logsPtr := acquireLogSlice()
-		log := NewRejectLog(book.seqID.Add(1), book.marketID, cmd.OrderID, cmd.UserID, RejectReasonOrderNotFound)
+		log := NewRejectLog(book.seqID.Add(1), book.marketID, cmd.OrderID, cmd.UserID, RejectReasonOrderNotFound, cmd.Timestamp)
 		*logsPtr = append(*logsPtr, log)
 		book.publishTrader.Publish(*logsPtr)
 		releaseBookLog(log)
@@ -358,7 +403,8 @@ func (book *OrderBook) cancelOrder(cmd *Command) {
 
 	myQueue.removeOrder(order.Price, order.ID)
 	logsPtr := acquireLogSlice()
-	log := NewCancelLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type)
+	totalSize := order.Size.Add(order.HiddenSize)
+	log := NewCancelLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, totalSize, order.Type, cmd.Timestamp)
 	*logsPtr = append(*logsPtr, log)
 	book.publishTrader.Publish(*logsPtr)
 	releaseBookLog(log)
@@ -437,7 +483,7 @@ func (book *OrderBook) Restore(snap *OrderBookSnapshot) {
 }
 
 // handleLimitOrder handles Limit orders.
-func (book *OrderBook) handleLimitOrder(order *Order) *[]*OrderBookLog {
+func (book *OrderBook) handleLimitOrder(order *Order, timestamp int64) *[]*OrderBookLog {
 	var myQueue, targetQueue *queue
 	if order.Side == Buy {
 		myQueue = book.bidQueue
@@ -452,32 +498,38 @@ func (book *OrderBook) handleLimitOrder(order *Order) *[]*OrderBookLog {
 	for {
 		tOrd := targetQueue.peekHeadOrder()
 		if tOrd == nil {
+			book.prepareIcebergForResting(order)
 			myQueue.insertOrder(order, false)
-			log := NewOpenLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type)
+			log := NewOpenLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type, timestamp)
 			*logsPtr = append(*logsPtr, log)
 			return logsPtr
 		}
 
 		if (order.Side == Buy && order.Price.LessThan(tOrd.Price)) ||
 			(order.Side == Sell && order.Price.GreaterThan(tOrd.Price)) {
+			book.prepareIcebergForResting(order)
 			myQueue.insertOrder(order, false)
-			log := NewOpenLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type)
+			log := NewOpenLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type, timestamp)
 			*logsPtr = append(*logsPtr, log)
 			return logsPtr
 		}
 
 		tOrd = targetQueue.popHeadOrder()
 		if order.Size.GreaterThanOrEqual(tOrd.Size) {
-			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size)
+			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size, timestamp)
 			*logsPtr = append(*logsPtr, log)
 			order.Size = order.Size.Sub(tOrd.Size)
-			releaseOrder(tOrd)
+
+			if !book.checkReplenish(tOrd, targetQueue, logsPtr, timestamp) {
+				releaseOrder(tOrd)
+			}
+
 			if order.Size.Equal(udecimal.Zero) {
 				releaseOrder(order)
 				break
 			}
 		} else {
-			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, order.Size)
+			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, order.Size, timestamp)
 			*logsPtr = append(*logsPtr, log)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			targetQueue.insertOrder(tOrd, true)
@@ -488,8 +540,17 @@ func (book *OrderBook) handleLimitOrder(order *Order) *[]*OrderBookLog {
 	return logsPtr
 }
 
+// prepareIcebergForResting splits an Iceberg order's size into visible and hidden parts
+// when the order is about to rest in the order book.
+func (book *OrderBook) prepareIcebergForResting(order *Order) {
+	if order.VisibleLimit.GreaterThan(udecimal.Zero) && order.HiddenSize.IsZero() && order.Size.GreaterThan(order.VisibleLimit) {
+		order.HiddenSize = order.Size.Sub(order.VisibleLimit)
+		order.Size = order.VisibleLimit
+	}
+}
+
 // handleIOCOrder handles Immediate Or Cancel orders.
-func (book *OrderBook) handleIOCOrder(order *Order) *[]*OrderBookLog {
+func (book *OrderBook) handleIOCOrder(order *Order, timestamp int64) *[]*OrderBookLog {
 	var targetQueue *queue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -501,7 +562,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) *[]*OrderBookLog {
 	for {
 		tOrd := targetQueue.peekHeadOrder()
 		if tOrd == nil {
-			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, RejectReasonNoLiquidity)
+			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, RejectReasonNoLiquidity, timestamp)
 			log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
 			*logsPtr = append(*logsPtr, log)
 			releaseOrder(order)
@@ -509,7 +570,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) *[]*OrderBookLog {
 		}
 
 		if (order.Side == Buy && order.Price.LessThan(tOrd.Price)) || (order.Side == Sell && order.Price.GreaterThan(tOrd.Price)) {
-			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, RejectReasonPriceMismatch)
+			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, RejectReasonPriceMismatch, timestamp)
 			log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
 			*logsPtr = append(*logsPtr, log)
 			releaseOrder(order)
@@ -518,16 +579,20 @@ func (book *OrderBook) handleIOCOrder(order *Order) *[]*OrderBookLog {
 
 		tOrd = targetQueue.popHeadOrder()
 		if order.Size.GreaterThanOrEqual(tOrd.Size) {
-			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size)
+			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size, timestamp)
 			*logsPtr = append(*logsPtr, log)
 			order.Size = order.Size.Sub(tOrd.Size)
-			releaseOrder(tOrd)
+
+			if !book.checkReplenish(tOrd, targetQueue, logsPtr, timestamp) {
+				releaseOrder(tOrd)
+			}
+
 			if order.Size.Equal(udecimal.Zero) {
 				releaseOrder(order)
 				break
 			}
 		} else {
-			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, order.Size)
+			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, order.Size, timestamp)
 			*logsPtr = append(*logsPtr, log)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			targetQueue.insertOrder(tOrd, true)
@@ -539,7 +604,7 @@ func (book *OrderBook) handleIOCOrder(order *Order) *[]*OrderBookLog {
 }
 
 // handleFOKOrder handles Fill Or Kill orders.
-func (book *OrderBook) handleFOKOrder(order *Order) *[]*OrderBookLog {
+func (book *OrderBook) handleFOKOrder(order *Order, timestamp int64) *[]*OrderBookLog {
 	var targetQueue *queue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -578,7 +643,7 @@ func (book *OrderBook) handleFOKOrder(order *Order) *[]*OrderBookLog {
 				reason = RejectReasonPriceMismatch
 			}
 		}
-		log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, reason)
+		log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, reason, timestamp)
 		log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
 		*logsPtr = append(*logsPtr, log)
 		releaseOrder(order)
@@ -586,11 +651,11 @@ func (book *OrderBook) handleFOKOrder(order *Order) *[]*OrderBookLog {
 	}
 
 	// Phase 2: Execute match (same as IOC/Limit logic but guaranteed to finish)
-	return book.handleIOCOrder(order)
+	return book.handleIOCOrder(order, timestamp)
 }
 
 // handlePostOnlyOrder handles Post-Only orders.
-func (book *OrderBook) handlePostOnlyOrder(order *Order) *[]*OrderBookLog {
+func (book *OrderBook) handlePostOnlyOrder(order *Order, timestamp int64) *[]*OrderBookLog {
 	var targetQueue *queue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -599,28 +664,22 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order) *[]*OrderBookLog {
 	}
 
 	tOrd := targetQueue.peekHeadOrder()
-	if tOrd != nil && ((order.Side == Buy && order.Price.GreaterThanOrEqual(tOrd.Price)) || (order.Side == Sell && order.Price.LessThanOrEqual(tOrd.Price))) {
-		logsPtr := acquireLogSlice()
-		log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, RejectReasonWouldCrossSpread)
-		log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
-		*logsPtr = append(*logsPtr, log)
-		releaseOrder(order)
-		return logsPtr
+	if tOrd != nil {
+		if (order.Side == Buy && order.Price.GreaterThanOrEqual(tOrd.Price)) || (order.Side == Sell && order.Price.LessThanOrEqual(tOrd.Price)) {
+			logsPtr := acquireLogSlice()
+			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, RejectReasonPostOnlyMatch, timestamp)
+			log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
+			*logsPtr = append(*logsPtr, log)
+			releaseOrder(order)
+			return logsPtr
+		}
 	}
 
-	logsPtr := acquireLogSlice()
-	myQueue := book.bidQueue
-	if order.Side == Sell {
-		myQueue = book.askQueue
-	}
-	myQueue.insertOrder(order, false)
-	log := NewOpenLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type)
-	*logsPtr = append(*logsPtr, log)
-	return logsPtr
+	return book.handleLimitOrder(order, timestamp)
 }
 
 // handleMarketOrder handles Market orders.
-func (book *OrderBook) handleMarketOrder(order *Order, quoteSize udecimal.Decimal) *[]*OrderBookLog {
+func (book *OrderBook) handleMarketOrder(order *Order, quoteSize udecimal.Decimal, timestamp int64) *[]*OrderBookLog {
 	var targetQueue *queue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -629,65 +688,92 @@ func (book *OrderBook) handleMarketOrder(order *Order, quoteSize udecimal.Decima
 	}
 
 	logsPtr := acquireLogSlice()
-	useQuote := order.Size.Equal(udecimal.Zero) && quoteSize.GreaterThan(udecimal.Zero)
-	remainingQuote := quoteSize
-
 	for {
-		tOrd := targetQueue.popHeadOrder()
+		tOrd := targetQueue.peekHeadOrder()
 		if tOrd == nil {
-			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, RejectReasonNoLiquidity)
+			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, RejectReasonNoLiquidity, timestamp)
 			log.Side, log.Price, log.OrderType = order.Side, order.Price, order.Type
-			if useQuote {
-				log.Size = remainingQuote
+			if order.Type == Market && !quoteSize.IsZero() {
+				log.Size = quoteSize
 			} else {
 				log.Size = order.Size
 			}
 			*logsPtr = append(*logsPtr, log)
 			releaseOrder(order)
-			return logsPtr
-		}
-
-		var matchSize udecimal.Decimal
-		if useQuote {
-			potentialSize, _ := remainingQuote.Div(tOrd.Price)
-			if potentialSize.GreaterThanOrEqual(tOrd.Size) {
-				matchSize = tOrd.Size
-			} else {
-				matchSize = potentialSize
-			}
-		} else {
-			if order.Size.GreaterThanOrEqual(tOrd.Size) {
-				matchSize = tOrd.Size
-			} else {
-				matchSize = order.Size
-			}
-		}
-
-		if matchSize.Equal(udecimal.Zero) {
-			targetQueue.insertOrder(tOrd, true)
 			break
 		}
 
-		log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, matchSize)
+		matchSize := order.Size
+		useQuote := matchSize.IsZero() && order.Type == Market && !quoteSize.IsZero()
+		if useQuote {
+			maxSize, _ := quoteSize.Div(tOrd.Price)
+			matchSize = maxSize
+		}
+
+		if matchSize.GreaterThan(tOrd.Size) {
+			matchSize = tOrd.Size
+		}
+
+		// TODO: Replace IsZero() with minimum trade unit check.
+		// The minimum trade unit should be passed into OrderBook at creation time,
+		// not hardcoded. This would allow different markets to have different precision.
+		if matchSize.IsZero() {
+			// Cannot match anymore (e.g. remaining quote size too small to buy minimum unit)
+			// Must produce Reject Log so OMS can unfreeze the remaining funds.
+			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, RejectReasonNoLiquidity, timestamp)
+			log.Side, log.Price, log.OrderType = order.Side, order.Price, order.Type
+			if useQuote {
+				log.Size = quoteSize // Remaining quote size that couldn't be matched
+			} else {
+				log.Size = order.Size
+			}
+			*logsPtr = append(*logsPtr, log)
+			releaseOrder(order)
+			break
+		}
+
+		log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, matchSize, timestamp)
 		*logsPtr = append(*logsPtr, log)
 
 		if useQuote {
-			remainingQuote = remainingQuote.Sub(matchSize.Mul(tOrd.Price))
+			quoteSize = quoteSize.Sub(matchSize.Mul(tOrd.Price))
 		} else {
 			order.Size = order.Size.Sub(matchSize)
 		}
 
+		tOrd = targetQueue.popHeadOrder()
 		if matchSize.Equal(tOrd.Size) {
-			releaseOrder(tOrd)
+			if !book.checkReplenish(tOrd, targetQueue, logsPtr, timestamp) {
+				releaseOrder(tOrd)
+			}
 		} else {
 			tOrd.Size = tOrd.Size.Sub(matchSize)
 			targetQueue.insertOrder(tOrd, true)
 		}
 
-		if (useQuote && remainingQuote.LessThanOrEqual(udecimal.Zero)) || (!useQuote && order.Size.Equal(udecimal.Zero)) {
+		// Termination condition
+		if (useQuote && quoteSize.IsZero()) || (!useQuote && order.Size.IsZero()) {
 			releaseOrder(order)
 			break
 		}
 	}
 	return logsPtr
+}
+
+func (book *OrderBook) checkReplenish(order *Order, q *queue, logsPtr *[]*OrderBookLog, timestamp int64) bool {
+	if order.HiddenSize.GreaterThan(udecimal.Zero) {
+		reloadQty := order.VisibleLimit
+		if order.HiddenSize.LessThan(reloadQty) {
+			reloadQty = order.HiddenSize
+		}
+		order.Size = reloadQty
+		order.HiddenSize = order.HiddenSize.Sub(reloadQty)
+		order.Timestamp = timestamp
+		q.insertOrder(order, false) // Insert at end (Priority Loss)
+
+		log := NewOpenLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type, timestamp)
+		*logsPtr = append(*logsPtr, log)
+		return true
+	}
+	return false
 }

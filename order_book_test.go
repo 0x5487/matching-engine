@@ -298,7 +298,9 @@ func TestMarketOrder(t *testing.T) {
 		assert.Equal(t, "55", match.Amount.String())
 
 		// Verify remaining sell order
-		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(3), stats.AskDepthCount)
 	})
 
 	t.Run("QuoteSize mode - no liquidity rejection", func(t *testing.T) {
@@ -379,7 +381,9 @@ func TestMarketOrder(t *testing.T) {
 		assert.Equal(t, "55", match.Amount.String()) // 0.5 * 110 = 55
 
 		// Verify remaining sell order
-		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(3), stats.AskDepthCount)
 	})
 
 	t.Run("Size mode - take all orders", func(t *testing.T) {
@@ -736,7 +740,10 @@ func TestFOKOrder(t *testing.T) {
 			assert.Equal(t, LogTypeMatch, log2.Type, "Fourth log should be Match")
 		}
 
-		assert.Equal(t, int64(0), orderBook.askQueue.depthCount(), "All sell orders should be matched")
+		assert.Eventually(t, func() bool {
+			stats, _ := orderBook.GetStats()
+			return stats != nil && stats.AskDepthCount == 0
+		}, 1*time.Second, 10*time.Millisecond)
 	})
 
 	// Test FOK crossing multiple price levels
@@ -796,7 +803,10 @@ func TestFOKOrder(t *testing.T) {
 			return memoryPublishTrader.Count() == 4
 		}, 1*time.Second, 10*time.Millisecond)
 
-		assert.Equal(t, int64(0), orderBook.askQueue.depthCount(), "All sell orders should be matched")
+		assert.Eventually(t, func() bool {
+			stats, _ := orderBook.GetStats()
+			return stats != nil && stats.AskDepthCount == 0
+		}, 1*time.Second, 10*time.Millisecond)
 	})
 
 	// Test FOK with exact size match at price level
@@ -1293,7 +1303,7 @@ func TestRejectReason(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 		log := memoryPublishTrader.Get(6)
 		assert.Equal(t, LogTypeReject, log.Type)
-		assert.Equal(t, RejectReasonWouldCrossSpread, log.RejectReason)
+		assert.Equal(t, RejectReasonPostOnlyMatch, log.RejectReason)
 	})
 
 	t.Run("Market no liquidity", func(t *testing.T) {

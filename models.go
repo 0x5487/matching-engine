@@ -36,15 +36,17 @@ const (
 // PlaceOrderCommand is the input command for placing an order.
 // QuoteSize is only used for Market orders to specify amount in quote currency.
 type PlaceOrderCommand struct {
-	SeqID     uint64           `json:"seq_id"` // MQ sequence ID for snapshot/restore
-	MarketID  string           `json:"market_id"`
-	ID        string           `json:"id"`
-	Side      Side             `json:"side"`
-	Type      OrderType        `json:"type"`
-	Price     udecimal.Decimal `json:"price"`                // Limit order price
-	Size      udecimal.Decimal `json:"size"`                 // Base currency quantity (e.g., BTC)
-	QuoteSize udecimal.Decimal `json:"quote_size,omitempty"` // Quote currency amount (e.g., USDT), only for Market orders
-	UserID    int64            `json:"user_id"`
+	SeqID       uint64           `json:"seq_id"` // MQ sequence ID for snapshot/restore
+	Timestamp   int64            `json:"timestamp"`
+	MarketID    string           `json:"market_id"`
+	ID          string           `json:"id"`
+	Side        Side             `json:"side"`
+	Type        OrderType        `json:"type"`
+	Price       udecimal.Decimal `json:"price"`                  // Limit order price
+	Size        udecimal.Decimal `json:"size"`                   // Base currency quantity (e.g., BTC)
+	VisibleSize udecimal.Decimal `json:"visible_size,omitempty"` // Iceberg visible size
+	QuoteSize   udecimal.Decimal `json:"quote_size,omitempty"`   // Quote currency amount (e.g., USDT), only for Market orders
+	UserID      int64            `json:"user_id"`
 }
 
 // Order represents the state of an order in the order book.
@@ -53,10 +55,14 @@ type Order struct {
 	ID        string           `json:"id"`
 	Side      Side             `json:"side"`
 	Price     udecimal.Decimal `json:"price"`
-	Size      udecimal.Decimal `json:"size"` // Remaining size
+	Size      udecimal.Decimal `json:"size"` // Remaining visible size
 	Type      OrderType        `json:"type"`
 	UserID    int64            `json:"user_id"`
 	Timestamp int64            `json:"timestamp"` // Unix nano, creation time
+
+	// Iceberg fields
+	VisibleLimit udecimal.Decimal `json:"visible_limit,omitempty"`
+	HiddenSize   udecimal.Decimal `json:"hidden_size,omitempty"`
 
 	// Intrusive linked list pointers (ignored by JSON)
 	next *Order
@@ -78,10 +84,10 @@ type RejectReason string
 
 const (
 	RejectReasonNone             RejectReason = ""
-	RejectReasonNoLiquidity      RejectReason = "no_liquidity"       // Market/IOC/FOK: No orders available to match
-	RejectReasonPriceMismatch    RejectReason = "price_mismatch"     // IOC/FOK: Price does not meet requirements
-	RejectReasonInsufficientSize RejectReason = "insufficient_size"  // FOK: Cannot be fully filled
-	RejectReasonWouldCrossSpread RejectReason = "would_cross_spread" // PostOnly: Would match immediately
+	RejectReasonNoLiquidity      RejectReason = "no_liquidity"      // Market/IOC/FOK: No orders available to match
+	RejectReasonPriceMismatch    RejectReason = "price_mismatch"    // IOC/FOK: Price does not meet requirements
+	RejectReasonInsufficientSize RejectReason = "insufficient_size" // FOK: Cannot be fully filled
+	RejectReasonPostOnlyMatch    RejectReason = "post_only_match"   // PostOnly: Would match immediately
 	RejectReasonDuplicateID      RejectReason = "duplicate_order_id"
 	RejectReasonOrderNotFound    RejectReason = "order_not_found"
 )
@@ -104,17 +110,19 @@ type Depth struct {
 }
 
 type AmendOrderCommand struct {
-	SeqID    uint64           `json:"seq_id"` // MQ sequence ID for snapshot/restore
-	OrderID  string           `json:"order_id"`
-	UserID   int64            `json:"user_id"`
-	NewPrice udecimal.Decimal `json:"new_price"`
-	NewSize  udecimal.Decimal `json:"new_size"`
+	SeqID     uint64           `json:"seq_id"` // MQ sequence ID for snapshot/restore
+	OrderID   string           `json:"order_id"`
+	UserID    int64            `json:"user_id"`
+	NewPrice  udecimal.Decimal `json:"new_price"`
+	NewSize   udecimal.Decimal `json:"new_size"`
+	Timestamp int64            `json:"timestamp"`
 }
 
 type CancelOrderCommand struct {
-	SeqID   uint64 `json:"seq_id"` // MQ sequence ID for snapshot/restore
-	OrderID string `json:"order_id"`
-	UserID  int64  `json:"user_id"`
+	SeqID     uint64 `json:"seq_id"` // MQ sequence ID for snapshot/restore
+	OrderID   string `json:"order_id"`
+	UserID    int64  `json:"user_id"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 // DepthChange represents a change in the order book depth.
@@ -152,14 +160,16 @@ type Command struct {
 	Type  CommandType
 
 	// Place/Add Order fields
-	MarketID  string
-	OrderID   string
-	Side      Side
-	OrderType OrderType
-	Price     udecimal.Decimal
-	Size      udecimal.Decimal
-	QuoteSize udecimal.Decimal
-	UserID    int64
+	MarketID    string
+	OrderID     string
+	Side        Side
+	OrderType   OrderType
+	Price       udecimal.Decimal
+	Size        udecimal.Decimal
+	QuoteSize   udecimal.Decimal
+	VisibleSize udecimal.Decimal
+	UserID      int64
+	Timestamp   int64
 
 	// Amend Order fields
 	NewPrice udecimal.Decimal
