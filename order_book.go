@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/0x5487/matching-engine/protocol"
 	"github.com/quagmt/udecimal"
 )
 
@@ -14,6 +15,19 @@ import (
 var orderPool = sync.Pool{
 	New: func() any {
 		return &Order{}
+	},
+}
+
+// Command payload pools to reduce allocations during Unmarshal
+var placeOrderCmdPool = sync.Pool{
+	New: func() any {
+		return &protocol.PlaceOrderCommand{}
+	},
+}
+
+var cancelOrderCmdPool = sync.Pool{
+	New: func() any {
+		return &protocol.CancelOrderCommand{}
 	},
 }
 
@@ -53,10 +67,11 @@ type OrderBook struct {
 	isShutdown       atomic.Bool
 	bidQueue         *queue
 	askQueue         *queue
-	cmdBuffer        *RingBuffer[Command]
+	cmdBuffer        *RingBuffer[InputEvent]
 	done             chan struct{}
 	shutdownComplete chan struct{}
 	publishTrader    PublishLog
+	serializer       protocol.Serializer
 }
 
 // NewOrderBook creates a new order book instance.
@@ -75,102 +90,109 @@ func NewOrderBook(marketID string, publishTrader PublishLog, opts ...OrderBookOp
 		opt(book)
 	}
 
+	if book.serializer == nil {
+		book.serializer = &protocol.DefaultJSONSerializer{}
+	}
+
 	book.cmdBuffer = NewRingBuffer(32768, book)
 	return book
 }
 
-// AddOrder submits an order to the order book asynchronously.
-func (book *OrderBook) AddOrder(ctx context.Context, cmd *PlaceOrderCommand) error {
+// ExecuteCommand submits a command to the order book's ring buffer.
+func (book *OrderBook) ExecuteCommand(cmd *protocol.Command) error {
 	if book.isShutdown.Load() {
 		return ErrShutdown
 	}
 
-	if len(cmd.Type) == 0 || len(cmd.ID) == 0 {
-		return ErrInvalidParam
-	}
-
-	seq, command := book.cmdBuffer.Claim()
+	seq, ev := book.cmdBuffer.Claim()
 	if seq == -1 {
 		return ErrShutdown
 	}
 
-	command.SeqID = cmd.SeqID
-	command.Type = CmdPlaceOrder
-	command.MarketID = cmd.MarketID
-	command.OrderID = cmd.ID
-	command.Side = cmd.Side
-	command.OrderType = cmd.Type
-	command.Price = cmd.Price
-	command.Size = cmd.Size
-	command.VisibleSize = cmd.VisibleSize
-	command.QuoteSize = cmd.QuoteSize
-	command.UserID = cmd.UserID
-	command.Timestamp = cmd.Timestamp
+	ev.Cmd = cmd
+	ev.Query = nil
+	ev.Resp = nil
 
 	book.cmdBuffer.Commit(seq)
 	return nil
+}
+
+// PlaceOrder submits an order to the order book asynchronously.
+func (book *OrderBook) PlaceOrder(ctx context.Context, cmd *protocol.PlaceOrderCommand) error {
+	if book.isShutdown.Load() {
+		return ErrShutdown
+	}
+
+	if len(cmd.OrderType) == 0 || len(cmd.OrderID) == 0 {
+		return ErrInvalidParam
+	}
+
+	bytes, err := book.serializer.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+	protoCmd := &protocol.Command{
+		MarketID: book.marketID,
+		Type:     protocol.CmdPlaceOrder,
+		Payload:  bytes,
+	}
+	return book.ExecuteCommand(protoCmd)
 }
 
 // AmendOrder submits a request to modify an existing order asynchronously.
-func (book *OrderBook) AmendOrder(ctx context.Context, cmd *AmendOrderCommand) error {
-	if len(cmd.OrderID) == 0 || cmd.NewSize.LessThanOrEqual(udecimal.Zero) || cmd.NewPrice.LessThanOrEqual(udecimal.Zero) {
+func (book *OrderBook) AmendOrder(ctx context.Context, cmd *protocol.AmendOrderCommand) error {
+	if len(cmd.OrderID) == 0 {
 		return ErrInvalidParam
 	}
 
-	seq, command := book.cmdBuffer.Claim()
-	if seq == -1 {
-		return ErrShutdown
+	bytes, err := book.serializer.Marshal(cmd)
+	if err != nil {
+		return err
 	}
-
-	command.SeqID = cmd.SeqID
-	command.Type = CmdAmendOrder
-	command.OrderID = cmd.OrderID
-	command.UserID = cmd.UserID
-	command.NewPrice = cmd.NewPrice
-	command.NewSize = cmd.NewSize
-	command.Timestamp = cmd.Timestamp
-
-	book.cmdBuffer.Commit(seq)
-	return nil
+	protoCmd := &protocol.Command{
+		MarketID: book.marketID,
+		Type:     protocol.CmdAmendOrder,
+		Payload:  bytes,
+	}
+	return book.ExecuteCommand(protoCmd)
 }
 
 // CancelOrder submits a cancellation request for an order asynchronously.
-func (book *OrderBook) CancelOrder(ctx context.Context, cmd *CancelOrderCommand) error {
+func (book *OrderBook) CancelOrder(ctx context.Context, cmd *protocol.CancelOrderCommand) error {
 	if len(cmd.OrderID) == 0 {
 		return nil
 	}
 
-	seq, command := book.cmdBuffer.Claim()
-	if seq == -1 {
-		return ErrShutdown
+	bytes, err := book.serializer.Marshal(cmd)
+	if err != nil {
+		return err
 	}
-
-	command.SeqID = cmd.SeqID
-	command.Type = CmdCancelOrder
-	command.OrderID = cmd.OrderID
-	command.UserID = cmd.UserID
-	command.Timestamp = cmd.Timestamp
-
-	book.cmdBuffer.Commit(seq)
-	return nil
+	protoCmd := &protocol.Command{
+		MarketID: book.marketID,
+		Type:     protocol.CmdCancelOrder,
+		Payload:  bytes,
+	}
+	return book.ExecuteCommand(protoCmd)
 }
 
 // Depth returns the current depth of the order book up to the specified limit.
-func (book *OrderBook) Depth(limit uint32) (*Depth, error) {
+func (book *OrderBook) Depth(limit uint32) (*protocol.GetDepthResponse, error) {
 	if limit == 0 {
 		return nil, ErrInvalidParam
 	}
 
 	respChan := make(chan any, 1)
-	book.cmdBuffer.Publish(Command{
-		Type:       CmdDepth,
-		DepthLimit: limit,
-		Resp:       respChan,
+	book.cmdBuffer.Publish(InputEvent{
+		Query: &protocol.GetDepthRequest{
+			MarketID: book.marketID,
+			Limit:    limit,
+		},
+		Resp: respChan,
 	})
 
 	select {
 	case res := <-respChan:
-		if result, ok := res.(*Depth); ok {
+		if result, ok := res.(*protocol.GetDepthResponse); ok {
 			return result, nil
 		}
 		return nil, errors.New("unexpected response type")
@@ -180,16 +202,18 @@ func (book *OrderBook) Depth(limit uint32) (*Depth, error) {
 }
 
 // GetStats returns usage statistics for the order book.
-func (book *OrderBook) GetStats() (*BookStats, error) {
+func (book *OrderBook) GetStats() (*protocol.GetStatsResponse, error) {
 	respChan := make(chan any, 1)
-	book.cmdBuffer.Publish(Command{
-		Type: CmdGetStats,
+	book.cmdBuffer.Publish(InputEvent{
+		Query: &protocol.GetStatsRequest{
+			MarketID: book.marketID,
+		},
 		Resp: respChan,
 	})
 
 	select {
 	case res := <-respChan:
-		if result, ok := res.(*BookStats); ok {
+		if result, ok := res.(*protocol.GetStatsResponse); ok {
 			return result, nil
 		}
 		return nil, errors.New("unexpected response type")
@@ -210,49 +234,128 @@ func (book *OrderBook) Start() error {
 	return nil
 }
 
-// OnEvent processes commands from the RingBuffer.
-func (book *OrderBook) OnEvent(cmd *Command) {
+// OnEvent processes events from the RingBuffer.
+func (book *OrderBook) OnEvent(ev *InputEvent) {
+	if ev.Cmd != nil {
+		book.processCommand(ev.Cmd)
+		return
+	}
+
+	if ev.Query != nil {
+		book.processQuery(ev)
+		return
+	}
+}
+
+func (book *OrderBook) processCommand(cmd *protocol.Command) {
 	switch cmd.Type {
-	case CmdPlaceOrder:
-		book.addOrder(cmd)
-	case CmdAmendOrder:
-		book.amendOrder(cmd)
-	case CmdCancelOrder:
-		book.cancelOrder(cmd)
-	case CmdDepth:
-		result := book.depth(cmd.DepthLimit)
-		if cmd.Resp != nil {
-			select {
-			case cmd.Resp <- result:
-			default:
-			}
+	case protocol.CmdPlaceOrder:
+		payload := placeOrderCmdPool.Get().(*protocol.PlaceOrderCommand)
+		*payload = protocol.PlaceOrderCommand{} // Reset before use
+		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
+			placeOrderCmdPool.Put(payload)
+			book.rejectInvalidPayload("unknown", 0, RejectReasonInvalidPayload, cmd.Metadata)
+			return
 		}
-	case CmdGetStats:
-		stats := &BookStats{
-			AskDepthCount: book.askQueue.depthCount(),
-			AskOrderCount: book.askQueue.orderCount(),
-			BidDepthCount: book.bidQueue.depthCount(),
-			BidOrderCount: book.bidQueue.orderCount(),
+		book.handlePlaceOrder(payload)
+		placeOrderCmdPool.Put(payload)
+	case protocol.CmdCancelOrder:
+		payload := cancelOrderCmdPool.Get().(*protocol.CancelOrderCommand)
+		*payload = protocol.CancelOrderCommand{} // Reset before use
+		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
+			cancelOrderCmdPool.Put(payload)
+			book.rejectInvalidPayload("unknown", 0, RejectReasonInvalidPayload, cmd.Metadata)
+			return
 		}
-		if cmd.Resp != nil {
-			select {
-			case cmd.Resp <- stats:
-			default:
-			}
+		book.handleCancelOrder(payload)
+		cancelOrderCmdPool.Put(payload)
+	case protocol.CmdAmendOrder:
+		var payload protocol.AmendOrderCommand
+		if err := book.serializer.Unmarshal(cmd.Payload, &payload); err != nil {
+			book.rejectInvalidPayload("unknown", 0, RejectReasonInvalidPayload, cmd.Metadata)
+			return
 		}
-	case CmdSnapshot:
-		snap := book.createSnapshot()
-		if cmd.Resp != nil {
-			select {
-			case cmd.Resp <- snap:
-			default:
-			}
-		}
+		book.handleAmendOrder(&payload)
+	default:
+		// Ignore unknown command types
 	}
 
 	if cmd.SeqID > 0 {
 		book.lastCmdSeqID.Store(cmd.SeqID)
 	}
+}
+
+func (book *OrderBook) processQuery(ev *InputEvent) {
+	switch q := ev.Query.(type) {
+	case *protocol.GetDepthRequest:
+		result := book.depth(q.Limit)
+		if ev.Resp != nil {
+			select {
+			case ev.Resp <- result:
+			default:
+			}
+		}
+	case *protocol.GetStatsRequest:
+		stats := &protocol.GetStatsResponse{
+			AskDepthCount: book.askQueue.depthCount(),
+			AskOrderCount: book.askQueue.orderCount(),
+			BidDepthCount: book.bidQueue.depthCount(),
+			BidOrderCount: book.bidQueue.orderCount(),
+		}
+		if ev.Resp != nil {
+			select {
+			case ev.Resp <- stats:
+			default:
+			}
+		}
+	case *OrderBookSnapshot: // Snapshot query
+		snap := book.createSnapshot()
+		if ev.Resp != nil {
+			select {
+			case ev.Resp <- snap:
+			default:
+			}
+		}
+	}
+}
+
+func (book *OrderBook) rejectInvalidPayload(orderID string, userID int64, reason RejectReason, _ map[string]string) {
+	logsPtr := acquireLogSlice()
+	log := NewRejectLog(book.seqID.Add(1), book.marketID, orderID, userID, reason, time.Now().UnixNano())
+	*logsPtr = append(*logsPtr, log)
+	book.publishTrader.Publish(*logsPtr)
+	releaseBookLog(log)
+	releaseLogSlice(logsPtr)
+}
+
+// handlePlaceOrder matches protocol Payloads to internal logic.
+func (book *OrderBook) handlePlaceOrder(cmd *protocol.PlaceOrderCommand) {
+	// Parse strings to decimals
+	price, err := udecimal.Parse(cmd.Price)
+	if err != nil {
+		book.rejectInvalidPayload(cmd.OrderID, cmd.UserID, RejectReasonInvalidPayload, nil)
+		return
+	}
+	size, err := udecimal.Parse(cmd.Size)
+	if err != nil {
+		book.rejectInvalidPayload(cmd.OrderID, cmd.UserID, RejectReasonInvalidPayload, nil)
+		return
+	}
+
+	visibleSize, _ := udecimal.Parse(cmd.VisibleSize)
+	quoteSize, _ := udecimal.Parse(cmd.QuoteSize)
+
+	book.placeOrder(cmd.OrderID, cmd.Side, price, size, visibleSize, quoteSize, cmd.OrderType, cmd.UserID, cmd.Timestamp)
+}
+
+func (book *OrderBook) handleCancelOrder(cmd *protocol.CancelOrderCommand) {
+	book.cancelOrder(cmd.OrderID, cmd.UserID, cmd.Timestamp)
+}
+
+func (book *OrderBook) handleAmendOrder(cmd *protocol.AmendOrderCommand) {
+	newPrice, _ := udecimal.Parse(cmd.NewPrice)
+	newSize, _ := udecimal.Parse(cmd.NewSize)
+	book.amendOrder(cmd.OrderID, cmd.UserID, newPrice, newSize, cmd.Timestamp)
 }
 
 // Shutdown signals the order book to stop.
@@ -263,11 +366,11 @@ func (book *OrderBook) Shutdown(ctx context.Context) error {
 	return book.cmdBuffer.Shutdown(ctx)
 }
 
-// addOrder processes the addition of an order.
-func (book *OrderBook) addOrder(cmd *Command) {
-	if book.bidQueue.order(cmd.OrderID) != nil || book.askQueue.order(cmd.OrderID) != nil {
+// placeOrder processes the addition of an order.
+func (book *OrderBook) placeOrder(orderID string, side Side, price, size, visibleSize, quoteSize udecimal.Decimal, orderType OrderType, userID int64, timestamp int64) {
+	if book.bidQueue.order(orderID) != nil || book.askQueue.order(orderID) != nil {
 		logsPtr := acquireLogSlice()
-		log := NewRejectLog(book.seqID.Add(1), book.marketID, cmd.OrderID, cmd.UserID, RejectReasonDuplicateID, cmd.Timestamp)
+		log := NewRejectLog(book.seqID.Add(1), book.marketID, orderID, userID, RejectReasonDuplicateID, timestamp)
 		*logsPtr = append(*logsPtr, log)
 		book.publishTrader.Publish(*logsPtr)
 		releaseBookLog(log)
@@ -276,37 +379,37 @@ func (book *OrderBook) addOrder(cmd *Command) {
 	}
 
 	order := acquireOrder()
-	order.ID = cmd.OrderID
-	order.Side = cmd.Side
-	order.Price = cmd.Price
-	order.Size = cmd.Size
-	order.Type = cmd.OrderType
-	order.UserID = cmd.UserID
-	order.Timestamp = cmd.Timestamp
+	order.ID = orderID
+	order.Side = side
+	order.Price = price
+	order.Size = size
+	order.Type = orderType
+	order.UserID = userID
+	order.Timestamp = timestamp
 
 	// For Iceberg orders, store VisibleLimit but DON'T split Size yet.
 	// The split happens when the order enters the book (Maker/Passive phase),
 	// not during aggressive matching (Taker phase).
 	// This follows spec 3.2.A: "Use full Size for aggressive matching."
-	if cmd.VisibleSize.GreaterThan(udecimal.Zero) && cmd.VisibleSize.LessThan(cmd.Size) {
-		order.VisibleLimit = cmd.VisibleSize
+	if visibleSize.GreaterThan(udecimal.Zero) && visibleSize.LessThan(size) {
+		order.VisibleLimit = visibleSize
 		// HiddenSize and Size adjustment will happen in handleLimitOrder when resting
 	}
 
 	var logsPtr *[]*OrderBookLog
 	switch order.Type {
 	case Limit:
-		logsPtr = book.handleLimitOrder(order, cmd.Timestamp)
+		logsPtr = book.handleLimitOrder(order, timestamp)
 	case FOK:
-		logsPtr = book.handleFOKOrder(order, cmd.Timestamp)
+		logsPtr = book.handleFOKOrder(order, timestamp)
 	case IOC:
-		logsPtr = book.handleIOCOrder(order, cmd.Timestamp)
+		logsPtr = book.handleIOCOrder(order, timestamp)
 	case PostOnly:
-		logsPtr = book.handlePostOnlyOrder(order, cmd.Timestamp)
+		logsPtr = book.handlePostOnlyOrder(order, timestamp)
 	case Market:
-		logsPtr = book.handleMarketOrder(order, cmd.QuoteSize, cmd.Timestamp)
-	case Cancel:
-		// Cancel type is not expected here, handled by cancelOrder
+		logsPtr = book.handleMarketOrder(order, quoteSize, timestamp)
+	default:
+		// Ignore or handle unknown types
 	}
 
 	if logsPtr != nil {
@@ -321,11 +424,11 @@ func (book *OrderBook) addOrder(cmd *Command) {
 }
 
 // amendOrder processes the modification of an order.
-func (book *OrderBook) amendOrder(cmd *Command) {
-	order, ok := book.findOrder(cmd.OrderID)
-	if !ok || order.UserID != cmd.UserID {
+func (book *OrderBook) amendOrder(orderID string, userID int64, newPrice, newSize udecimal.Decimal, timestamp int64) {
+	order, ok := book.findOrder(orderID)
+	if !ok || order.UserID != userID {
 		logsPtr := acquireLogSlice()
-		log := NewRejectLog(book.seqID.Add(1), book.marketID, cmd.OrderID, cmd.UserID, RejectReasonOrderNotFound, cmd.Timestamp)
+		log := NewRejectLog(book.seqID.Add(1), book.marketID, orderID, userID, RejectReasonOrderNotFound, timestamp)
 		*logsPtr = append(*logsPtr, log)
 		book.publishTrader.Publish(*logsPtr)
 		releaseBookLog(log)
@@ -340,39 +443,38 @@ func (book *OrderBook) amendOrder(cmd *Command) {
 
 	oldPrice := order.Price
 	oldTotalSize := order.Size.Add(order.HiddenSize)
-	newTotalSize := cmd.NewSize
 
-	isPriceChange := !oldPrice.Equal(cmd.NewPrice)
-	isSizeIncrease := newTotalSize.GreaterThan(oldTotalSize)
+	isPriceChange := !oldPrice.Equal(newPrice)
+	isSizeIncrease := newSize.GreaterThan(oldTotalSize)
 
 	if isPriceChange || isSizeIncrease {
 		// Path 1: Priority Loss (Re-match)
 		myQueue.removeOrder(oldPrice, order.ID)
-		order.Price = cmd.NewPrice
-		order.Timestamp = cmd.Timestamp
+		order.Price = newPrice
+		order.Timestamp = timestamp
 
 		// Recalculate Iceberg fields for the new total size
 		if order.VisibleLimit.IsZero() {
-			order.Size = newTotalSize
+			order.Size = newSize
 			order.HiddenSize = udecimal.Zero
 		} else {
-			if newTotalSize.GreaterThan(order.VisibleLimit) {
+			if newSize.GreaterThan(order.VisibleLimit) {
 				order.Size = order.VisibleLimit
-				order.HiddenSize = newTotalSize.Sub(order.VisibleLimit)
+				order.HiddenSize = newSize.Sub(order.VisibleLimit)
 			} else {
-				order.Size = newTotalSize
+				order.Size = newSize
 				order.HiddenSize = udecimal.Zero
 			}
 		}
 
-		log := NewAmendLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, newTotalSize, oldPrice, oldTotalSize, order.Type, cmd.Timestamp)
+		log := NewAmendLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, newSize, oldPrice, oldTotalSize, order.Type, timestamp)
 		amendLogsPtr := acquireLogSlice()
 		*amendLogsPtr = append(*amendLogsPtr, log)
 		book.publishTrader.Publish(*amendLogsPtr)
 		releaseBookLog(log)
 		releaseLogSlice(amendLogsPtr)
 
-		logsPtr := book.handleLimitOrder(order, cmd.Timestamp)
+		logsPtr := book.handleLimitOrder(order, timestamp)
 		if logsPtr != nil {
 			if len(*logsPtr) > 0 {
 				book.publishTrader.Publish(*logsPtr)
@@ -384,8 +486,8 @@ func (book *OrderBook) amendOrder(cmd *Command) {
 		}
 	} else {
 		// Path 2: Priority Retention (In-place update)
-		if newTotalSize.LessThan(oldTotalSize) {
-			delta := oldTotalSize.Sub(newTotalSize)
+		if newSize.LessThan(oldTotalSize) {
+			delta := oldTotalSize.Sub(newSize)
 			// Prioritize deducting from HiddenSize
 			if delta.LessThanOrEqual(order.HiddenSize) {
 				order.HiddenSize = order.HiddenSize.Sub(delta)
@@ -398,7 +500,7 @@ func (book *OrderBook) amendOrder(cmd *Command) {
 			}
 		}
 
-		log := NewAmendLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, newTotalSize, oldPrice, oldTotalSize, order.Type, cmd.Timestamp)
+		log := NewAmendLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, newSize, oldPrice, oldTotalSize, order.Type, timestamp)
 		amendLogsPtr := acquireLogSlice()
 		*amendLogsPtr = append(*amendLogsPtr, log)
 		book.publishTrader.Publish(*amendLogsPtr)
@@ -408,11 +510,11 @@ func (book *OrderBook) amendOrder(cmd *Command) {
 }
 
 // cancelOrder processes an order cancellation.
-func (book *OrderBook) cancelOrder(cmd *Command) {
-	order, ok := book.findOrder(cmd.OrderID)
-	if !ok || order.UserID != cmd.UserID {
+func (book *OrderBook) cancelOrder(orderID string, userID int64, timestamp int64) {
+	order, ok := book.findOrder(orderID)
+	if !ok || order.UserID != userID {
 		logsPtr := acquireLogSlice()
-		log := NewRejectLog(book.seqID.Add(1), book.marketID, cmd.OrderID, cmd.UserID, RejectReasonOrderNotFound, cmd.Timestamp)
+		log := NewRejectLog(book.seqID.Add(1), book.marketID, orderID, userID, RejectReasonOrderNotFound, timestamp)
 		*logsPtr = append(*logsPtr, log)
 		book.publishTrader.Publish(*logsPtr)
 		releaseBookLog(log)
@@ -428,12 +530,11 @@ func (book *OrderBook) cancelOrder(cmd *Command) {
 	myQueue.removeOrder(order.Price, order.ID)
 	logsPtr := acquireLogSlice()
 	totalSize := order.Size.Add(order.HiddenSize)
-	log := NewCancelLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, totalSize, order.Type, cmd.Timestamp)
+	log := NewCancelLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, totalSize, order.Type, timestamp)
 	*logsPtr = append(*logsPtr, log)
 	book.publishTrader.Publish(*logsPtr)
 	releaseBookLog(log)
 	releaseLogSlice(logsPtr)
-	releaseOrder(order)
 }
 
 func (book *OrderBook) findOrder(orderID string) (*Order, bool) {
@@ -449,8 +550,8 @@ func (book *OrderBook) findOrder(orderID string) (*Order, bool) {
 }
 
 // depth returns the snapshot of the order book depth.
-func (book *OrderBook) depth(limit uint32) *Depth {
-	return &Depth{
+func (book *OrderBook) depth(limit uint32) *protocol.GetDepthResponse {
+	return &protocol.GetDepthResponse{
 		UpdateID: book.seqID.Load(),
 		Asks:     book.askQueue.depth(limit),
 		Bids:     book.bidQueue.depth(limit),
@@ -460,9 +561,9 @@ func (book *OrderBook) depth(limit uint32) *Depth {
 // TakeSnapshot is used by the Engine to request a snapshot.
 func (book *OrderBook) TakeSnapshot() (*OrderBookSnapshot, error) {
 	respChan := make(chan any, 1)
-	book.cmdBuffer.Publish(Command{
-		Type: CmdSnapshot,
-		Resp: respChan,
+	book.cmdBuffer.Publish(InputEvent{
+		Query: &OrderBookSnapshot{}, // Use empty snapshot as query signal
+		Resp:  respChan,
 	})
 
 	select {

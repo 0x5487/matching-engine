@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync/atomic"
 
+	"github.com/0x5487/matching-engine/protocol"
 	"github.com/igrmk/treemap/v2"
 	"github.com/quagmt/udecimal"
 )
@@ -11,9 +12,9 @@ import (
 // Snapshot represents a point-in-time state of the order book.
 // Used to initialize or reset the AggregatedBook during rebuild.
 type Snapshot struct {
-	SequenceID uint64       // The sequence ID at which this snapshot was taken
-	Asks       []*DepthItem // Ask side depth levels, sorted by price ascending
-	Bids       []*DepthItem // Bid side depth levels, sorted by price descending
+	SequenceID uint64                // The sequence ID at which this snapshot was taken
+	Asks       []*protocol.DepthItem // Ask side depth levels, sorted by price ascending
+	Bids       []*protocol.DepthItem // Bid side depth levels, sorted by price descending
 }
 
 // RebuildFunc is the callback type for fetching a snapshot during rebuild.
@@ -82,12 +83,16 @@ func (ab *AggregatedBook) ApplySnapshot(snapshot *Snapshot) error {
 
 	// Apply ask levels
 	for _, level := range snapshot.Asks {
-		ab.ask.Set(level.Price, level.Size)
+		p, _ := udecimal.Parse(level.Price)
+		s, _ := udecimal.Parse(level.Size)
+		ab.ask.Set(p, s)
 	}
 
 	// Apply bid levels
 	for _, level := range snapshot.Bids {
-		ab.bid.Set(level.Price, level.Size)
+		p, _ := udecimal.Parse(level.Price)
+		s, _ := udecimal.Parse(level.Size)
+		ab.bid.Set(p, s)
 	}
 
 	// Update sequence ID

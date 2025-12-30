@@ -14,7 +14,7 @@ import (
 // - Open, Match, Cancel, Amend: affect order book state
 // - Reject: does not affect order book state
 type OrderBookLog struct {
-	SequenceID   uint64           `json:"seq_id"`
+	SeqID        uint64           `json:"seq_id"`
 	TradeID      uint64           `json:"trade_id,omitempty"` // Sequential trade ID, only set for Match events
 	Type         LogType          `json:"type"`               // Event type: open, match, cancel, amend, reject
 	MarketID     string           `json:"market_id"`
@@ -72,7 +72,7 @@ func releaseLogSlice(ps *[]*OrderBookLog) {
 
 func NewOpenLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
-	log.SequenceID = seqID
+	log.SeqID = seqID
 	log.Type = LogTypeOpen
 	log.MarketID = marketID
 	log.Side = side
@@ -88,7 +88,7 @@ func NewOpenLog(seqID uint64, marketID string, orderID string, userID int64, sid
 
 func NewMatchLog(seqID uint64, tradeID uint64, marketID string, takerID string, takerUserID int64, takerSide Side, takerType OrderType, makerID string, makerUserID int64, price udecimal.Decimal, size udecimal.Decimal, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
-	log.SequenceID = seqID
+	log.SeqID = seqID
 	log.TradeID = tradeID
 	log.Type = LogTypeMatch
 	log.MarketID = marketID
@@ -108,7 +108,7 @@ func NewMatchLog(seqID uint64, tradeID uint64, marketID string, takerID string, 
 
 func NewCancelLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
-	log.SequenceID = seqID
+	log.SeqID = seqID
 	log.Type = LogTypeCancel
 	log.MarketID = marketID
 	log.Side = side
@@ -124,7 +124,7 @@ func NewCancelLog(seqID uint64, marketID string, orderID string, userID int64, s
 
 func NewAmendLog(seqID uint64, marketID string, orderID string, userID int64, side Side, price, size udecimal.Decimal, oldPrice udecimal.Decimal, oldSize udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
-	log.SequenceID = seqID
+	log.SeqID = seqID
 	log.Type = LogTypeAmend
 	log.MarketID = marketID
 	log.Side = side
@@ -142,7 +142,7 @@ func NewAmendLog(seqID uint64, marketID string, orderID string, userID int64, si
 
 func NewRejectLog(seqID uint64, marketID string, orderID string, userID int64, reason RejectReason, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
-	log.SequenceID = seqID
+	log.SeqID = seqID
 	log.Type = LogTypeReject
 	log.MarketID = marketID
 	log.OrderID = orderID

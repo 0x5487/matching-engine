@@ -15,6 +15,12 @@ const (
 // Command is the standard carrier for commands entering the Matching Engine.
 // It is designed to be efficient for serialization and compatible with Event Sourcing.
 type Command struct {
+	// Version is the protocol version for backward compatibility.
+	Version uint8 `json:"version"`
+
+	// MarketID is the target market for this command (Routing Header).
+	MarketID string `json:"market_id"`
+
 	// SeqID is used for global ordering and deduplication.
 	SeqID uint64 `json:"seq_id"`
 
@@ -31,19 +37,19 @@ type Command struct {
 
 // PlaceOrderCommand is the payload for placing a new order.
 type PlaceOrderCommand struct {
-	MarketID  string `json:"market_id"`
-	OrderID   string `json:"order_id"`
-	Side      int8   `json:"side"` // 1: Buy, 2: Sell
-	OrderType string `json:"order_type"`
-	Price     string `json:"price"` // Using string to prevent precision loss in JSON
-	Size      string `json:"size"`
-	UserID    int64  `json:"user_id"`
-	Timestamp int64  `json:"timestamp"`
+	OrderID     string    `json:"order_id"`
+	Side        Side      `json:"side"`
+	OrderType   OrderType `json:"order_type"`
+	Price       string    `json:"price"` // Using string to prevent precision loss in JSON
+	Size        string    `json:"size"`
+	VisibleSize string    `json:"visible_size,omitempty"`
+	QuoteSize   string    `json:"quote_size,omitempty"`
+	UserID      int64     `json:"user_id"`
+	Timestamp   int64     `json:"timestamp"`
 }
 
 // CancelOrderCommand is the payload for cancelling an existing order.
 type CancelOrderCommand struct {
-	MarketID  string `json:"market_id"`
 	OrderID   string `json:"order_id"`
 	UserID    int64  `json:"user_id"`
 	Timestamp int64  `json:"timestamp"`
@@ -51,7 +57,6 @@ type CancelOrderCommand struct {
 
 // AmendOrderCommand is the payload for modifying an existing order.
 type AmendOrderCommand struct {
-	MarketID  string `json:"market_id"`
 	OrderID   string `json:"order_id"`
 	UserID    int64  `json:"user_id"`
 	NewPrice  string `json:"new_price"`

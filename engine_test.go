@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/0x5487/matching-engine/protocol"
 	"github.com/quagmt/udecimal"
 	"github.com/stretchr/testify/assert"
 )
@@ -24,16 +25,15 @@ func TestMatchingEngine(t *testing.T) {
 		_, err := engine.AddOrderBook(market1)
 		assert.NoError(t, err)
 
-		order1 := &PlaceOrderCommand{
-			MarketID: market1,
-			ID:       "order1",
-			Type:     Limit,
-			Side:     Buy,
-			Price:    udecimal.MustFromInt64(100, 0),
-			Size:     udecimal.MustFromInt64(2, 0),
+		order1 := &protocol.PlaceOrderCommand{
+			OrderID:   "order1",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     udecimal.MustFromInt64(100, 0).String(),
+			Size:      udecimal.MustFromInt64(2, 0).String(),
 		}
 
-		err = engine.AddOrder(ctx, order1)
+		err = engine.PlaceOrder(ctx, market1, order1)
 		assert.NoError(t, err)
 
 		orderbook := engine.OrderBook(market1)
@@ -47,16 +47,15 @@ func TestMatchingEngine(t *testing.T) {
 		_, err = engine.AddOrderBook(market2)
 		assert.NoError(t, err)
 
-		order2 := &PlaceOrderCommand{
-			MarketID: market2,
-			ID:       "order2",
-			Type:     Limit,
-			Side:     Sell,
-			Price:    udecimal.MustFromInt64(110, 0),
-			Size:     udecimal.MustFromInt64(2, 0),
+		order2 := &protocol.PlaceOrderCommand{
+			OrderID:   "order2",
+			OrderType: Limit,
+			Side:      Sell,
+			Price:     udecimal.MustFromInt64(110, 0).String(),
+			Size:      udecimal.MustFromInt64(2, 0).String(),
 		}
 
-		err = engine.AddOrder(ctx, order2)
+		err = engine.PlaceOrder(ctx, market2, order2)
 		assert.NoError(t, err)
 
 		orderbook = engine.OrderBook(market2)
@@ -76,17 +75,16 @@ func TestMatchingEngine(t *testing.T) {
 		_, err := engine.AddOrderBook(market1)
 		assert.NoError(t, err)
 
-		order1 := &PlaceOrderCommand{
-			MarketID: market1,
-			ID:       "order1",
-			Type:     Limit,
-			Side:     Buy,
-			Price:    udecimal.MustFromInt64(100, 0),
-			Size:     udecimal.MustFromInt64(2, 0),
-			UserID:   1,
+		order1 := &protocol.PlaceOrderCommand{
+			OrderID:   "order1",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     udecimal.MustFromInt64(100, 0).String(),
+			Size:      udecimal.MustFromInt64(2, 0).String(),
+			UserID:    1,
 		}
 
-		err = engine.AddOrder(ctx, order1)
+		err = engine.PlaceOrder(ctx, market1, order1)
 		assert.NoError(t, err)
 
 		// Wait for order to be in book
@@ -96,7 +94,7 @@ func TestMatchingEngine(t *testing.T) {
 			return err == nil && stats.BidOrderCount == 1
 		}, 1*time.Second, 10*time.Millisecond)
 
-		err = engine.CancelOrder(ctx, market1, &CancelOrderCommand{OrderID: order1.ID, UserID: order1.UserID})
+		err = engine.CancelOrder(ctx, market1, &protocol.CancelOrderCommand{OrderID: order1.OrderID, UserID: order1.UserID})
 		assert.NoError(t, err)
 
 		// validate
@@ -114,15 +112,15 @@ func TestMatchingEngine(t *testing.T) {
 		market := "NON-EXISTENT"
 
 		// AddOrder
-		err := engine.AddOrder(ctx, &PlaceOrderCommand{MarketID: market, ID: "o1"})
+		err := engine.PlaceOrder(ctx, market, &protocol.PlaceOrderCommand{OrderID: "o1"})
 		assert.Equal(t, ErrNotFound, err)
 
 		// AmendOrder
-		err = engine.AmendOrder(ctx, market, &AmendOrderCommand{OrderID: "o1"})
+		err = engine.AmendOrder(ctx, market, &protocol.AmendOrderCommand{OrderID: "o1"})
 		assert.Equal(t, ErrNotFound, err)
 
 		// CancelOrder
-		err = engine.CancelOrder(ctx, market, &CancelOrderCommand{OrderID: "o1"})
+		err = engine.CancelOrder(ctx, market, &protocol.CancelOrderCommand{OrderID: "o1"})
 		assert.Equal(t, ErrNotFound, err)
 
 		// Get OrderBook
@@ -144,15 +142,14 @@ func TestMatchingEngineShutdown(t *testing.T) {
 			_, err := engine.AddOrderBook(market)
 			assert.NoError(t, err)
 
-			order := &PlaceOrderCommand{
-				MarketID: market,
-				ID:       "order-" + market,
-				Type:     Limit,
-				Side:     Buy,
-				Price:    udecimal.MustFromInt64(int64(100+i*10), 0),
-				Size:     udecimal.MustFromInt64(1, 0),
+			order := &protocol.PlaceOrderCommand{
+				OrderID:   "order-" + market,
+				OrderType: Limit,
+				Side:      Buy,
+				Price:     udecimal.MustFromInt64(int64(100+i*10), 0).String(),
+				Size:      udecimal.MustFromInt64(1, 0).String(),
 			}
-			err = engine.AddOrder(ctx, order)
+			err = engine.PlaceOrder(ctx, market, order)
 			assert.NoError(t, err)
 		}
 
@@ -161,15 +158,14 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		assert.NoError(t, err)
 
 		// After shutdown, adding orders should return ErrShutdown
-		order := &PlaceOrderCommand{
-			MarketID: "BTC-USDT",
-			ID:       "after-shutdown",
-			Type:     Limit,
-			Side:     Buy,
-			Price:    udecimal.MustFromInt64(100, 0),
-			Size:     udecimal.MustFromInt64(1, 0),
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "after-shutdown",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     udecimal.MustFromInt64(100, 0).String(),
+			Size:      udecimal.MustFromInt64(1, 0).String(),
 		}
-		err = engine.AddOrder(ctx, order)
+		err = engine.PlaceOrder(ctx, "BTC-USDT", order)
 		assert.Equal(t, ErrShutdown, err)
 	})
 
@@ -183,15 +179,14 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		_, err := engine.AddOrderBook("BTC-USDT")
 		assert.NoError(t, err)
 
-		order := &PlaceOrderCommand{
-			MarketID: "BTC-USDT",
-			ID:       "order1",
-			Type:     Limit,
-			Side:     Buy,
-			Price:    udecimal.MustFromInt64(100, 0),
-			Size:     udecimal.MustFromInt64(1, 0),
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "order1",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     udecimal.MustFromInt64(100, 0).String(),
+			Size:      udecimal.MustFromInt64(1, 0).String(),
 		}
-		err = engine.AddOrder(ctx, order)
+		err = engine.PlaceOrder(ctx, "BTC-USDT", order)
 		assert.NoError(t, err)
 
 		// Shutdown
@@ -199,15 +194,14 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Try to create a new market after shutdown - should return ErrShutdown
-		newMarketOrder := &PlaceOrderCommand{
-			MarketID: "NEW-MARKET",
-			ID:       "new-market-order",
-			Type:     Limit,
-			Side:     Buy,
-			Price:    udecimal.MustFromInt64(100, 0),
-			Size:     udecimal.MustFromInt64(1, 0),
+		newMarketOrder := &protocol.PlaceOrderCommand{
+			OrderID:   "new-market-order",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     udecimal.MustFromInt64(100, 0).String(),
+			Size:      udecimal.MustFromInt64(1, 0).String(),
 		}
-		err = engine.AddOrder(ctx, newMarketOrder)
+		err = engine.PlaceOrder(ctx, "NEW-MARKET", newMarketOrder)
 		assert.Equal(t, ErrShutdown, err)
 
 		// OrderBook for new market should return nil
@@ -225,15 +219,14 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		_, err := engine.AddOrderBook("BTC-USDT")
 		assert.NoError(t, err)
 
-		order := &PlaceOrderCommand{
-			MarketID: "BTC-USDT",
-			ID:       "order1",
-			Type:     Limit,
-			Side:     Buy,
-			Price:    udecimal.MustFromInt64(100, 0),
-			Size:     udecimal.MustFromInt64(1, 0),
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "order1",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     udecimal.MustFromInt64(100, 0).String(),
+			Size:      udecimal.MustFromInt64(1, 0).String(),
 		}
-		err = engine.AddOrder(ctx, order)
+		err = engine.PlaceOrder(ctx, "BTC-USDT", order)
 		assert.NoError(t, err)
 
 		// Shutdown with a reasonable timeout should succeed
@@ -265,26 +258,24 @@ func TestEngineSnapshotRestore(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Add orders to Market 1
-	err = engine.AddOrder(ctx, &PlaceOrderCommand{
-		MarketID: market1,
-		ID:       "btc-buy-1",
-		Side:     Buy,
-		Type:     Limit,
-		Price:    udecimal.MustFromInt64(50000, 0),
-		Size:     udecimal.MustFromInt64(1, 0),
-		UserID:   1,
+	err = engine.PlaceOrder(ctx, market1, &protocol.PlaceOrderCommand{
+		OrderID:   "btc-buy-1",
+		Side:      Buy,
+		OrderType: Limit,
+		Price:     udecimal.MustFromInt64(50000, 0).String(),
+		Size:      udecimal.MustFromInt64(1, 0).String(),
+		UserID:    1,
 	})
 	assert.NoError(t, err)
 
 	// Add orders to Market 2
-	err = engine.AddOrder(ctx, &PlaceOrderCommand{
-		MarketID: market2,
-		ID:       "eth-sell-1",
-		Side:     Sell,
-		Type:     Limit,
-		Price:    udecimal.MustFromInt64(3000, 0),
-		Size:     udecimal.MustFromInt64(10, 0),
-		UserID:   2,
+	err = engine.PlaceOrder(ctx, market2, &protocol.PlaceOrderCommand{
+		OrderID:   "eth-sell-1",
+		Side:      Sell,
+		OrderType: Limit,
+		Price:     udecimal.MustFromInt64(3000, 0).String(),
+		Size:      udecimal.MustFromInt64(10, 0).String(),
+		UserID:    2,
 	})
 	assert.NoError(t, err)
 
@@ -336,14 +327,13 @@ func TestEngineSnapshotRestore(t *testing.T) {
 	assert.Equal(t, int64(1), stats2.AskOrderCount)
 
 	// 5. Verify Continuity (Add new orders to restored engine)
-	err = newEngine.AddOrder(ctx, &PlaceOrderCommand{
-		MarketID: market1,
-		ID:       "btc-sell-match",
-		Side:     Sell,
-		Type:     Limit,
-		Price:    udecimal.MustFromInt64(50000, 0),
-		Size:     udecimal.MustFromInt64(1, 0),
-		UserID:   3,
+	err = newEngine.PlaceOrder(ctx, market1, &protocol.PlaceOrderCommand{
+		OrderID:   "btc-sell-match",
+		Side:      Sell,
+		OrderType: Limit,
+		Price:     udecimal.MustFromInt64(50000, 0).String(),
+		Size:      udecimal.MustFromInt64(1, 0).String(),
+		UserID:    3,
 	})
 	assert.NoError(t, err)
 

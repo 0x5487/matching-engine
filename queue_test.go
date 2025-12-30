@@ -38,8 +38,8 @@ func TestBuyerQueue(t *testing.T) {
 
 	depths := q.depth(25)
 	assert.Len(t, depths, 3)
-	assert.Equal(t, "30", depths[0].Price.String()) // depth 1
-	assert.Equal(t, "110", depths[1].Size.String()) // depth 2
+	assert.Equal(t, "30", depths[0].Price) // depth 1
+	assert.Equal(t, "110", depths[1].Size) // depth 2
 
 	ord := q.popHeadOrder()
 	assert.Equal(t, "301", ord.ID)
@@ -99,8 +99,8 @@ func TestSellerQueue(t *testing.T) {
 	assert.Equal(t, int64(4), q.orderCount())
 	depths := q.depth(25)
 	assert.Len(t, depths, 3)
-	assert.Equal(t, "10", depths[0].Price.String()) // depth 1
-	assert.Equal(t, "110", depths[1].Size.String()) // depth 2
+	assert.Equal(t, "10", depths[0].Price) // depth 1
+	assert.Equal(t, "110", depths[1].Size) // depth 2
 
 	ord := q.popHeadOrder()
 	assert.Equal(t, "101", ord.ID)

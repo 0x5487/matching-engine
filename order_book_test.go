@@ -5,9 +5,37 @@ import (
 	"testing"
 	"time"
 
+	"github.com/0x5487/matching-engine/protocol"
 	"github.com/quagmt/udecimal"
 	"github.com/stretchr/testify/assert"
 )
+
+func newPlaceCmd(id string, ot OrderType, s Side, price, size float64, userID int64) *protocol.PlaceOrderCommand {
+	return &protocol.PlaceOrderCommand{
+		OrderID:   id,
+		OrderType: ot,
+		Side:      s,
+		Price:     udecimal.MustFromFloat64(price).String(),
+		Size:      udecimal.MustFromFloat64(size).String(),
+		UserID:    userID,
+	}
+}
+
+func newAmendCmd(id string, price, size float64, userID int64) *protocol.AmendOrderCommand {
+	return &protocol.AmendOrderCommand{
+		OrderID:  id,
+		NewPrice: udecimal.MustFromFloat64(price).String(),
+		NewSize:  udecimal.MustFromFloat64(size).String(),
+		UserID:   userID,
+	}
+}
+
+func newCancelCmd(id string, userID int64) *protocol.CancelOrderCommand {
+	return &protocol.CancelOrderCommand{
+		OrderID: id,
+		UserID:  userID,
+	}
+}
 
 func createTestOrderBook(t *testing.T) *OrderBook {
 	ctx := context.Background()
@@ -18,74 +46,12 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 		_ = orderBook.Start()
 	}()
 
-	orderBuy1 := &PlaceOrderCommand{
-		ID:     "buy-1",
-		Type:   Limit,
-		Side:   Buy,
-		Size:   udecimal.MustFromInt64(1, 0),
-		Price:  udecimal.MustFromInt64(90, 0),
-		UserID: 101,
-	}
-
-	err := orderBook.AddOrder(ctx, orderBuy1)
-	assert.NoError(t, err)
-
-	orderBuy2 := &PlaceOrderCommand{
-		ID:     "buy-2",
-		Type:   Limit,
-		Side:   Buy,
-		Size:   udecimal.MustFromInt64(1, 0),
-		Price:  udecimal.MustFromInt64(80, 0),
-		UserID: 102,
-	}
-
-	err = orderBook.AddOrder(ctx, orderBuy2)
-	assert.NoError(t, err)
-
-	orderBuy3 := &PlaceOrderCommand{
-		ID:     "buy-3",
-		Type:   Limit,
-		Side:   Buy,
-		Size:   udecimal.MustFromInt64(1, 0),
-		Price:  udecimal.MustFromInt64(70, 0),
-		UserID: 103,
-	}
-
-	err = orderBook.AddOrder(ctx, orderBuy3)
-	assert.NoError(t, err)
-
-	orderSell1 := &PlaceOrderCommand{
-		ID:     "sell-1",
-		Type:   Limit,
-		Side:   Sell,
-		Size:   udecimal.MustFromInt64(1, 0),
-		Price:  udecimal.MustFromInt64(110, 0),
-		UserID: 201,
-	}
-	err = orderBook.AddOrder(ctx, orderSell1)
-	assert.NoError(t, err)
-
-	orderSell2 := &PlaceOrderCommand{
-		ID:     "sell-2",
-		Type:   Limit,
-		Side:   Sell,
-		Size:   udecimal.MustFromInt64(1, 0),
-		Price:  udecimal.MustFromInt64(120, 0),
-		UserID: 202,
-	}
-	err = orderBook.AddOrder(ctx, orderSell2)
-	assert.NoError(t, err)
-
-	orderSell3 := &PlaceOrderCommand{
-		ID:     "sell-3",
-		Type:   Limit,
-		Side:   Sell,
-		Size:   udecimal.MustFromInt64(1, 0),
-		Price:  udecimal.MustFromInt64(130, 0),
-		UserID: 203,
-	}
-	err = orderBook.AddOrder(ctx, orderSell3)
-	assert.NoError(t, err)
+	_ = orderBook.PlaceOrder(ctx, newPlaceCmd("buy-1", Limit, Buy, 90, 1, 101))
+	_ = orderBook.PlaceOrder(ctx, newPlaceCmd("buy-2", Limit, Buy, 80, 1, 102))
+	_ = orderBook.PlaceOrder(ctx, newPlaceCmd("buy-3", Limit, Buy, 70, 1, 103))
+	_ = orderBook.PlaceOrder(ctx, newPlaceCmd("sell-1", Limit, Sell, 110, 1, 201))
+	_ = orderBook.PlaceOrder(ctx, newPlaceCmd("sell-2", Limit, Sell, 120, 1, 202))
+	_ = orderBook.PlaceOrder(ctx, newPlaceCmd("sell-3", Limit, Sell, 130, 1, 203))
 
 	// Wait for all 6 orders to be processed
 	assert.Eventually(t, func() bool {
@@ -97,7 +63,6 @@ func createTestOrderBook(t *testing.T) *OrderBook {
 }
 
 func TestLimitOrders(t *testing.T) {
-	ctx := context.Background()
 
 	t.Run("take all orders", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
@@ -106,15 +71,20 @@ func TestLimitOrders(t *testing.T) {
 		assert.Equal(t, uint64(0), testOrderBook.LastCmdSeqID())
 
 		// Send command with SeqID
-		testOrderBook.cmdBuffer.Publish(Command{
-			SeqID:     100,
-			Type:      CmdPlaceOrder,
+		payload := &protocol.PlaceOrderCommand{
 			OrderID:   "buyAll",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     udecimal.MustFromInt64(1000, 0),
-			Size:      udecimal.MustFromInt64(10, 0),
+			Price:     "1000",
+			Size:      "10",
 			UserID:    300,
+		}
+		bytes, _ := testOrderBook.serializer.Marshal(payload)
+		testOrderBook.ExecuteCommand(&protocol.Command{
+			MarketID: testOrderBook.marketID,
+			SeqID:    100,
+			Type:     protocol.CmdPlaceOrder,
+			Payload:  bytes,
 		})
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -149,19 +119,49 @@ func TestLimitOrders(t *testing.T) {
 		assert.Equal(t, int64(203), match3.MakerUserID)
 	})
 
+	t.Run("MatchLimitOrder", func(t *testing.T) {
+		orderBook := createTestOrderBook(t)
+		_ = orderBook.PlaceOrder(context.Background(), newPlaceCmd("match-1", Limit, Sell, 90, 1, 204))
+
+		memoryPublishTrader, _ := orderBook.publishTrader.(*MemoryPublishLog)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
+	})
+
+	t.Run("AddLimitOrder", func(t *testing.T) {
+		orderBook := createTestOrderBook(t)
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "new-1",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "100",
+			Size:      "1",
+			UserID:    104,
+		}
+		err := orderBook.PlaceOrder(context.Background(), order)
+		assert.NoError(t, err)
+
+		memoryPublishTrader, _ := orderBook.publishTrader.(*MemoryPublishLog)
+		assert.Eventually(t, func() bool {
+			return memoryPublishTrader.Count() == 7
+		}, 1*time.Second, 10*time.Millisecond)
+
+		stats, err := orderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(3), stats.AskDepthCount)
+		assert.Equal(t, int64(4), stats.BidDepthCount)
+
+		// Verify the new order is in the book
+		val, found := orderBook.findOrder("new-1")
+		assert.True(t, found)
+		assert.NotNil(t, val)
+	})
+
 	t.Run("take some orders", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		order := &PlaceOrderCommand{
-			ID:     "mysell",
-			Type:   Limit,
-			Side:   Sell,
-			Size:   udecimal.MustFromInt64(5, 0),
-			Price:  udecimal.MustFromInt64(75, 0),
-			UserID: 301,
-		}
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-match", Limit, Sell, 80, 2.5, 204))
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
@@ -178,31 +178,52 @@ func TestLimitOrders(t *testing.T) {
 		assert.Equal(t, LogTypeMatch, match1.Type)
 		assert.Equal(t, "buy-1", match1.MakerOrderID)
 		assert.Equal(t, int64(101), match1.MakerUserID)
-		assert.Equal(t, "mysell", match1.OrderID)
-		assert.Equal(t, int64(301), match1.UserID)
+		assert.Equal(t, "sell-match", match1.OrderID)
+		assert.Equal(t, int64(204), match1.UserID)
 
 		match2 := memoryPublishTrader.Get(7)
 		assert.Equal(t, LogTypeMatch, match2.Type)
 		assert.Equal(t, "buy-2", match2.MakerOrderID)
 		assert.Equal(t, int64(102), match2.MakerUserID)
 	})
+
+	t.Run("take all orders and finish as cancel because of price", func(t *testing.T) {
+		testOrderBook := createTestOrderBook(t)
+
+		// Sell IOC at 75. Bids are 90, 80, 70.
+		// Matches 90 and 80. Stops at 70 (75 > 70).
+		// Remaining size is rejected/cancelled.
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-match", IOC, Sell, 75, 4, 204))
+
+		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+		assert.Eventually(t, func() bool {
+			// 6 Initial + 2 Matches + 1 Reject = 9 Logs
+			return memoryPublishTrader.Count() == 9
+		}, 1*time.Second, 10*time.Millisecond)
+
+		stats, err := testOrderBook.GetStats()
+		assert.NoError(t, err)
+		assert.Equal(t, int64(3), stats.AskDepthCount)
+		assert.Equal(t, int64(1), stats.BidDepthCount) // Bid at 70 remains
+	})
 }
 
 func TestMarketOrder(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("take all orders", func(t *testing.T) {
+	t.Run("take all orders using quote size", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		order := &PlaceOrderCommand{
-			ID:        "buyAll",
-			Type:      Market,
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "market-buy",
+			OrderType: Market,
 			Side:      Buy,
-			Price:     udecimal.MustFromInt64(0, 0),
-			QuoteSize: udecimal.MustFromInt64(110, 0).Add(udecimal.MustFromInt64(120, 0)).Add(udecimal.MustFromInt64(130, 0)), // 360 USDT to spend
+			Price:     "0",
+			Size:      "0",
+			QuoteSize: "360", // 110 + 120 + 130 = 360 USDT to spend
+			UserID:    2,
 		}
-
-		err := testOrderBook.AddOrder(ctx, order)
+		err := testOrderBook.PlaceOrder(ctx, order)
 		assert.NoError(t, err)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -219,15 +240,16 @@ func TestMarketOrder(t *testing.T) {
 	t.Run("take some orders", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		order := &PlaceOrderCommand{
-			ID:        "mysell",
-			Type:      Market,
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "mysell",
+			OrderType: Market,
 			Side:      Sell,
-			Price:     udecimal.MustFromInt64(0, 0),
-			QuoteSize: udecimal.MustFromInt64(90, 0), // 90 USDT worth
+			Price:     "0",
+			Size:      "0",
+			QuoteSize: "90", // 90 USDT worth
 		}
 
-		err := testOrderBook.AddOrder(ctx, order)
+		err := testOrderBook.PlaceOrder(ctx, order)
 		assert.NoError(t, err)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -246,13 +268,15 @@ func TestMarketOrder(t *testing.T) {
 
 		// Buy using 230 quote currency (e.g., USDT)
 		// Should match: sell-1 at 110 (1 BTC = 110 USDT) and sell-2 at 120 (1 BTC = 120 USDT)
-		order := &PlaceOrderCommand{
-			ID:        "market-quote-buy",
-			Type:      Market,
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "market-quote-buy",
+			OrderType: Market,
 			Side:      Buy,
-			QuoteSize: udecimal.MustFromInt64(230, 0), // 110 + 120 = 230 USDT
+			Price:     "0",
+			Size:      "0",
+			QuoteSize: "230", // 110 + 120 = 230 USDT
 		}
-		err := testOrderBook.AddOrder(ctx, order)
+		err := testOrderBook.PlaceOrder(ctx, order)
 		assert.NoError(t, err)
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
@@ -278,13 +302,15 @@ func TestMarketOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
 		// Buy using 55 quote currency - should partially fill sell-1 at 110
-		order := &PlaceOrderCommand{
-			ID:        "market-quote-partial",
-			Type:      Market,
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "market-quote-partial",
+			OrderType: Market,
 			Side:      Buy,
-			QuoteSize: udecimal.MustFromInt64(55, 0), // 55 USDT = 0.5 BTC at 110
+			Price:     "0",
+			Size:      "0",
+			QuoteSize: "55", // 55 USDT = 0.5 BTC at 110
 		}
-		err := testOrderBook.AddOrder(ctx, order)
+		err := testOrderBook.PlaceOrder(ctx, order)
 		assert.NoError(t, err)
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
@@ -308,13 +334,15 @@ func TestMarketOrder(t *testing.T) {
 		orderBook := NewOrderBook("BTC-USDT", publishTrader)
 		go func() { _ = orderBook.Start() }()
 
-		order := &PlaceOrderCommand{
-			ID:        "market-quote-no-liq",
-			Type:      Market,
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "market-quote-no-liq",
+			OrderType: Market,
 			Side:      Buy,
-			QuoteSize: udecimal.MustFromInt64(100, 0),
+			Price:     "0",
+			Size:      "0",
+			QuoteSize: "100",
 		}
-		err := orderBook.AddOrder(ctx, order)
+		err := orderBook.PlaceOrder(ctx, order)
 		assert.NoError(t, err)
 		assert.Eventually(t, func() bool {
 			return publishTrader.Count() >= 1
@@ -329,13 +357,14 @@ func TestMarketOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
 		// Buy 2 base currency units (e.g., 2 BTC)
-		order := &PlaceOrderCommand{
-			ID:   "market-base-buy",
-			Type: Market,
-			Side: Buy,
-			Size: udecimal.MustFromInt64(2, 0), // 2 BTC
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "market-base-buy",
+			OrderType: Market,
+			Side:      Buy,
+			Price:     "0",
+			Size:      "2", // 2 BTC
 		}
-		err := testOrderBook.AddOrder(ctx, order)
+		err := testOrderBook.PlaceOrder(ctx, order)
 		assert.NoError(t, err)
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
@@ -361,13 +390,14 @@ func TestMarketOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
 		// Buy 0.5 base currency - should partially fill sell-1
-		order := &PlaceOrderCommand{
-			ID:   "market-base-partial",
-			Type: Market,
-			Side: Buy,
-			Size: udecimal.MustFromFloat64(0.5), // 0.5 BTC
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "market-base-partial",
+			OrderType: Market,
+			Side:      Buy,
+			Price:     "0",
+			Size:      udecimal.MustFromFloat64(0.5).String(), // 0.5 BTC
 		}
-		err := testOrderBook.AddOrder(ctx, order)
+		err := testOrderBook.PlaceOrder(ctx, order)
 		assert.NoError(t, err)
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
@@ -390,13 +420,14 @@ func TestMarketOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
 		// Buy 3 base currency units - consume all sell orders
-		order := &PlaceOrderCommand{
-			ID:   "market-base-all",
-			Type: Market,
-			Side: Buy,
-			Size: udecimal.MustFromInt64(3, 0), // 3 BTC
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "market-base-all",
+			OrderType: Market,
+			Side:      Buy,
+			Price:     "0",
+			Size:      "3", // 3 BTC
 		}
-		err := testOrderBook.AddOrder(ctx, order)
+		err := testOrderBook.PlaceOrder(ctx, order)
 		assert.NoError(t, err)
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
@@ -416,15 +447,15 @@ func TestPostOnlyOrder(t *testing.T) {
 	t.Run("place a post only order", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		buyAll := &PlaceOrderCommand{
-			ID:    "post_only",
-			Type:  PostOnly,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(100, 0),
-			Size:  udecimal.MustFromInt64(1, 0),
+		buyAll := &protocol.PlaceOrderCommand{
+			OrderID:   "post_only",
+			OrderType: PostOnly,
+			Side:      Buy,
+			Price:     "100",
+			Size:      "1",
 		}
 
-		err := testOrderBook.AddOrder(ctx, buyAll)
+		err := testOrderBook.PlaceOrder(ctx, buyAll)
 		assert.NoError(t, err)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -441,16 +472,7 @@ func TestPostOnlyOrder(t *testing.T) {
 	t.Run("fail to place a post only order", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		buyAll := &PlaceOrderCommand{
-			ID:    "post_only",
-			Type:  PostOnly,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(115, 0),
-			Size:  udecimal.MustFromInt64(1, 0),
-		}
-
-		err := testOrderBook.AddOrder(ctx, buyAll)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("post_only", PostOnly, Buy, 115, 1, 0))
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
 			return memoryPublishTrader.Count() == 7
@@ -466,21 +488,11 @@ func TestPostOnlyOrder(t *testing.T) {
 }
 
 func TestIOCOrder(t *testing.T) {
-	ctx := context.Background()
 
 	t.Run("no match any orders", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		order := &PlaceOrderCommand{
-			ID:    "ioc",
-			Type:  IOC,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(100, 0),
-			Size:  udecimal.MustFromInt64(1, 0),
-		}
-
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("ioc", IOC, Buy, 100, 1, 0))
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
@@ -498,16 +510,7 @@ func TestIOCOrder(t *testing.T) {
 	t.Run("take all orders with no error", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		order := &PlaceOrderCommand{
-			ID:    "ioc",
-			Type:  IOC,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(1000, 0),
-			Size:  udecimal.MustFromInt64(3, 0),
-		}
-
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("ioc", IOC, Buy, 1000, 3, 0))
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
@@ -523,16 +526,7 @@ func TestIOCOrder(t *testing.T) {
 	t.Run("take all orders and finish as `cancel`", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		order := &PlaceOrderCommand{
-			ID:    "ioc",
-			Type:  IOC,
-			Side:  Sell,
-			Price: udecimal.MustFromInt64(10, 0),
-			Size:  udecimal.MustFromInt64(4, 0),
-		}
-
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("ioc", IOC, Sell, 10, 4, 0))
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
@@ -548,16 +542,7 @@ func TestIOCOrder(t *testing.T) {
 	t.Run("take some orders and finish as `cancel`", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		order := &PlaceOrderCommand{
-			ID:    "ioc",
-			Type:  IOC,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(115, 0),
-			Size:  udecimal.MustFromInt64(2, 0),
-		}
-
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("ioc", IOC, Buy, 115, 2, 0))
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
@@ -577,16 +562,7 @@ func TestFOKOrder(t *testing.T) {
 	t.Run("no match any orders", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		order := &PlaceOrderCommand{
-			ID:    "fok",
-			Type:  FOK,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(100, 0),
-			Size:  udecimal.MustFromInt64(1, 0),
-		}
-
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("fok", FOK, Buy, 100, 1, 0))
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
 			return memoryPublishTrader.Count() == 7
@@ -603,16 +579,7 @@ func TestFOKOrder(t *testing.T) {
 	t.Run("take all orders with no error", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		order := &PlaceOrderCommand{
-			ID:    "fok",
-			Type:  FOK,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(1000, 0),
-			Size:  udecimal.MustFromInt64(3, 0),
-		}
-
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("fok", FOK, Buy, 1000, 3, 0))
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
@@ -628,16 +595,7 @@ func TestFOKOrder(t *testing.T) {
 	t.Run("take all orders and finish as `cancel`", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		order := &PlaceOrderCommand{
-			ID:    "fok",
-			Type:  FOK,
-			Side:  Sell,
-			Price: udecimal.MustFromInt64(10, 0),
-			Size:  udecimal.MustFromInt64(4, 0),
-		}
-
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("fok", FOK, Sell, 10, 4, 0))
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
 			return memoryPublishTrader.Count() == 7
@@ -654,16 +612,7 @@ func TestFOKOrder(t *testing.T) {
 	t.Run("take some orders and finish as `cancel`", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		order := &PlaceOrderCommand{
-			ID:    "ioc",
-			Type:  FOK,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(115, 0),
-			Size:  udecimal.MustFromInt64(2, 0),
-		}
-
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("fok", FOK, Buy, 115, 2, 0))
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
 			return memoryPublishTrader.Count() == 7
@@ -687,43 +636,20 @@ func TestFOKOrder(t *testing.T) {
 
 		// Setup: Place 2 orders at price 110
 		// Order1: size=3, Order2: size=2, totalSize=5
-		err := orderBook.AddOrder(ctx, &PlaceOrderCommand{
-			ID:     "sell-1",
-			Type:   Limit,
-			Side:   Sell,
-			Size:   udecimal.MustFromInt64(3, 0),
-			Price:  udecimal.MustFromInt64(110, 0),
-			UserID: 201,
-		})
-		assert.NoError(t, err)
+		_ = orderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-1", Limit, Sell, 110, 3, 201))
 
-		err = orderBook.AddOrder(ctx, &PlaceOrderCommand{
-			ID:     "sell-2",
-			Type:   Limit,
-			Side:   Sell,
-			Size:   udecimal.MustFromInt64(2, 0),
-			Price:  udecimal.MustFromInt64(110, 0),
-			UserID: 202,
-		})
-		assert.NoError(t, err)
+		_ = orderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-2", Limit, Sell, 110, 2, 202))
 
 		assert.Eventually(t, func() bool {
 			stats, err := orderBook.GetStats()
-			return err == nil && stats.AskDepthCount == 1 // Both orders at same price 110
+			return err == nil && stats.AskOrderCount == 2
 		}, 1*time.Second, 10*time.Millisecond)
 
 		// FOK Buy: Price=115, Size=5
 		// Expected: Should fully match since total size at price 110 is exactly 5
-		fokOrder := &PlaceOrderCommand{
-			ID:     "fok-buy",
-			Type:   FOK,
-			Side:   Buy,
-			Price:  udecimal.MustFromInt64(115, 0),
-			Size:   udecimal.MustFromInt64(5, 0),
-			UserID: 301,
-		}
+		fokOrder := newPlaceCmd("fok-buy", FOK, Buy, 115, 5, 301)
 
-		err = orderBook.AddOrder(ctx, fokOrder)
+		err := orderBook.PlaceOrder(context.Background(), fokOrder)
 		assert.NoError(t, err)
 
 		// Expected: 2 (setup) + 2 (matches) = 4 logs
@@ -758,25 +684,9 @@ func TestFOKOrder(t *testing.T) {
 		// Price 110: 1 order, size=2
 		// Price 120: 1 order, size=3
 		// Total available = 5
-		err := orderBook.AddOrder(ctx, &PlaceOrderCommand{
-			ID:     "sell-1",
-			Type:   Limit,
-			Side:   Sell,
-			Size:   udecimal.MustFromInt64(2, 0),
-			Price:  udecimal.MustFromInt64(110, 0),
-			UserID: 201,
-		})
-		assert.NoError(t, err)
+		_ = orderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-1", Limit, Sell, 110, 2, 201))
 
-		err = orderBook.AddOrder(ctx, &PlaceOrderCommand{
-			ID:     "sell-2",
-			Type:   Limit,
-			Side:   Sell,
-			Size:   udecimal.MustFromInt64(3, 0),
-			Price:  udecimal.MustFromInt64(120, 0),
-			UserID: 202,
-		})
-		assert.NoError(t, err)
+		_ = orderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-2", Limit, Sell, 120, 3, 202))
 
 		assert.Eventually(t, func() bool {
 			stats, err := orderBook.GetStats()
@@ -785,16 +695,9 @@ func TestFOKOrder(t *testing.T) {
 
 		// FOK Buy: Price=125, Size=5
 		// Expected: Should fully match (consume 2 at 110 + 3 at 120 = 5)
-		fokOrder := &PlaceOrderCommand{
-			ID:     "fok-buy",
-			Type:   FOK,
-			Side:   Buy,
-			Price:  udecimal.MustFromInt64(125, 0),
-			Size:   udecimal.MustFromInt64(5, 0),
-			UserID: 301,
-		}
+		fokOrder := newPlaceCmd("fok-buy", FOK, Buy, 125, 5, 301)
 
-		err = orderBook.AddOrder(ctx, fokOrder)
+		err := orderBook.PlaceOrder(context.Background(), fokOrder)
 		assert.NoError(t, err)
 
 		// Expected: 2 setup + 2 matches = 4
@@ -819,15 +722,7 @@ func TestFOKOrder(t *testing.T) {
 
 		// Setup: 3 orders at price 110, each size=1, totalSize=3
 		for i := 1; i <= 3; i++ {
-			err := orderBook.AddOrder(ctx, &PlaceOrderCommand{
-				ID:     "sell-" + udecimal.MustFromInt64(int64(i), 0).String(),
-				Type:   Limit,
-				Side:   Sell,
-				Size:   udecimal.MustFromInt64(1, 0),
-				Price:  udecimal.MustFromInt64(110, 0),
-				UserID: int64(200 + i),
-			})
-			assert.NoError(t, err)
+			_ = orderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-"+udecimal.MustFromInt64(int64(i), 0).String(), Limit, Sell, 110, 1, int64(200+i)))
 		}
 
 		assert.Eventually(t, func() bool {
@@ -837,16 +732,9 @@ func TestFOKOrder(t *testing.T) {
 
 		// FOK Buy: Price=115, Size=3
 		// Expected: Should fully match
-		fokOrder := &PlaceOrderCommand{
-			ID:     "fok-buy",
-			Type:   FOK,
-			Side:   Buy,
-			Price:  udecimal.MustFromInt64(115, 0),
-			Size:   udecimal.MustFromInt64(3, 0),
-			UserID: 301,
-		}
+		fokOrder := newPlaceCmd("fok-buy", FOK, Buy, 115, 3, 301)
 
-		err := orderBook.AddOrder(ctx, fokOrder)
+		err := orderBook.PlaceOrder(ctx, fokOrder)
 		assert.NoError(t, err)
 
 		// Expected: 3 setup + 3 matches = 6
@@ -862,26 +750,22 @@ func TestFOKOrder(t *testing.T) {
 }
 
 func TestCancelOrder(t *testing.T) {
-	ctx := context.Background()
 
 	testOrderBook := createTestOrderBook(t)
 
-	err := testOrderBook.CancelOrder(ctx, &CancelOrderCommand{OrderID: "sell-1", UserID: 201})
-	assert.NoError(t, err)
+	_ = testOrderBook.CancelOrder(context.Background(), newCancelCmd("sell-1", 201))
 	assert.Eventually(t, func() bool {
 		stats, err := testOrderBook.GetStats()
 		return err == nil && stats.AskDepthCount == 2
 	}, 1*time.Second, 10*time.Millisecond)
 
-	err = testOrderBook.CancelOrder(ctx, &CancelOrderCommand{OrderID: "buy-1", UserID: 101})
-	assert.NoError(t, err)
+	_ = testOrderBook.CancelOrder(context.Background(), newCancelCmd("buy-1", 101))
 	assert.Eventually(t, func() bool {
 		stats, err := testOrderBook.GetStats()
 		return err == nil && stats.BidDepthCount == 2
 	}, 1*time.Second, 10*time.Millisecond)
 
-	err = testOrderBook.CancelOrder(ctx, &CancelOrderCommand{OrderID: "aaaaaa", UserID: 999})
-	assert.NoError(t, err)
+	_ = testOrderBook.CancelOrder(context.Background(), newCancelCmd("aaaaaa", 999))
 	assert.Eventually(t, func() bool {
 		stats, err := testOrderBook.GetStats()
 		return err == nil && stats.BidDepthCount == 2
@@ -896,16 +780,16 @@ func TestAmendOrder(t *testing.T) {
 		// Initial: Buy 90(1), 80(1), 70(1). Sell 110(1), 120(1), 130(1)
 
 		// 1. Amend buy-1 (Price 90) size from 1 to 0.5
-		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: udecimal.MustFromInt64(90, 0), NewSize: udecimal.MustFromFloat64(0.5)})
+		err := testOrderBook.AmendOrder(context.Background(), newAmendCmd("buy-1", 90, 0.5, 101))
 		assert.NoError(t, err)
 		// Verify Depth
 		assert.Eventually(t, func() bool {
 			depth, err := testOrderBook.Depth(10)
-			return err == nil && len(depth.Bids) > 0 && depth.Bids[0].Size.String() == "0.5"
+			return err == nil && len(depth.Bids) > 0 && depth.Bids[0].Size == "0.5"
 		}, 1*time.Second, 10*time.Millisecond)
 		depth, err := testOrderBook.Depth(10)
 		assert.NoError(t, err)
-		assert.Equal(t, "0.5", depth.Bids[0].Size.String())
+		assert.Equal(t, "0.5", depth.Bids[0].Size)
 
 		// Verify Log
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -918,10 +802,10 @@ func TestAmendOrder(t *testing.T) {
 
 		// Verify Priority: Add another order at same price, match against them.
 		// Add buy-new at 90.
-		testOrderBook.AddOrder(ctx, &PlaceOrderCommand{ID: "buy-new", Type: Limit, Side: Buy, Price: udecimal.MustFromInt64(90, 0), Size: udecimal.MustFromInt64(1, 0), UserID: 401})
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("buy-new", Limit, Buy, 90, 1, 401))
 
 		// Sell matching order. Should match buy-1 (0.5) first, then buy-new.
-		testOrderBook.AddOrder(ctx, &PlaceOrderCommand{ID: "sell-match", Type: Limit, Side: Sell, Price: udecimal.MustFromInt64(90, 0), Size: udecimal.MustFromFloat64(0.5), UserID: 402})
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-match", Limit, Sell, 90, 0.5, 402))
 
 		// Check logs for match
 		// 6 setup + 1 amend + 1 open(buy-new) + 1 match(sell-match vs buy-1)
@@ -943,14 +827,14 @@ func TestAmendOrder(t *testing.T) {
 		// Initial: Buy 90(1)
 
 		// 1. Add another order at 90 to compete
-		testOrderBook.AddOrder(ctx, &PlaceOrderCommand{ID: "buy-2-compete", Type: Limit, Side: Buy, Price: udecimal.MustFromInt64(90, 0), Size: udecimal.MustFromInt64(1, 0)})
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("buy-2-compete", Limit, Buy, 90, 1, 0))
 
 		// 2. Amend buy-1 size from 1 to 2 (Increase) -> Should lose priority to buy-2-compete
-		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: udecimal.MustFromInt64(90, 0), NewSize: udecimal.MustFromInt64(2, 0)})
+		err := testOrderBook.AmendOrder(context.Background(), newAmendCmd("buy-1", 90, 2, 101))
 		assert.NoError(t, err)
 
 		// 3. Sell matching order. Should match buy-2-compete first.
-		testOrderBook.AddOrder(ctx, &PlaceOrderCommand{ID: "sell-match", Type: Limit, Side: Sell, Price: udecimal.MustFromInt64(90, 0), Size: udecimal.MustFromInt64(1, 0)})
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-match", Limit, Sell, 90, 1, 0))
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		// Find match log
@@ -973,22 +857,22 @@ func TestAmendOrder(t *testing.T) {
 		// Buy-1 at 90.
 
 		// Amend price to 95
-		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: udecimal.MustFromInt64(95, 0), NewSize: udecimal.MustFromInt64(1, 0)})
+		err := testOrderBook.AmendOrder(context.Background(), newAmendCmd("buy-1", 95, 1, 101))
 		assert.NoError(t, err)
 		assert.Eventually(t, func() bool {
 			depth, err := testOrderBook.Depth(10)
-			return err == nil && depth.Bids[0].Price.String() == "95"
+			return err == nil && depth.Bids[0].Price == "95"
 		}, 1*time.Second, 10*time.Millisecond)
 
 		depth, err := testOrderBook.Depth(10)
 		assert.NoError(t, err)
-		assert.Equal(t, "95", depth.Bids[0].Price.String())
-		assert.Equal(t, "1", depth.Bids[0].Size.String())
+		assert.Equal(t, "95", depth.Bids[0].Price)
+		assert.Equal(t, "1", depth.Bids[0].Size)
 
 		// Old price 90 should be gone (or have other orders)
 		// In createTestOrderBook, we had 90, 80, 70. Now 90 moved to 95.
 		// Next bid should be 80.
-		assert.Equal(t, "80", depth.Bids[1].Price.String())
+		assert.Equal(t, "80", depth.Bids[1].Price)
 	})
 
 	t.Run("change price and size simultaneously", func(t *testing.T) {
@@ -996,17 +880,17 @@ func TestAmendOrder(t *testing.T) {
 		// Buy-1 at 90, Size 1.
 
 		// Amend Price to 95 AND Size to 5
-		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: udecimal.MustFromInt64(95, 0), NewSize: udecimal.MustFromInt64(5, 0)})
+		err := testOrderBook.AmendOrder(ctx, &protocol.AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: "95", NewSize: "5"})
 		assert.NoError(t, err)
 		assert.Eventually(t, func() bool {
 			depth, err := testOrderBook.Depth(10)
-			return err == nil && depth.Bids[0].Price.String() == "95"
+			return err == nil && depth.Bids[0].Price == "95"
 		}, 1*time.Second, 10*time.Millisecond)
 
 		depth, err := testOrderBook.Depth(10)
 		assert.NoError(t, err)
-		assert.Equal(t, "95", depth.Bids[0].Price.String())
-		assert.Equal(t, "5", depth.Bids[0].Size.String())
+		assert.Equal(t, "95", depth.Bids[0].Price)
+		assert.Equal(t, "5", depth.Bids[0].Size)
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		log := memoryPublishTrader.Get(6) // 6 setup + 1 amend
@@ -1024,7 +908,7 @@ func TestAmendOrder(t *testing.T) {
 		// Amend Buy-1 (90) to 115 (Crosses Sell-1 at 110) with Size 2
 		// Should match Sell-1 (Price 110, Size 1) fully.
 		// Remaining Buy-1 (Size 1) should sit at 115.
-		err := testOrderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: udecimal.MustFromInt64(115, 0), NewSize: udecimal.MustFromInt64(2, 0)})
+		err := testOrderBook.AmendOrder(context.Background(), newAmendCmd("buy-1", 115, 2, 101))
 		assert.NoError(t, err)
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		// 6 setup + 1 amend + 1 match + 1 open (remaining)
@@ -1056,8 +940,8 @@ func TestAmendOrder(t *testing.T) {
 		// Verify Depth: Buy-1 remaining 1 at 115
 		depth, err := testOrderBook.Depth(10)
 		assert.NoError(t, err)
-		assert.Equal(t, "115", depth.Bids[0].Price.String())
-		assert.Equal(t, "1", depth.Bids[0].Size.String())
+		assert.Equal(t, "115", depth.Bids[0].Price)
+		assert.Equal(t, "1", depth.Bids[0].Size)
 	})
 }
 
@@ -1072,8 +956,8 @@ func TestDepth(t *testing.T) {
 }
 
 func TestShutdown(t *testing.T) {
+	ctx := context.Background()
 	t.Run("Shutdown blocks until drain completes", func(t *testing.T) {
-		ctx := context.Background()
 		publishTrader := NewMemoryPublishLog()
 		orderBook := NewOrderBook("BTC-USDT", publishTrader)
 
@@ -1085,15 +969,7 @@ func TestShutdown(t *testing.T) {
 
 		// Add some orders
 		for i := 0; i < 10; i++ {
-			order := &PlaceOrderCommand{
-				ID:     "order-" + string(rune('a'+i)),
-				Type:   Limit,
-				Side:   Buy,
-				Size:   udecimal.MustFromInt64(1, 0),
-				Price:  udecimal.MustFromInt64(int64(100-i), 0),
-				UserID: int64(i),
-			}
-			err := orderBook.AddOrder(ctx, order)
+			err := orderBook.PlaceOrder(context.Background(), newPlaceCmd("order-"+string(rune('a'+i)), Limit, Buy, float64(100-i), 1, int64(i)))
 			assert.NoError(t, err)
 		}
 
@@ -1112,7 +988,6 @@ func TestShutdown(t *testing.T) {
 	})
 
 	t.Run("AddOrder returns ErrShutdown after shutdown", func(t *testing.T) {
-		ctx := context.Background()
 		publishTrader := NewMemoryPublishLog()
 		orderBook := NewOrderBook("BTC-USDT", publishTrader)
 
@@ -1131,15 +1006,17 @@ func TestShutdown(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Try to add an order after shutdown
-		order := &PlaceOrderCommand{
-			ID:     "after-shutdown",
-			Type:   Limit,
-			Side:   Buy,
-			Size:   udecimal.MustFromInt64(1, 0),
-			Price:  udecimal.MustFromInt64(100, 0),
-			UserID: 999,
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "after-shutdown",
+			OrderType: Limit,
+			Side:      Buy,
+			Size:      "1",
+			Price:     "100",
+			UserID:    999,
 		}
-		err = orderBook.AddOrder(ctx, order)
+		// Redeclare ctx for this test case
+		ctx := context.Background()
+		err = orderBook.PlaceOrder(ctx, order)
 		assert.Equal(t, ErrShutdown, err)
 	})
 
@@ -1152,7 +1029,7 @@ func TestShutdown(t *testing.T) {
 
 		// Publish a command that won't be consumed because Start() wasn't called.
 		// This ensures ProducerSequence > ConsumerSequence, causing Shutdown to wait.
-		orderBook.cmdBuffer.Publish(Command{Type: CmdGetStats})
+		orderBook.cmdBuffer.Publish(InputEvent{})
 
 		// Set isShutdown manually to simulate partial state
 		// and close done channel
@@ -1168,7 +1045,6 @@ func TestShutdown(t *testing.T) {
 	})
 
 	t.Run("Multiple Shutdown calls are safe", func(t *testing.T) {
-		ctx := context.Background()
 		publishTrader := NewMemoryPublishLog()
 		orderBook := NewOrderBook("BTC-USDT", publishTrader)
 
@@ -1193,21 +1069,20 @@ func TestShutdown(t *testing.T) {
 
 func TestRejectReason(t *testing.T) {
 	ctx := context.Background()
-
 	t.Run("IOC no liquidity", func(t *testing.T) {
 		publishTrader := NewMemoryPublishLog()
 		orderBook := NewOrderBook("BTC-USDT", publishTrader)
 		go func() { _ = orderBook.Start() }()
 
 		// Empty order book - IOC should be rejected with NoLiquidity
-		order := &PlaceOrderCommand{
-			ID:    "ioc-1",
-			Type:  IOC,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(100, 0),
-			Size:  udecimal.MustFromInt64(1, 0),
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "ioc-1",
+			OrderType: IOC,
+			Side:      Buy,
+			Price:     "100",
+			Size:      "1",
 		}
-		err := orderBook.AddOrder(ctx, order)
+		err := orderBook.PlaceOrder(ctx, order)
 		assert.NoError(t, err)
 		assert.Eventually(t, func() bool {
 			return publishTrader.Count() >= 1
@@ -1222,15 +1097,7 @@ func TestRejectReason(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
 		// IOC Buy at 100, but best ask is 110 - should reject with PriceMismatch
-		order := &PlaceOrderCommand{
-			ID:    "ioc-price",
-			Type:  IOC,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(100, 0),
-			Size:  udecimal.MustFromInt64(1, 0),
-		}
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("ioc-price", IOC, Buy, 100, 1, 0))
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
 			return memoryPublishTrader.Count() == 7
@@ -1244,15 +1111,7 @@ func TestRejectReason(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
 		// FOK Buy for 10 units, but only 3 available - should reject with InsufficientSize
-		order := &PlaceOrderCommand{
-			ID:    "fok-size",
-			Type:  FOK,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(1000, 0),
-			Size:  udecimal.MustFromInt64(10, 0),
-		}
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("fok-size", FOK, Buy, 1000, 10, 0))
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
 			return memoryPublishTrader.Count() == 7
@@ -1266,15 +1125,7 @@ func TestRejectReason(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
 		// FOK Buy at 100, but best ask is 110 - should reject with PriceMismatch
-		order := &PlaceOrderCommand{
-			ID:    "fok-price",
-			Type:  FOK,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(100, 0),
-			Size:  udecimal.MustFromInt64(1, 0),
-		}
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("fok-price", FOK, Buy, 100, 1, 0))
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
 			return memoryPublishTrader.Count() == 7
@@ -1288,15 +1139,7 @@ func TestRejectReason(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
 		// PostOnly Buy at 115, but best ask is 110 - would cross, should reject
-		order := &PlaceOrderCommand{
-			ID:    "post-only-cross",
-			Type:  PostOnly,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(115, 0),
-			Size:  udecimal.MustFromInt64(1, 0),
-		}
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("post-only-cross", PostOnly, Buy, 115, 1, 0))
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
 			return memoryPublishTrader.Count() == 7
@@ -1312,14 +1155,7 @@ func TestRejectReason(t *testing.T) {
 		go func() { _ = orderBook.Start() }()
 
 		// Empty order book - Market should be rejected with NoLiquidity
-		order := &PlaceOrderCommand{
-			ID:   "market-1",
-			Type: Market,
-			Side: Buy,
-			Size: udecimal.MustFromInt64(100, 0),
-		}
-		err := orderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = orderBook.PlaceOrder(context.Background(), newPlaceCmd("market-1", Market, Buy, 0, 100, 0))
 		assert.Eventually(t, func() bool {
 			return publishTrader.Count() >= 1
 		}, 1*time.Second, 10*time.Millisecond)
@@ -1332,60 +1168,113 @@ func TestRejectReason(t *testing.T) {
 func TestMatchAmount(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("match amount calculation", func(t *testing.T) {
-		testOrderBook := createTestOrderBook(t)
+	t.Run("exact size match at price level", func(t *testing.T) {
+		// Use a fresh order book to avoid ID conflicts
+		publishTrader := NewMemoryPublishLog()
+		testOrderBook := NewOrderBook("BTC-USDT", publishTrader)
+		go func() { _ = testOrderBook.Start() }()
 
-		// Buy order that matches sell-1 at price 110, size 1 -> Amount should be 110
-		order := &PlaceOrderCommand{
-			ID:    "buy-match",
-			Type:  Limit,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(115, 0),
-			Size:  udecimal.MustFromInt64(1, 0),
-		}
-		err := testOrderBook.AddOrder(ctx, order)
-		assert.NoError(t, err)
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-1", Limit, Sell, 80, 3, 204))
+
+		// Ensure first order is processed
+		assert.Eventually(t, func() bool {
+			stats, _ := testOrderBook.GetStats()
+			return stats != nil && stats.AskOrderCount == 1
+		}, 1*time.Second, 10*time.Millisecond)
+
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("buy-fok", FOK, Buy, 80, 3, 104))
+
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
-			return memoryPublishTrader.Count() == 7
+			// 1 Open (sell-1) + 1 Match (buy-fok) = 2 logs
+			return memoryPublishTrader.Count() == 2
 		}, 1*time.Second, 10*time.Millisecond)
-		matchLog := memoryPublishTrader.Get(6)
+
+		matchLog := memoryPublishTrader.Get(1)
 		assert.Equal(t, LogTypeMatch, matchLog.Type)
-		assert.Equal(t, "110", matchLog.Price.String())
-		assert.Equal(t, "1", matchLog.Size.String())
-		assert.Equal(t, "110", matchLog.Amount.String()) // Price * Size = 110 * 1 = 110
+		assert.Equal(t, "80", matchLog.Price.String())
+		assert.Equal(t, "3", matchLog.Size.String())
+		assert.Equal(t, "240", matchLog.Amount.String()) // Price * Size = 80 * 3 = 240
+	})
+
+	t.Run("multiple orders at same price level", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		testOrderBook := NewOrderBook("BTC-USDT", publishTrader)
+		go func() { _ = testOrderBook.Start() }()
+
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-1", Limit, Sell, 80, 1, 204))
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-2", Limit, Sell, 80, 1, 205))
+
+		assert.Eventually(t, func() bool {
+			stats, _ := testOrderBook.GetStats()
+			return stats != nil && stats.AskOrderCount == 2
+		}, 1*time.Second, 10*time.Millisecond)
+
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("buy-fok", FOK, Buy, 80, 2, 104))
+		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
+
+		assert.Eventually(t, func() bool {
+			// 2 Opens (sell-1, sell-2) + 2 Matches (buy-fok split) = 4 logs
+			return memoryPublishTrader.Count() == 4
+		}, 1*time.Second, 10*time.Millisecond)
+
+		match1 := memoryPublishTrader.Get(2)
+		assert.Equal(t, LogTypeMatch, match1.Type)
+		assert.Equal(t, "80", match1.Price.String())
+		assert.Equal(t, "1", match1.Size.String())
+		assert.Equal(t, "80", match1.Amount.String())
+
+		match2 := memoryPublishTrader.Get(3)
+		assert.Equal(t, LogTypeMatch, match2.Type)
+		assert.Equal(t, "80", match2.Price.String())
+		assert.Equal(t, "1", match2.Size.String())
+		assert.Equal(t, "80", match2.Amount.String())
 	})
 
 	t.Run("multiple matches across price levels", func(t *testing.T) {
-		testOrderBook := createTestOrderBook(t)
+		publishTrader := NewMemoryPublishLog()
+		testOrderBook := NewOrderBook("BTC-USDT", publishTrader)
+		go func() { _ = testOrderBook.Start() }()
+
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-1", Limit, Sell, 110, 1, 201))
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-2", Limit, Sell, 120, 1, 202))
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-3", Limit, Sell, 130, 1, 203))
+
+		assert.Eventually(t, func() bool {
+			stats, _ := testOrderBook.GetStats()
+			return stats != nil && stats.AskOrderCount == 3
+		}, 1*time.Second, 10*time.Millisecond)
 
 		// Buy order that matches multiple sell orders
-		order := &PlaceOrderCommand{
-			ID:    "buy-all",
-			Type:  Limit,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(1000, 0),
-			Size:  udecimal.MustFromInt64(3, 0),
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "buy-all",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "1000",
+			Size:      "3",
+			UserID:    300,
 		}
-		err := testOrderBook.AddOrder(ctx, order)
+		err := testOrderBook.PlaceOrder(ctx, order)
 		assert.NoError(t, err)
+
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
-			return memoryPublishTrader.Count() == 9
+			// 3 Opens + 3 Matches = 6 logs
+			return memoryPublishTrader.Count() == 6
 		}, 1*time.Second, 10*time.Millisecond)
 
 		// Match 1: sell-1 at 110, size 1 -> Amount 110
-		match1 := memoryPublishTrader.Get(6)
+		match1 := memoryPublishTrader.Get(3)
 		assert.Equal(t, LogTypeMatch, match1.Type)
 		assert.Equal(t, "110", match1.Amount.String())
 
 		// Match 2: sell-2 at 120, size 1 -> Amount 120
-		match2 := memoryPublishTrader.Get(7)
+		match2 := memoryPublishTrader.Get(4)
 		assert.Equal(t, LogTypeMatch, match2.Type)
 		assert.Equal(t, "120", match2.Amount.String())
 
 		// Match 3: sell-3 at 130, size 1 -> Amount 130
-		match3 := memoryPublishTrader.Get(8)
+		match3 := memoryPublishTrader.Get(5)
 		assert.Equal(t, LogTypeMatch, match3.Type)
 		assert.Equal(t, "130", match3.Amount.String())
 	})
@@ -1407,14 +1296,14 @@ func TestTradeID(t *testing.T) {
 		}
 
 		// Add a matching order
-		order := &PlaceOrderCommand{
-			ID:    "buy-match",
-			Type:  Limit,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(115, 0),
-			Size:  udecimal.MustFromInt64(1, 0),
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "buy-match",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "115",
+			Size:      "1",
 		}
-		err := testOrderBook.AddOrder(ctx, order)
+		err := testOrderBook.PlaceOrder(ctx, order)
 		assert.NoError(t, err)
 		// Match event should have TradeID > 0
 		assert.Eventually(t, func() bool {
@@ -1429,14 +1318,14 @@ func TestTradeID(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
 		// Buy order that matches all 3 sell orders
-		order := &PlaceOrderCommand{
-			ID:    "buy-all",
-			Type:  Limit,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(1000, 0),
-			Size:  udecimal.MustFromInt64(3, 0),
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "buy-all",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "1000",
+			Size:      "3",
 		}
-		err := testOrderBook.AddOrder(ctx, order)
+		err := testOrderBook.PlaceOrder(ctx, order)
 		assert.NoError(t, err)
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
@@ -1460,14 +1349,14 @@ func TestTradeID(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
 		// FOK that cannot be filled
-		order := &PlaceOrderCommand{
-			ID:    "fok-reject",
-			Type:  FOK,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(100, 0),
-			Size:  udecimal.MustFromInt64(1, 0),
+		order := &protocol.PlaceOrderCommand{
+			OrderID:   "fok-reject",
+			OrderType: FOK,
+			Side:      Buy,
+			Price:     "100",
+			Size:      "1",
 		}
-		err := testOrderBook.AddOrder(ctx, order)
+		err := testOrderBook.PlaceOrder(ctx, order)
 		assert.NoError(t, err)
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		assert.Eventually(t, func() bool {
@@ -1489,23 +1378,23 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 
 		// 1. Populate OrderBook with state
 		// Add some Limit orders (Bid and Ask)
-		err := book.AddOrder(ctx, &PlaceOrderCommand{
-			ID:     "bid-1",
-			Type:   Limit,
-			Side:   Buy,
-			Price:  udecimal.MustFromInt64(100, 0),
-			Size:   udecimal.MustFromInt64(10, 0),
-			UserID: 1,
+		err := book.PlaceOrder(ctx, &protocol.PlaceOrderCommand{
+			OrderID:   "bid-1",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "100",
+			Size:      "10",
+			UserID:    1,
 		})
 		assert.NoError(t, err)
 
-		err = book.AddOrder(ctx, &PlaceOrderCommand{
-			ID:     "ask-1",
-			Type:   Limit,
-			Side:   Sell,
-			Price:  udecimal.MustFromInt64(110, 0),
-			Size:   udecimal.MustFromInt64(5, 0),
-			UserID: 2,
+		err = book.PlaceOrder(ctx, &protocol.PlaceOrderCommand{
+			OrderID:   "ask-1",
+			OrderType: Limit,
+			Side:      Sell,
+			Price:     "110",
+			Size:      "5",
+			UserID:    2,
 		})
 		assert.NoError(t, err)
 
@@ -1543,11 +1432,11 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 		// Verify Order details
 		bid := restoredBook.bidQueue.order("bid-1")
 		assert.NotNil(t, bid)
-		assert.Equal(t, udecimal.MustFromInt64(100, 0), bid.Price)
+		assert.Equal(t, "100", bid.Price.String())
 
 		ask := restoredBook.askQueue.order("ask-1")
 		assert.NotNil(t, ask)
-		assert.Equal(t, udecimal.MustFromInt64(110, 0), ask.Price)
+		assert.Equal(t, "110", ask.Price.String())
 
 		// 4. Start Restored Book and verify it functions
 		go func() { _ = restoredBook.Start() }()
@@ -1558,12 +1447,12 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 
 		// Add a matching order to prove continuity
-		err = restoredBook.AddOrder(ctx, &PlaceOrderCommand{
-			ID:    "buy-match",
-			Type:  Limit,
-			Side:  Buy,
-			Price: udecimal.MustFromInt64(115, 0),
-			Size:  udecimal.MustFromInt64(1, 0),
+		err = restoredBook.PlaceOrder(ctx, &protocol.PlaceOrderCommand{
+			OrderID:   "buy-match",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "115",
+			Size:      "1",
 		})
 		assert.NoError(t, err)
 
@@ -1577,7 +1466,7 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 
 		// Verify ask size reduced
 		askAfter := restoredBook.askQueue.order("ask-1")
-		assert.Equal(t, udecimal.MustFromInt64(4, 0).String(), askAfter.Size.String())
+		assert.Equal(t, "4", askAfter.Size.String())
 	})
 }
 
@@ -1590,19 +1479,10 @@ func TestOrderValidation(t *testing.T) {
 	}()
 
 	t.Run("RejectDuplicateOrderID", func(t *testing.T) {
-		order1 := &PlaceOrderCommand{
-			ID:     "dup-id",
-			Type:   Limit,
-			Side:   Buy,
-			Size:   udecimal.MustFromInt64(1, 0),
-			Price:  udecimal.MustFromInt64(100, 0),
-			UserID: 1,
-		}
-		err := orderBook.AddOrder(ctx, order1)
-		assert.NoError(t, err)
+		_ = orderBook.PlaceOrder(context.Background(), newPlaceCmd("dup-id", Limit, Buy, 100, 1, 1))
 
 		// Try to add same ID again
-		err = orderBook.AddOrder(ctx, order1)
+		err := orderBook.PlaceOrder(ctx, newPlaceCmd("dup-id", Limit, Buy, 100, 1, 1))
 		assert.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
@@ -1617,7 +1497,7 @@ func TestOrderValidation(t *testing.T) {
 	})
 
 	t.Run("RejectCancelNonExistentOrder", func(t *testing.T) {
-		err := orderBook.CancelOrder(ctx, &CancelOrderCommand{OrderID: "non-existent", UserID: 1})
+		err := orderBook.CancelOrder(ctx, &protocol.CancelOrderCommand{OrderID: "non-existent", UserID: 1})
 		assert.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
@@ -1632,7 +1512,7 @@ func TestOrderValidation(t *testing.T) {
 	})
 
 	t.Run("RejectAmendNonExistentOrder", func(t *testing.T) {
-		err := orderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: "non-existent", UserID: 1, NewPrice: udecimal.MustFromInt64(100, 0), NewSize: udecimal.MustFromInt64(2, 0)})
+		err := orderBook.AmendOrder(ctx, &protocol.AmendOrderCommand{OrderID: "non-existent", UserID: 1, NewPrice: "100", NewSize: "2"})
 		assert.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
@@ -1649,13 +1529,13 @@ func TestOrderValidation(t *testing.T) {
 	t.Run("RejectUserIDMismatch", func(t *testing.T) {
 		// Create an order with UserID 1
 		id := "owner-1"
-		orderBook.AddOrder(ctx, &PlaceOrderCommand{
-			ID:     id,
-			Type:   Limit,
-			Side:   Buy,
-			Size:   udecimal.MustFromInt64(1, 0),
-			Price:  udecimal.MustFromInt64(100, 0),
-			UserID: 1,
+		orderBook.PlaceOrder(ctx, &protocol.PlaceOrderCommand{
+			OrderID:   id,
+			OrderType: Limit,
+			Side:      Buy,
+			Size:      "1",
+			Price:     "100",
+			UserID:    1,
 		})
 
 		// Wait for it to be added
@@ -1665,11 +1545,11 @@ func TestOrderValidation(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 
 		// Try to cancel with UserID 2
-		err := orderBook.CancelOrder(ctx, &CancelOrderCommand{OrderID: id, UserID: 2})
+		err := orderBook.CancelOrder(ctx, &protocol.CancelOrderCommand{OrderID: id, UserID: 2})
 		assert.NoError(t, err)
 
 		// Try to amend with UserID 2
-		err = orderBook.AmendOrder(ctx, &AmendOrderCommand{OrderID: id, UserID: 2, NewPrice: udecimal.MustFromInt64(110, 0), NewSize: udecimal.MustFromInt64(1, 0)})
+		err = orderBook.AmendOrder(ctx, &protocol.AmendOrderCommand{OrderID: id, UserID: 2, NewPrice: "110", NewSize: "1"})
 		assert.NoError(t, err)
 
 		// Verify rejections
@@ -1701,7 +1581,7 @@ func TestOrderBook_LotSize(t *testing.T) {
 		go func() { _ = orderBook.Start() }()
 
 		// Verify default lotSize is set
-		assert.True(t, orderBook.lotSize.Equal(DefaultLotSize))
+		assert.True(t, orderBook.lotSize == DefaultLotSize)
 	})
 
 	t.Run("custom LotSize via option", func(t *testing.T) {
@@ -1710,7 +1590,7 @@ func TestOrderBook_LotSize(t *testing.T) {
 		orderBook := NewOrderBook("BTC-USDT", publishTrader, WithLotSize(customLotSize))
 		go func() { _ = orderBook.Start() }()
 
-		assert.True(t, orderBook.lotSize.Equal(customLotSize))
+		assert.True(t, orderBook.lotSize == customLotSize)
 	})
 
 	t.Run("Market order quote mode - reject when matchSize below LotSize", func(t *testing.T) {
@@ -1721,12 +1601,13 @@ func TestOrderBook_LotSize(t *testing.T) {
 		go func() { _ = orderBook.Start() }()
 
 		// Place a sell order: 0.1 BTC @ 50000 USDT
-		err := orderBook.AddOrder(ctx, &PlaceOrderCommand{
-			ID:    "sell-1",
-			Type:  Limit,
-			Side:  Sell,
-			Size:  udecimal.MustParse("0.1"),
-			Price: udecimal.MustFromInt64(50000, 0),
+		err := orderBook.PlaceOrder(context.Background(), &protocol.PlaceOrderCommand{
+			OrderID:   "sell-1",
+			OrderType: Limit,
+			Side:      Sell,
+			Price:     "50000",
+			Size:      "0.1",
+			UserID:    1,
 		})
 		assert.NoError(t, err)
 
@@ -1738,11 +1619,13 @@ func TestOrderBook_LotSize(t *testing.T) {
 		// Market buy with quoteSize = 0.04 USDT
 		// matchSize = 0.04 / 50000 = 0.0000008 BTC < 0.001 (LotSize)
 		// Should be rejected immediately
-		err = orderBook.AddOrder(ctx, &PlaceOrderCommand{
-			ID:        "market-buy",
-			Type:      Market,
+		err = orderBook.PlaceOrder(ctx, &protocol.PlaceOrderCommand{
+			OrderID:   "market-buy",
+			OrderType: Market,
 			Side:      Buy,
-			QuoteSize: udecimal.MustParse("0.04"),
+			Price:     "0",
+			Size:      "0",
+			QuoteSize: udecimal.MustParse("0.04").String(),
 		})
 		assert.NoError(t, err)
 
@@ -1772,12 +1655,12 @@ func TestOrderBook_LotSize(t *testing.T) {
 		go func() { _ = orderBook.Start() }()
 
 		// Place a sell order: 0.005 BTC @ 1000 USDT (worth 5 USDT)
-		err := orderBook.AddOrder(ctx, &PlaceOrderCommand{
-			ID:    "sell-1",
-			Type:  Limit,
-			Side:  Sell,
-			Size:  udecimal.MustParse("0.005"),
-			Price: udecimal.MustFromInt64(1000, 0),
+		err := orderBook.PlaceOrder(ctx, &protocol.PlaceOrderCommand{
+			OrderID:   "sell-1",
+			OrderType: Limit,
+			Side:      Sell,
+			Size:      udecimal.MustParse("0.005").String(),
+			Price:     "1000",
 		})
 		assert.NoError(t, err)
 
@@ -1790,11 +1673,13 @@ func TestOrderBook_LotSize(t *testing.T) {
 		// First match: 0.005 BTC @ 1000 = 5 USDT
 		// Remaining: 0.5 USDT → matchSize = 0.5/1000 = 0.0005 BTC < 0.001 (LotSize)
 		// Should match first, then reject remaining
-		err = orderBook.AddOrder(ctx, &PlaceOrderCommand{
-			ID:        "market-buy",
-			Type:      Market,
+		err = orderBook.PlaceOrder(ctx, &protocol.PlaceOrderCommand{
+			OrderID:   "market-buy",
+			OrderType: Market,
 			Side:      Buy,
-			QuoteSize: udecimal.MustParse("5.5"),
+			Price:     "0",
+			Size:      "0",
+			QuoteSize: udecimal.MustParse("5.5").String(),
 		})
 		assert.NoError(t, err)
 

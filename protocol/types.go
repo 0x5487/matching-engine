@@ -1,12 +1,9 @@
 package protocol
 
-import "github.com/quagmt/udecimal"
-
-// DepthItem represents a single price level in the order book.
 type DepthItem struct {
-	ID    uint32           `json:"id"`
-	Price udecimal.Decimal `json:"price"`
-	Size  udecimal.Decimal `json:"size"`
+	Price string `json:"price"`
+	Size  string `json:"size"`
+	Count int64  `json:"count"`
 }
 
 // GetDepthResponse represents the state of the order book depth.
@@ -42,4 +39,29 @@ const (
 	OrderTypeIOC      OrderType = "ioc"       // Immediate Or Cancel
 	OrderTypePostOnly OrderType = "post_only" // Maker only
 	OrderTypeCancel   OrderType = "cancel"    // The order has been canceled
+)
+
+// LogType represents the type of event log.
+type LogType string
+
+const (
+	LogTypeOpen   LogType = "open"
+	LogTypeMatch  LogType = "match"
+	LogTypeCancel LogType = "cancel"
+	LogTypeAmend  LogType = "amend"
+	LogTypeReject LogType = "reject"
+)
+
+// RejectReason represents the reason why an order was rejected.
+type RejectReason string
+
+const (
+	RejectReasonNone             RejectReason = ""
+	RejectReasonNoLiquidity      RejectReason = "no_liquidity"      // Market/IOC/FOK: No orders available to match
+	RejectReasonPriceMismatch    RejectReason = "price_mismatch"    // IOC/FOK: Price does not meet requirements
+	RejectReasonInsufficientSize RejectReason = "insufficient_size" // FOK: Cannot be fully filled
+	RejectReasonPostOnlyMatch    RejectReason = "post_only_match"   // PostOnly: Would match immediately
+	RejectReasonDuplicateID      RejectReason = "duplicate_order_id"
+	RejectReasonOrderNotFound    RejectReason = "order_not_found"
+	RejectReasonInvalidPayload   RejectReason = "invalid_payload"
 )

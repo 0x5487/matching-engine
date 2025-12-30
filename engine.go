@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/0x5487/matching-engine/protocol"
 )
 
 // MatchingEngine manages multiple order books for different markets.
@@ -23,26 +25,49 @@ type MatchingEngine struct {
 // NewMatchingEngine creates a new matching engine instance.
 func NewMatchingEngine(publishTrader PublishLog) *MatchingEngine {
 	return &MatchingEngine{
+		orderbooks:    sync.Map{},
 		publishTrader: publishTrader,
 	}
 }
 
-// AddOrder adds an order to the appropriate order book based on the market ID.
-// Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
-func (engine *MatchingEngine) AddOrder(ctx context.Context, cmd *PlaceOrderCommand) error {
+// ExecuteCommand implements protocol.OrderBookAPI.
+// It routes the command to the correct OrderBook based on the MarketID.
+func (engine *MatchingEngine) ExecuteCommand(cmd *protocol.Command) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown
 	}
-	orderbook := engine.OrderBook(cmd.MarketID)
+
+	// Host layer extracts MarketID directly from envelope.
+	marketID := cmd.MarketID
+
+	if len(marketID) == 0 {
+		return ErrNotFound
+	}
+
+	orderbook := engine.OrderBook(marketID)
 	if orderbook == nil {
 		return ErrNotFound
 	}
-	return orderbook.AddOrder(ctx, cmd)
+
+	return orderbook.ExecuteCommand(cmd)
+}
+
+// PlaceOrder adds an order to the appropriate order book based on the market ID.
+// Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
+func (engine *MatchingEngine) PlaceOrder(ctx context.Context, marketID string, cmd *protocol.PlaceOrderCommand) error {
+	if engine.isShutdown.Load() {
+		return ErrShutdown
+	}
+	orderbook := engine.OrderBook(marketID)
+	if orderbook == nil {
+		return ErrNotFound
+	}
+	return orderbook.PlaceOrder(ctx, cmd)
 }
 
 // AmendOrder modifies an existing order in the appropriate order book.
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
-func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, cmd *AmendOrderCommand) error {
+func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, cmd *protocol.AmendOrderCommand) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown
 	}
@@ -55,7 +80,7 @@ func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, c
 
 // CancelOrder cancels an order in the appropriate order book.
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
-func (engine *MatchingEngine) CancelOrder(ctx context.Context, marketID string, cmd *CancelOrderCommand) error {
+func (engine *MatchingEngine) CancelOrder(ctx context.Context, marketID string, cmd *protocol.CancelOrderCommand) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown
 	}

@@ -3,6 +3,7 @@ package match
 import (
 	"time"
 
+	"github.com/0x5487/matching-engine/protocol"
 	"github.com/0x5487/matching-engine/structure"
 	"github.com/quagmt/udecimal"
 )
@@ -17,12 +18,6 @@ type priceUnit struct {
 	head      *Order
 	tail      *Order
 	count     int64
-}
-
-type DepthItem struct {
-	ID    uint32
-	Price udecimal.Decimal
-	Size  udecimal.Decimal
 }
 
 type queue struct {
@@ -255,32 +250,21 @@ func (q *queue) toSnapshot() []*Order {
 }
 
 // depth returns the order book depth up to the specified limit.
-func (q *queue) depth(limit uint32) []*DepthItem {
-	result := make([]*DepthItem, 0, limit)
-
-	iter := q.orderedPrices.Iterator()
-
-	var i uint32 = 0
-	for i < limit && iter.Valid() {
-		price := iter.Price()
-		unit, ok := q.priceList[price]
-		if !ok {
-			iter.Next()
-			continue
+func (q *queue) depth(limit uint32) []*protocol.DepthItem {
+	result := make([]*protocol.DepthItem, 0, limit)
+	it := q.priceIterator()
+	count := uint32(0)
+	for it.Valid() && count < limit {
+		price, unit := it.PriceUnit()
+		d := &protocol.DepthItem{
+			Price: price.String(),
+			Size:  unit.totalSize.String(),
+			Count: unit.count,
 		}
-
-		d := DepthItem{
-			ID:    i,
-			Price: price,
-			Size:  unit.totalSize,
-		}
-
-		result = append(result, &d)
-
-		iter.Next()
-		i++
+		result = append(result, d)
+		count++
+		it.Next()
 	}
-
 	return result
 }
 

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/0x5487/matching-engine/protocol"
 	"github.com/quagmt/udecimal"
 )
 
@@ -16,7 +17,6 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	oldProcs := runtime.GOMAXPROCS(runtime.NumCPU())
 	defer runtime.GOMAXPROCS(oldProcs)
 
-	ctx := context.Background()
 	publishTrader := NewDiscardPublishLog()
 	engine := NewMatchingEngine(publishTrader)
 
@@ -35,27 +35,15 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	}
 	sizeOne := udecimal.MustFromInt64(1, 0)
 
-	// To prevent Data Race while maintaining high performance:
-	// We use a circular buffer (Pool) of commands. The size must exceed the
-	// Engine's channel capacity (32768) + some buffer.
+	// Pre-allocate and pre-serialize Commands to simulate MQ consumer scenario.
+	// In production, Commands arrive already serialized from NATS/Kafka.
 	const poolSize = 65536
-	cmdPool := make([]PlaceOrderCommand, poolSize)
+	serializer := &protocol.DefaultJSONSerializer{}
+	cmdPool := make([]*protocol.Command, poolSize)
+
 	for i := 0; i < poolSize; i++ {
-		cmdPool[i] = PlaceOrderCommand{
-			MarketID: marketID,
-			ID:       strconv.Itoa(i), // Pre-generate IDs
-			Type:     Limit,
-			Size:     sizeOne,
-		}
-	}
-
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
+		var side Side
 		var priceIdx int
-
-		// Select a unique slot from the pool to avoid data races with async engine
-		order := &cmdPool[i%poolSize]
 
 		// 80/20 Distribution
 		r := rng.Intn(100)
@@ -64,29 +52,48 @@ func BenchmarkPlaceOrders(b *testing.B) {
 			sideR := rng.Intn(2)
 			offset := rng.Intn(10) + 1
 			if sideR == 0 {
-				order.Side = Buy
-				priceIdx = 500 - offset // 490-499 -> prices 9990-9999
+				side = Buy
+				priceIdx = 500 - offset
 			} else {
-				order.Side = Sell
-				priceIdx = 500 + offset // 501-510 -> prices 10001-10010
+				side = Sell
+				priceIdx = 500 + offset
 			}
 		} else {
 			// 20% in remaining 490 ticks per side
 			sideR := rng.Intn(2)
 			offset := rng.Intn(490) + 11
 			if sideR == 0 {
-				order.Side = Buy
-				priceIdx = 500 - offset // 10-499 -> prices 9510-9989
+				side = Buy
+				priceIdx = 500 - offset
 			} else {
-				order.Side = Sell
-				priceIdx = 500 + offset // 511-1000 -> prices 10011-10500
+				side = Sell
+				priceIdx = 500 + offset
 			}
 		}
 
-		order.Price = priceCache[priceIdx]
-		order.UserID = int64(rng.Intn(1000) + 1)
+		placeCmd := &protocol.PlaceOrderCommand{
+			OrderID:   strconv.Itoa(i),
+			OrderType: Limit,
+			Side:      side,
+			Price:     priceCache[priceIdx].String(),
+			Size:      sizeOne.String(),
+			UserID:    int64(rng.Intn(1000) + 1),
+		}
 
-		_ = engine.AddOrder(ctx, order)
+		// Pre-serialize payload (simulating MQ message already serialized)
+		payload, _ := serializer.Marshal(placeCmd)
+		cmdPool[i] = &protocol.Command{
+			MarketID: marketID,
+			Type:     protocol.CmdPlaceOrder,
+			Payload:  payload,
+		}
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		// Hot path: only ExecuteCommand (no serialization overhead)
+		_ = engine.ExecuteCommand(cmdPool[i%poolSize])
 	}
 
 	b.StopTimer()
@@ -105,7 +112,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 		b.ReportMetric(ordersPerSec, "orders/sec")
 	}
 
-	_ = engine.Shutdown(ctx)
+	_ = engine.Shutdown(context.Background())
 }
 
 func BenchmarkMatching(b *testing.B) {
@@ -113,7 +120,6 @@ func BenchmarkMatching(b *testing.B) {
 	oldProcs := runtime.GOMAXPROCS(runtime.NumCPU())
 	defer runtime.GOMAXPROCS(oldProcs)
 
-	ctx := context.Background()
 	publishTrader := NewDiscardPublishLog()
 	engine := NewMatchingEngine(publishTrader)
 	marketID := "MATCH-USDT"
@@ -121,31 +127,44 @@ func BenchmarkMatching(b *testing.B) {
 
 	price := udecimal.MustFromInt64(10000, 0)
 	size := udecimal.MustFromInt64(1, 0)
+	serializer := &protocol.DefaultJSONSerializer{}
 
-	// Pre-allocate command pool
-	// We need 2 commands per loop
+	// Pre-allocate and pre-serialize command pool
+	// We need 2 commands per loop (Sell + Buy that matches)
 	poolSize := 4096
-	cmds := make([]PlaceOrderCommand, poolSize)
+	cmdPool := make([]*protocol.Command, poolSize)
+
 	for i := 0; i < poolSize; i += 2 {
-		// Sell
-		cmds[i] = PlaceOrderCommand{
-			MarketID: marketID,
-			ID:       "sell-" + strconv.Itoa(i),
-			UserID:   1,
-			Side:     Sell,
-			Price:    price,
-			Size:     size,
-			Type:     Limit,
+		// Sell order (will rest in book)
+		sellCmd := &protocol.PlaceOrderCommand{
+			OrderID:   "sell-" + strconv.Itoa(i),
+			UserID:    1,
+			Side:      Sell,
+			Price:     price.String(),
+			Size:      size.String(),
+			OrderType: Limit,
 		}
-		// Buy matches Sell
-		cmds[i+1] = PlaceOrderCommand{
+		sellPayload, _ := serializer.Marshal(sellCmd)
+		cmdPool[i] = &protocol.Command{
 			MarketID: marketID,
-			ID:       "buy-" + strconv.Itoa(i+1),
-			UserID:   2,
-			Side:     Buy,
-			Price:    price,
-			Size:     size,
-			Type:     Limit,
+			Type:     protocol.CmdPlaceOrder,
+			Payload:  sellPayload,
+		}
+
+		// Buy order (matches the Sell immediately)
+		buyCmd := &protocol.PlaceOrderCommand{
+			OrderID:   "buy-" + strconv.Itoa(i+1),
+			UserID:    2,
+			Side:      Buy,
+			Price:     price.String(),
+			Size:      size.String(),
+			OrderType: Limit,
+		}
+		buyPayload, _ := serializer.Marshal(buyCmd)
+		cmdPool[i+1] = &protocol.Command{
+			MarketID: marketID,
+			Type:     protocol.CmdPlaceOrder,
+			Payload:  buyPayload,
 		}
 	}
 
@@ -155,10 +174,10 @@ func BenchmarkMatching(b *testing.B) {
 		idx := (i * 2) % poolSize
 
 		// Place Sell (Resting)
-		_ = engine.AddOrder(ctx, &cmds[idx])
+		_ = engine.ExecuteCommand(cmdPool[idx])
 
 		// Place Buy (Matches immediately)
-		_ = engine.AddOrder(ctx, &cmds[idx+1])
+		_ = engine.ExecuteCommand(cmdPool[idx+1])
 	}
 
 	b.StopTimer()

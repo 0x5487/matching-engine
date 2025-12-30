@@ -285,3 +285,135 @@ func TestOrderBook_PlaceOrder(t *testing.T) {
 ---
 
 *架構評審通過，開發團隊可進入實作階段。*
+
+---
+
+## 8. 程式碼審查記錄 (Code Review)
+
+> **審查日期**: 2025-12-30  
+> **審查角色**: 撮合引擎首席架構師  
+> **審查範圍**: 程式碼品質、測試覆蓋率、規格書符合度
+
+### 8.1 審查總結
+
+| 審查項目 | 狀態 | 說明 |
+|----------|------|------|
+| 單元測試 | ✅ 通過 | 50+ 測試案例全數通過 |
+| 規格書符合度 | ✅ 通過 | 實作符合 Lazy Deserialization 與 CQRS 設計 |
+| 類型定義 | ✅ 通過 | `models.go` 正確使用 Type Alias 引用 `protocol/` |
+| 程式碼品質 | ⚠️ 有條件通過 | 發現 3 個需修正問題 |
+
+**測試結果**:
+```
+ok  github.com/0x5487/matching-engine       1.024s (50+ PASS)
+ok  github.com/0x5487/matching-engine/structure     0.092s 
+```
+
+---
+
+### 8.2 實作亮點
+
+1. **Type Alias 正確使用**
+   ```go
+   // models.go - 正確引用 protocol 類型
+   type Side = protocol.Side
+   type OrderType = protocol.OrderType
+   type RejectReason = protocol.RejectReason
+   ```
+   - 避免重複定義，實現 Single Source of Truth
+
+2. **DefaultJSONSerializer 使用 sonic 高性能庫**
+   ```go
+   // protocol/serializer.go
+   import "github.com/bytedance/sonic"
+   ```
+   - Sonic 是字節跳動開發的高性能 JSON 庫，比標準庫快 2-4x
+
+3. **測試輔助函數重構**
+   ```go
+   func newPlaceCmd(id string, ot OrderType, s Side, price, size float64, userID int64) *protocol.PlaceOrderCommand
+   func newAmendCmd(id string, price, size float64, userID int64) *protocol.AmendOrderCommand
+   func newCancelCmd(id string, userID int64) *protocol.CancelOrderCommand
+   ```
+   - 簡化測試代碼，提高可讀性
+
+---
+
+### 8.3 ~~需修正問題~~ 已修正問題 ✅
+
+> [!NOTE]
+> 所有問題已於 2025-12-30 修正完成。
+
+#### ~~Issue #1: Marshal 錯誤被忽略~~ ✅ 已修正
+
+**修正內容**: `order_book.go:117, 132, 147` 現在正確處理 Marshal 錯誤並回傳。
+
+```go
+// 修正後
+bytes, err := book.serializer.Marshal(cmd)
+if err != nil {
+    return err
+}
+```
+
+#### ~~Issue #2: Cancel/Amend Unmarshal 錯誤靜默忽略~~ ✅ 已修正
+
+**修正內容**: `processCommand` 中的 Cancel/Amend 分支現在統一使用 `rejectInvalidPayload` 回報錯誤。
+
+```go
+// 修正後
+case protocol.CmdCancelOrder:
+    var payload protocol.CancelOrderCommand
+    if err := book.serializer.Unmarshal(cmd.Payload, &payload); err != nil {
+        book.rejectInvalidPayload(cmd.SeqID, "unknown", 0, RejectReasonInvalidPayload, cmd.Metadata)
+        return
+    }
+    book.handleCancelOrder(&payload)
+```
+
+#### ~~Issue #3: SeqID 參數未使用~~ ✅ 已修正
+
+**修正內容**: `handleCancelOrder` 和 `handleAmendOrder` 已移除未使用的 `seqID` 參數。
+
+```go
+// 修正後
+func (book *OrderBook) handleCancelOrder(cmd *protocol.CancelOrderCommand)
+func (book *OrderBook) handleAmendOrder(cmd *protocol.AmendOrderCommand)
+```
+
+---
+
+### 8.4 測試案例評估
+
+| 測試類別 | 測試數量 | 評估 |
+|----------|----------|------|
+| Limit Order | 5+ | ✅ 涵蓋完全成交、部分成交、掛單 |
+| Market Order | 8+ | ✅ 涵蓋 QuoteSize、BaseSize、LotSize |
+| IOC/FOK | 8+ | ✅ 涵蓋成功、失敗、部分成交 |
+| PostOnly | 2 | ✅ 涵蓋成功掛單與被拒 |
+| Cancel/Amend | 10+ | ✅ 涵蓋成功、NotFound、UserID 校驗 |
+| Iceberg | 10+ | ✅ 完整 Iceberg 場景 |
+| Snapshot/Restore | 1 | ✅ 狀態恢復正確 |
+| RejectReason | 7 | ✅ 所有拒絕原因有對應測試 |
+
+**測試品質評語**: 測試覆蓋率高，場景全面。測試輔助函數 `newPlaceCmd` 等使代碼更簡潔。
+
+---
+
+### 8.5 審查結論
+
+| 審查結果 | ✅ **通過 (APPROVED)** |
+|----------|------------------------|
+| 說明 | 所有發現的問題已修正，測試全數通過 |
+
+**修正摘要**:
+- ✅ Issue #1: Marshal 錯誤處理（3 處）
+- ✅ Issue #2: Cancel/Amend Unmarshal 錯誤回報（2 處）
+- ✅ Issue #3: 移除未使用的 seqID 參數（2 處）
+
+**測試驗證**: `go test ./...` — 50+ 測試案例全數通過
+
+---
+
+*程式碼審查完成，所有問題已修正。*
+

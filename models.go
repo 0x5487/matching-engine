@@ -3,6 +3,7 @@ package match
 import (
 	"time"
 
+	"github.com/0x5487/matching-engine/protocol"
 	"github.com/quagmt/udecimal"
 )
 
@@ -15,39 +16,23 @@ const (
 	SnapshotSchemaVersion = 1
 )
 
-type Side int8
+type Side = protocol.Side
 
 const (
-	Buy  Side = 1
-	Sell Side = 2
+	Buy  Side = protocol.SideBuy
+	Sell Side = protocol.SideSell
 )
 
-type OrderType string
+type OrderType = protocol.OrderType
 
 const (
-	Market   OrderType = "market"
-	Limit    OrderType = "limit"
-	FOK      OrderType = "fok"       // Fill Or Kill
-	IOC      OrderType = "ioc"       // Immediate Or Cancel
-	PostOnly OrderType = "post_only" // be maker order only
-	Cancel   OrderType = "cancel"    // the order has been canceled
+	Market   OrderType = protocol.OrderTypeMarket
+	Limit    OrderType = protocol.OrderTypeLimit
+	FOK      OrderType = protocol.OrderTypeFOK
+	IOC      OrderType = protocol.OrderTypeIOC
+	PostOnly OrderType = protocol.OrderTypePostOnly
+	Cancel   OrderType = protocol.OrderTypeCancel
 )
-
-// PlaceOrderCommand is the input command for placing an order.
-// QuoteSize is only used for Market orders to specify amount in quote currency.
-type PlaceOrderCommand struct {
-	SeqID       uint64           `json:"seq_id"` // MQ sequence ID for snapshot/restore
-	Timestamp   int64            `json:"timestamp"`
-	MarketID    string           `json:"market_id"`
-	ID          string           `json:"id"`
-	Side        Side             `json:"side"`
-	Type        OrderType        `json:"type"`
-	Price       udecimal.Decimal `json:"price"`                  // Limit order price
-	Size        udecimal.Decimal `json:"size"`                   // Base currency quantity (e.g., BTC)
-	VisibleSize udecimal.Decimal `json:"visible_size,omitempty"` // Iceberg visible size
-	QuoteSize   udecimal.Decimal `json:"quote_size,omitempty"`   // Quote currency amount (e.g., USDT), only for Market orders
-	UserID      int64            `json:"user_id"`
-}
 
 // Order represents the state of an order in the order book.
 // This is the serializable state used for snapshots.
@@ -69,27 +54,28 @@ type Order struct {
 	prev *Order
 }
 
-type LogType string
+type LogType = protocol.LogType
 
 const (
-	LogTypeOpen   LogType = "open"
-	LogTypeMatch  LogType = "match"
-	LogTypeCancel LogType = "cancel"
-	LogTypeAmend  LogType = "amend"
-	LogTypeReject LogType = "reject"
+	LogTypeOpen   LogType = protocol.LogTypeOpen
+	LogTypeMatch  LogType = protocol.LogTypeMatch
+	LogTypeCancel LogType = protocol.LogTypeCancel
+	LogTypeAmend  LogType = protocol.LogTypeAmend
+	LogTypeReject LogType = protocol.LogTypeReject
 )
 
 // RejectReason represents the reason why an order was rejected.
-type RejectReason string
+type RejectReason = protocol.RejectReason
 
 const (
-	RejectReasonNone             RejectReason = ""
-	RejectReasonNoLiquidity      RejectReason = "no_liquidity"      // Market/IOC/FOK: No orders available to match
-	RejectReasonPriceMismatch    RejectReason = "price_mismatch"    // IOC/FOK: Price does not meet requirements
-	RejectReasonInsufficientSize RejectReason = "insufficient_size" // FOK: Cannot be fully filled
-	RejectReasonPostOnlyMatch    RejectReason = "post_only_match"   // PostOnly: Would match immediately
-	RejectReasonDuplicateID      RejectReason = "duplicate_order_id"
-	RejectReasonOrderNotFound    RejectReason = "order_not_found"
+	RejectReasonNone             RejectReason = protocol.RejectReasonNone
+	RejectReasonNoLiquidity      RejectReason = protocol.RejectReasonNoLiquidity
+	RejectReasonPriceMismatch    RejectReason = protocol.RejectReasonPriceMismatch
+	RejectReasonInsufficientSize RejectReason = protocol.RejectReasonInsufficientSize
+	RejectReasonPostOnlyMatch    RejectReason = protocol.RejectReasonPostOnlyMatch
+	RejectReasonDuplicateID      RejectReason = protocol.RejectReasonDuplicateID
+	RejectReasonOrderNotFound    RejectReason = protocol.RejectReasonOrderNotFound
+	RejectReasonInvalidPayload   RejectReason = protocol.RejectReasonInvalidPayload
 )
 
 type Response struct {
@@ -103,28 +89,6 @@ type OrderBookUpdateEvent struct {
 	Time time.Time
 }
 
-type Depth struct {
-	UpdateID uint64       `json:"update_id"`
-	Asks     []*DepthItem `json:"asks"`
-	Bids     []*DepthItem `json:"bids"`
-}
-
-type AmendOrderCommand struct {
-	SeqID     uint64           `json:"seq_id"` // MQ sequence ID for snapshot/restore
-	OrderID   string           `json:"order_id"`
-	UserID    int64            `json:"user_id"`
-	NewPrice  udecimal.Decimal `json:"new_price"`
-	NewSize   udecimal.Decimal `json:"new_size"`
-	Timestamp int64            `json:"timestamp"`
-}
-
-type CancelOrderCommand struct {
-	SeqID     uint64 `json:"seq_id"` // MQ sequence ID for snapshot/restore
-	OrderID   string `json:"order_id"`
-	UserID    int64  `json:"user_id"`
-	Timestamp int64  `json:"timestamp"`
-}
-
 // DepthChange represents a change in the order book depth.
 type DepthChange struct {
 	Side     Side
@@ -132,51 +96,12 @@ type DepthChange struct {
 	SizeDiff udecimal.Decimal
 }
 
-// CommandType represents the type of command sent to the order book.
-type CommandType int
+// InputEvent is the internal wrapper for all events entering the OrderBook Actor.
+type InputEvent struct {
+	// Cmd is the external command carrier.
+	Cmd *protocol.Command
 
-const (
-	CmdPlaceOrder CommandType = iota
-	CmdCancelOrder
-	CmdAmendOrder
-	CmdDepth
-	CmdGetStats
-	CmdSnapshot
-)
-
-// BookStats contains statistics about the order book queues
-type BookStats struct {
-	AskDepthCount int64
-	AskOrderCount int64
-	BidDepthCount int64
-	BidOrderCount int64
-}
-
-// Command represents a unified command sent to the order book.
-// It improves deterministic ordering and performance by using a single channel.
-// We use flattened fields to avoid 'any' boxing allocations.
-type Command struct {
-	SeqID uint64
-	Type  CommandType
-
-	// Place/Add Order fields
-	MarketID    string
-	OrderID     string
-	Side        Side
-	OrderType   OrderType
-	Price       udecimal.Decimal
-	Size        udecimal.Decimal
-	QuoteSize   udecimal.Decimal
-	VisibleSize udecimal.Decimal
-	UserID      int64
-	Timestamp   int64
-
-	// Amend Order fields
-	NewPrice udecimal.Decimal
-	NewSize  udecimal.Decimal
-
-	// Query fields
-	DepthLimit uint32
-
-	Resp chan any // Optional: for synchronous response (e.g. CmdDepth)
+	// Internal Query fields (Read Path)
+	Query any // e.g. *protocol.GetDepthRequest
+	Resp  chan any
 }
