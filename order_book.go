@@ -89,23 +89,23 @@ func (book *OrderBook) AddOrder(ctx context.Context, cmd *PlaceOrderCommand) err
 		return ErrInvalidParam
 	}
 
-	seq, event := book.cmdBuffer.Claim()
+	seq, command := book.cmdBuffer.Claim()
 	if seq == -1 {
 		return ErrShutdown
 	}
 
-	event.SeqID = cmd.SeqID
-	event.Type = CmdPlaceOrder
-	event.MarketID = cmd.MarketID
-	event.OrderID = cmd.ID
-	event.Side = cmd.Side
-	event.OrderType = cmd.Type
-	event.Price = cmd.Price
-	event.Size = cmd.Size
-	event.VisibleSize = cmd.VisibleSize
-	event.QuoteSize = cmd.QuoteSize
-	event.UserID = cmd.UserID
-	event.Timestamp = cmd.Timestamp
+	command.SeqID = cmd.SeqID
+	command.Type = CmdPlaceOrder
+	command.MarketID = cmd.MarketID
+	command.OrderID = cmd.ID
+	command.Side = cmd.Side
+	command.OrderType = cmd.Type
+	command.Price = cmd.Price
+	command.Size = cmd.Size
+	command.VisibleSize = cmd.VisibleSize
+	command.QuoteSize = cmd.QuoteSize
+	command.UserID = cmd.UserID
+	command.Timestamp = cmd.Timestamp
 
 	book.cmdBuffer.Commit(seq)
 	return nil
@@ -117,18 +117,18 @@ func (book *OrderBook) AmendOrder(ctx context.Context, cmd *AmendOrderCommand) e
 		return ErrInvalidParam
 	}
 
-	seq, event := book.cmdBuffer.Claim()
+	seq, command := book.cmdBuffer.Claim()
 	if seq == -1 {
 		return ErrShutdown
 	}
 
-	event.SeqID = cmd.SeqID
-	event.Type = CmdAmendOrder
-	event.OrderID = cmd.OrderID
-	event.UserID = cmd.UserID
-	event.NewPrice = cmd.NewPrice
-	event.NewSize = cmd.NewSize
-	event.Timestamp = cmd.Timestamp
+	command.SeqID = cmd.SeqID
+	command.Type = CmdAmendOrder
+	command.OrderID = cmd.OrderID
+	command.UserID = cmd.UserID
+	command.NewPrice = cmd.NewPrice
+	command.NewSize = cmd.NewSize
+	command.Timestamp = cmd.Timestamp
 
 	book.cmdBuffer.Commit(seq)
 	return nil
@@ -140,16 +140,16 @@ func (book *OrderBook) CancelOrder(ctx context.Context, cmd *CancelOrderCommand)
 		return nil
 	}
 
-	seq, event := book.cmdBuffer.Claim()
+	seq, command := book.cmdBuffer.Claim()
 	if seq == -1 {
 		return ErrShutdown
 	}
 
-	event.SeqID = cmd.SeqID
-	event.Type = CmdCancelOrder
-	event.OrderID = cmd.OrderID
-	event.UserID = cmd.UserID
-	event.Timestamp = cmd.Timestamp
+	command.SeqID = cmd.SeqID
+	command.Type = CmdCancelOrder
+	command.OrderID = cmd.OrderID
+	command.UserID = cmd.UserID
+	command.Timestamp = cmd.Timestamp
 
 	book.cmdBuffer.Commit(seq)
 	return nil
