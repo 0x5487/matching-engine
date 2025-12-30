@@ -102,19 +102,19 @@ func TestLimitOrders(t *testing.T) {
 
 		// Verify Match Logs
 		match1 := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeMatch, match1.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match1.Type)
 		assert.Equal(t, "sell-1", match1.MakerOrderID)
 		assert.Equal(t, int64(201), match1.MakerUserID)
 		assert.Equal(t, "buyAll", match1.OrderID)
 		assert.Equal(t, int64(300), match1.UserID)
 
 		match2 := memoryPublishTrader.Get(7)
-		assert.Equal(t, LogTypeMatch, match2.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match2.Type)
 		assert.Equal(t, "sell-2", match2.MakerOrderID)
 		assert.Equal(t, int64(202), match2.MakerUserID)
 
 		match3 := memoryPublishTrader.Get(8)
-		assert.Equal(t, LogTypeMatch, match3.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match3.Type)
 		assert.Equal(t, "sell-3", match3.MakerOrderID)
 		assert.Equal(t, int64(203), match3.MakerUserID)
 	})
@@ -175,14 +175,14 @@ func TestLimitOrders(t *testing.T) {
 
 		// Verify Match Logs
 		match1 := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeMatch, match1.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match1.Type)
 		assert.Equal(t, "buy-1", match1.MakerOrderID)
 		assert.Equal(t, int64(101), match1.MakerUserID)
 		assert.Equal(t, "sell-match", match1.OrderID)
 		assert.Equal(t, int64(204), match1.UserID)
 
 		match2 := memoryPublishTrader.Get(7)
-		assert.Equal(t, LogTypeMatch, match2.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match2.Type)
 		assert.Equal(t, "buy-2", match2.MakerOrderID)
 		assert.Equal(t, int64(102), match2.MakerUserID)
 	})
@@ -285,14 +285,14 @@ func TestMarketOrder(t *testing.T) {
 
 		// Verify first match: 1 BTC at 110
 		match1 := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeMatch, match1.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match1.Type)
 		assert.Equal(t, "110", match1.Price.String())
 		assert.Equal(t, "1", match1.Size.String())
 		assert.Equal(t, "110", match1.Amount.String())
 
 		// Verify second match: 1 BTC at 120
 		match2 := memoryPublishTrader.Get(7)
-		assert.Equal(t, LogTypeMatch, match2.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match2.Type)
 		assert.Equal(t, "120", match2.Price.String())
 		assert.Equal(t, "1", match2.Size.String())
 		assert.Equal(t, "120", match2.Amount.String())
@@ -318,7 +318,7 @@ func TestMarketOrder(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 
 		match := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeMatch, match.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match.Type)
 		assert.Equal(t, "110", match.Price.String())
 		assert.Equal(t, "0.5", match.Size.String()) // 55 / 110 = 0.5 BTC
 		assert.Equal(t, "55", match.Amount.String())
@@ -348,8 +348,8 @@ func TestMarketOrder(t *testing.T) {
 			return publishTrader.Count() >= 1
 		}, 1*time.Second, 10*time.Millisecond)
 		log := publishTrader.Get(0)
-		assert.Equal(t, LogTypeReject, log.Type)
-		assert.Equal(t, RejectReasonNoLiquidity, log.RejectReason)
+		assert.Equal(t, protocol.LogTypeReject, log.Type)
+		assert.Equal(t, protocol.RejectReasonNoLiquidity, log.RejectReason)
 		assert.Equal(t, "100", log.Size.String()) // Remaining quote amount
 	})
 
@@ -373,14 +373,14 @@ func TestMarketOrder(t *testing.T) {
 
 		// Verify first match: 1 BTC at 110
 		match1 := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeMatch, match1.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match1.Type)
 		assert.Equal(t, "110", match1.Price.String())
 		assert.Equal(t, "1", match1.Size.String())
 		assert.Equal(t, "110", match1.Amount.String())
 
 		// Verify second match: 1 BTC at 120
 		match2 := memoryPublishTrader.Get(7)
-		assert.Equal(t, LogTypeMatch, match2.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match2.Type)
 		assert.Equal(t, "120", match2.Price.String())
 		assert.Equal(t, "1", match2.Size.String())
 		assert.Equal(t, "120", match2.Amount.String())
@@ -405,7 +405,7 @@ func TestMarketOrder(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 
 		match := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeMatch, match.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match.Type)
 		assert.Equal(t, "110", match.Price.String())
 		assert.Equal(t, "0.5", match.Size.String())
 		assert.Equal(t, "55", match.Amount.String()) // 0.5 * 110 = 55
@@ -479,7 +479,7 @@ func TestPostOnlyOrder(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 
 		trade := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeReject, trade.Type)
+		assert.Equal(t, protocol.LogTypeReject, trade.Type)
 		stats, err := testOrderBook.GetStats()
 		assert.NoError(t, err)
 		assert.Equal(t, int64(3), stats.AskDepthCount)
@@ -500,7 +500,7 @@ func TestIOCOrder(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 
 		trade := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeReject, trade.Type)
+		assert.Equal(t, protocol.LogTypeReject, trade.Type)
 		stats, err := testOrderBook.GetStats()
 		assert.NoError(t, err)
 		assert.Equal(t, int64(3), stats.AskDepthCount)
@@ -569,7 +569,7 @@ func TestFOKOrder(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 
 		trade := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeReject, trade.Type)
+		assert.Equal(t, protocol.LogTypeReject, trade.Type)
 		stats, err := testOrderBook.GetStats()
 		assert.NoError(t, err)
 		assert.Equal(t, int64(3), stats.AskDepthCount)
@@ -602,7 +602,7 @@ func TestFOKOrder(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 
 		trade := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeReject, trade.Type)
+		assert.Equal(t, protocol.LogTypeReject, trade.Type)
 		stats, err := testOrderBook.GetStats()
 		assert.NoError(t, err)
 		assert.Equal(t, int64(3), stats.AskDepthCount)
@@ -619,7 +619,7 @@ func TestFOKOrder(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 
 		trade := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeReject, trade.Type)
+		assert.Equal(t, protocol.LogTypeReject, trade.Type)
 		stats, err := testOrderBook.GetStats()
 		assert.NoError(t, err)
 		assert.Equal(t, int64(3), stats.AskDepthCount)
@@ -662,8 +662,8 @@ func TestFOKOrder(t *testing.T) {
 		if logCount >= 4 {
 			log1 := memoryPublishTrader.Get(2)
 			log2 := memoryPublishTrader.Get(3)
-			assert.Equal(t, LogTypeMatch, log1.Type, "Third log should be Match")
-			assert.Equal(t, LogTypeMatch, log2.Type, "Fourth log should be Match")
+			assert.Equal(t, protocol.LogTypeMatch, log1.Type, "Third log should be Match")
+			assert.Equal(t, protocol.LogTypeMatch, log2.Type, "Fourth log should be Match")
 		}
 
 		assert.Eventually(t, func() bool {
@@ -796,7 +796,7 @@ func TestAmendOrder(t *testing.T) {
 		// 6 setup + 1 amend
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 		log := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeAmend, log.Type)
+		assert.Equal(t, protocol.LogTypeAmend, log.Type)
 		assert.Equal(t, "0.5", log.Size.String())
 		assert.Equal(t, "1", log.OldSize.String())
 
@@ -815,7 +815,7 @@ func TestAmendOrder(t *testing.T) {
 			return memoryPublishTrader.Count() >= 9
 		}, 1*time.Second, 10*time.Millisecond)
 		matchLog := memoryPublishTrader.Get(8)
-		assert.Equal(t, LogTypeMatch, matchLog.Type)
+		assert.Equal(t, protocol.LogTypeMatch, matchLog.Type)
 		assert.Equal(t, "buy-1", matchLog.MakerOrderID) // Priority kept!
 		assert.Equal(t, int64(101), matchLog.MakerUserID)
 		assert.Equal(t, "sell-match", matchLog.OrderID)
@@ -842,7 +842,7 @@ func TestAmendOrder(t *testing.T) {
 			found := false
 			for i := 0; i < memoryPublishTrader.Count(); i++ {
 				log := memoryPublishTrader.Get(i)
-				if log.Type == LogTypeMatch && log.OrderID == "sell-match" {
+				if log.Type == protocol.LogTypeMatch && log.OrderID == "sell-match" {
 					assert.Equal(t, "buy-2-compete", log.MakerOrderID) // Priority lost!
 					found = true
 					break
@@ -894,7 +894,7 @@ func TestAmendOrder(t *testing.T) {
 
 		memoryPublishTrader, _ := testOrderBook.publishTrader.(*MemoryPublishLog)
 		log := memoryPublishTrader.Get(6) // 6 setup + 1 amend
-		assert.Equal(t, LogTypeAmend, log.Type)
+		assert.Equal(t, protocol.LogTypeAmend, log.Type)
 		assert.Equal(t, "95", log.Price.String())
 		assert.Equal(t, "5", log.Size.String())
 		assert.Equal(t, "90", log.OldPrice.String())
@@ -918,13 +918,13 @@ func TestAmendOrder(t *testing.T) {
 
 		// Verify Amend Log
 		amendLog := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeAmend, amendLog.Type)
+		assert.Equal(t, protocol.LogTypeAmend, amendLog.Type)
 		assert.Equal(t, "115", amendLog.Price.String())
 		assert.Equal(t, "2", amendLog.Size.String())
 
 		// Verify Match Log
 		matchLog := memoryPublishTrader.Get(7)
-		assert.Equal(t, LogTypeMatch, matchLog.Type)
+		assert.Equal(t, protocol.LogTypeMatch, matchLog.Type)
 		assert.Equal(t, "buy-1", matchLog.OrderID)
 		assert.Equal(t, "sell-1", matchLog.MakerOrderID)
 		assert.Equal(t, "110", matchLog.Price.String()) // Matched at Maker price
@@ -932,7 +932,7 @@ func TestAmendOrder(t *testing.T) {
 
 		// Verify Open Log (Remaining part)
 		openLog := memoryPublishTrader.Get(8)
-		assert.Equal(t, LogTypeOpen, openLog.Type)
+		assert.Equal(t, protocol.LogTypeOpen, openLog.Type)
 		assert.Equal(t, "buy-1", openLog.OrderID)
 		assert.Equal(t, "115", openLog.Price.String())
 		assert.Equal(t, "1", openLog.Size.String())
@@ -1089,8 +1089,8 @@ func TestRejectReason(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 
 		log := publishTrader.Get(0)
-		assert.Equal(t, LogTypeReject, log.Type)
-		assert.Equal(t, RejectReasonNoLiquidity, log.RejectReason)
+		assert.Equal(t, protocol.LogTypeReject, log.Type)
+		assert.Equal(t, protocol.RejectReasonNoLiquidity, log.RejectReason)
 	})
 
 	t.Run("IOC price mismatch", func(t *testing.T) {
@@ -1103,8 +1103,8 @@ func TestRejectReason(t *testing.T) {
 			return memoryPublishTrader.Count() == 7
 		}, 1*time.Second, 10*time.Millisecond)
 		log := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeReject, log.Type)
-		assert.Equal(t, RejectReasonPriceMismatch, log.RejectReason)
+		assert.Equal(t, protocol.LogTypeReject, log.Type)
+		assert.Equal(t, protocol.RejectReasonPriceMismatch, log.RejectReason)
 	})
 
 	t.Run("FOK insufficient size", func(t *testing.T) {
@@ -1117,8 +1117,8 @@ func TestRejectReason(t *testing.T) {
 			return memoryPublishTrader.Count() == 7
 		}, 1*time.Second, 10*time.Millisecond)
 		log := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeReject, log.Type)
-		assert.Equal(t, RejectReasonInsufficientSize, log.RejectReason)
+		assert.Equal(t, protocol.LogTypeReject, log.Type)
+		assert.Equal(t, protocol.RejectReasonInsufficientSize, log.RejectReason)
 	})
 
 	t.Run("FOK price mismatch", func(t *testing.T) {
@@ -1131,8 +1131,8 @@ func TestRejectReason(t *testing.T) {
 			return memoryPublishTrader.Count() == 7
 		}, 1*time.Second, 10*time.Millisecond)
 		log := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeReject, log.Type)
-		assert.Equal(t, RejectReasonPriceMismatch, log.RejectReason)
+		assert.Equal(t, protocol.LogTypeReject, log.Type)
+		assert.Equal(t, protocol.RejectReasonPriceMismatch, log.RejectReason)
 	})
 
 	t.Run("PostOnly would cross spread", func(t *testing.T) {
@@ -1145,8 +1145,8 @@ func TestRejectReason(t *testing.T) {
 			return memoryPublishTrader.Count() == 7
 		}, 1*time.Second, 10*time.Millisecond)
 		log := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeReject, log.Type)
-		assert.Equal(t, RejectReasonPostOnlyMatch, log.RejectReason)
+		assert.Equal(t, protocol.LogTypeReject, log.Type)
+		assert.Equal(t, protocol.RejectReasonPostOnlyMatch, log.RejectReason)
 	})
 
 	t.Run("Market no liquidity", func(t *testing.T) {
@@ -1160,8 +1160,8 @@ func TestRejectReason(t *testing.T) {
 			return publishTrader.Count() >= 1
 		}, 1*time.Second, 10*time.Millisecond)
 		log := publishTrader.Get(0)
-		assert.Equal(t, LogTypeReject, log.Type)
-		assert.Equal(t, RejectReasonNoLiquidity, log.RejectReason)
+		assert.Equal(t, protocol.LogTypeReject, log.Type)
+		assert.Equal(t, protocol.RejectReasonNoLiquidity, log.RejectReason)
 	})
 }
 
@@ -1191,7 +1191,7 @@ func TestMatchAmount(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 
 		matchLog := memoryPublishTrader.Get(1)
-		assert.Equal(t, LogTypeMatch, matchLog.Type)
+		assert.Equal(t, protocol.LogTypeMatch, matchLog.Type)
 		assert.Equal(t, "80", matchLog.Price.String())
 		assert.Equal(t, "3", matchLog.Size.String())
 		assert.Equal(t, "240", matchLog.Amount.String()) // Price * Size = 80 * 3 = 240
@@ -1219,13 +1219,13 @@ func TestMatchAmount(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 
 		match1 := memoryPublishTrader.Get(2)
-		assert.Equal(t, LogTypeMatch, match1.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match1.Type)
 		assert.Equal(t, "80", match1.Price.String())
 		assert.Equal(t, "1", match1.Size.String())
 		assert.Equal(t, "80", match1.Amount.String())
 
 		match2 := memoryPublishTrader.Get(3)
-		assert.Equal(t, LogTypeMatch, match2.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match2.Type)
 		assert.Equal(t, "80", match2.Price.String())
 		assert.Equal(t, "1", match2.Size.String())
 		assert.Equal(t, "80", match2.Amount.String())
@@ -1265,17 +1265,17 @@ func TestMatchAmount(t *testing.T) {
 
 		// Match 1: sell-1 at 110, size 1 -> Amount 110
 		match1 := memoryPublishTrader.Get(3)
-		assert.Equal(t, LogTypeMatch, match1.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match1.Type)
 		assert.Equal(t, "110", match1.Amount.String())
 
 		// Match 2: sell-2 at 120, size 1 -> Amount 120
 		match2 := memoryPublishTrader.Get(4)
-		assert.Equal(t, LogTypeMatch, match2.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match2.Type)
 		assert.Equal(t, "120", match2.Amount.String())
 
 		// Match 3: sell-3 at 130, size 1 -> Amount 130
 		match3 := memoryPublishTrader.Get(5)
-		assert.Equal(t, LogTypeMatch, match3.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match3.Type)
 		assert.Equal(t, "130", match3.Amount.String())
 	})
 }
@@ -1291,7 +1291,7 @@ func TestTradeID(t *testing.T) {
 		// All Open events should have TradeID = 0
 		for i := 0; i < 6; i++ {
 			log := memoryPublishTrader.Get(i)
-			assert.Equal(t, LogTypeOpen, log.Type)
+			assert.Equal(t, protocol.LogTypeOpen, log.Type)
 			assert.Equal(t, uint64(0), log.TradeID, "Open event should have TradeID 0")
 		}
 
@@ -1310,7 +1310,7 @@ func TestTradeID(t *testing.T) {
 			return memoryPublishTrader.Count() == 7
 		}, 1*time.Second, 10*time.Millisecond)
 		matchLog := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeMatch, matchLog.Type)
+		assert.Equal(t, protocol.LogTypeMatch, matchLog.Type)
 		assert.Greater(t, matchLog.TradeID, uint64(0), "Match event should have TradeID > 0")
 	})
 
@@ -1337,9 +1337,9 @@ func TestTradeID(t *testing.T) {
 		match2 := memoryPublishTrader.Get(7)
 		match3 := memoryPublishTrader.Get(8)
 
-		assert.Equal(t, LogTypeMatch, match1.Type)
-		assert.Equal(t, LogTypeMatch, match2.Type)
-		assert.Equal(t, LogTypeMatch, match3.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match1.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match2.Type)
+		assert.Equal(t, protocol.LogTypeMatch, match3.Type)
 
 		assert.Equal(t, match1.TradeID+1, match2.TradeID, "TradeIDs should be sequential")
 		assert.Equal(t, match2.TradeID+1, match3.TradeID, "TradeIDs should be sequential")
@@ -1363,7 +1363,7 @@ func TestTradeID(t *testing.T) {
 			return memoryPublishTrader.Count() == 7
 		}, 1*time.Second, 10*time.Millisecond)
 		rejectLog := memoryPublishTrader.Get(6)
-		assert.Equal(t, LogTypeReject, rejectLog.Type)
+		assert.Equal(t, protocol.LogTypeReject, rejectLog.Type)
 		assert.Equal(t, uint64(0), rejectLog.TradeID, "Reject event should have TradeID 0")
 	})
 }
@@ -1488,7 +1488,7 @@ func TestOrderValidation(t *testing.T) {
 		assert.Eventually(t, func() bool {
 			logs := publishTrader.Logs()
 			for _, log := range logs {
-				if log.Type == LogTypeReject && log.OrderID == "dup-id" && log.RejectReason == RejectReasonDuplicateID {
+				if log.Type == protocol.LogTypeReject && log.OrderID == "dup-id" && log.RejectReason == protocol.RejectReasonDuplicateID {
 					return true
 				}
 			}
@@ -1503,7 +1503,7 @@ func TestOrderValidation(t *testing.T) {
 		assert.Eventually(t, func() bool {
 			logs := publishTrader.Logs()
 			for _, log := range logs {
-				if log.Type == LogTypeReject && log.OrderID == "non-existent" && log.RejectReason == RejectReasonOrderNotFound {
+				if log.Type == protocol.LogTypeReject && log.OrderID == "non-existent" && log.RejectReason == protocol.RejectReasonOrderNotFound {
 					return true
 				}
 			}
@@ -1518,7 +1518,7 @@ func TestOrderValidation(t *testing.T) {
 		assert.Eventually(t, func() bool {
 			logs := publishTrader.Logs()
 			for _, log := range logs {
-				if log.Type == LogTypeReject && log.OrderID == "non-existent" && log.RejectReason == RejectReasonOrderNotFound {
+				if log.Type == protocol.LogTypeReject && log.OrderID == "non-existent" && log.RejectReason == protocol.RejectReasonOrderNotFound {
 					return true
 				}
 			}
@@ -1558,7 +1558,7 @@ func TestOrderValidation(t *testing.T) {
 			cancelRejected := false
 			amendRejected := false
 			for _, log := range logs {
-				if log.Type == LogTypeReject && log.OrderID == id && log.UserID == 2 && log.RejectReason == RejectReasonOrderNotFound {
+				if log.Type == protocol.LogTypeReject && log.OrderID == id && log.UserID == 2 && log.RejectReason == protocol.RejectReasonOrderNotFound {
 					// We use OrderNotFound for security when UserID mismatches
 					if !cancelRejected {
 						cancelRejected = true
@@ -1633,7 +1633,7 @@ func TestOrderBook_LotSize(t *testing.T) {
 		assert.Eventually(t, func() bool {
 			logs := publishTrader.Logs()
 			for _, log := range logs {
-				if log.Type == LogTypeReject && log.OrderID == "market-buy" {
+				if log.Type == protocol.LogTypeReject && log.OrderID == "market-buy" {
 					// Verify remaining quote size is returned
 					assert.Equal(t, "0.04", log.Size.String())
 					return true
@@ -1689,10 +1689,10 @@ func TestOrderBook_LotSize(t *testing.T) {
 			matchFound := false
 			rejectFound := false
 			for _, log := range logs {
-				if log.Type == LogTypeMatch && log.OrderID == "market-buy" {
+				if log.Type == protocol.LogTypeMatch && log.OrderID == "market-buy" {
 					matchFound = true
 				}
-				if log.Type == LogTypeReject && log.OrderID == "market-buy" {
+				if log.Type == protocol.LogTypeReject && log.OrderID == "market-buy" {
 					// Remaining ~0.5 USDT should be in reject log
 					rejectFound = true
 				}

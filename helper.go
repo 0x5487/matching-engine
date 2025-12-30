@@ -1,23 +1,27 @@
 package match
 
+import (
+	"github.com/0x5487/matching-engine/protocol"
+)
+
 // CalculateDepthChange calculates the depth change based on the book log.
 // It returns a DepthChange struct indicating which side and price level should be updated.
 // Note: For LogTypeMatch, the side returned is the Maker's side (opposite of the log's side).
 func CalculateDepthChange(log *OrderBookLog) DepthChange {
 	switch log.Type {
-	case LogTypeOpen:
+	case protocol.LogTypeOpen:
 		return DepthChange{
 			Side:     log.Side,
 			Price:    log.Price,
 			SizeDiff: log.Size,
 		}
-	case LogTypeCancel:
+	case protocol.LogTypeCancel:
 		return DepthChange{
 			Side:     log.Side,
 			Price:    log.Price,
 			SizeDiff: log.Size.Neg(),
 		}
-	case LogTypeMatch:
+	case protocol.LogTypeMatch:
 		// Match reduces liquidity from the Maker side.
 		// The log.Side is the Taker's side, so we update the opposite side.
 		makerSide := Buy
@@ -29,9 +33,9 @@ func CalculateDepthChange(log *OrderBookLog) DepthChange {
 			Price:    log.Price,
 			SizeDiff: log.Size.Neg(),
 		}
-	case LogTypeAmend:
+	case protocol.LogTypeAmend:
 		// Scenario 1: Priority Lost (Price changed OR Size increased)
-		// Logic: The order is removed from the book. The new order will be handled by a subsequent LogTypeOpen or LogTypeMatch.
+		// Logic: The order is removed from the book. The new order will be handled by a subsequent protocol.LogTypeOpen or protocol.LogTypeMatch.
 		// So we only need to remove the OldSize from OldPrice.
 		if !log.OldPrice.Equal(log.Price) || log.Size.GreaterThan(log.OldSize) {
 			return DepthChange{
@@ -48,7 +52,7 @@ func CalculateDepthChange(log *OrderBookLog) DepthChange {
 			Price:    log.Price,
 			SizeDiff: log.Size.Sub(log.OldSize),
 		}
-	case LogTypeReject:
+	case protocol.LogTypeReject:
 		// Rejected orders never entered the book, so no depth change.
 		return DepthChange{}
 	}

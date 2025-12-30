@@ -1,8 +1,6 @@
 package match
 
 import (
-	"time"
-
 	"github.com/0x5487/matching-engine/protocol"
 	"github.com/quagmt/udecimal"
 )
@@ -52,41 +50,6 @@ type Order struct {
 	// Intrusive linked list pointers (ignored by JSON)
 	next *Order
 	prev *Order
-}
-
-type LogType = protocol.LogType
-
-const (
-	LogTypeOpen   LogType = protocol.LogTypeOpen
-	LogTypeMatch  LogType = protocol.LogTypeMatch
-	LogTypeCancel LogType = protocol.LogTypeCancel
-	LogTypeAmend  LogType = protocol.LogTypeAmend
-	LogTypeReject LogType = protocol.LogTypeReject
-)
-
-// RejectReason represents the reason why an order was rejected.
-type RejectReason = protocol.RejectReason
-
-const (
-	RejectReasonNone             RejectReason = protocol.RejectReasonNone
-	RejectReasonNoLiquidity      RejectReason = protocol.RejectReasonNoLiquidity
-	RejectReasonPriceMismatch    RejectReason = protocol.RejectReasonPriceMismatch
-	RejectReasonInsufficientSize RejectReason = protocol.RejectReasonInsufficientSize
-	RejectReasonPostOnlyMatch    RejectReason = protocol.RejectReasonPostOnlyMatch
-	RejectReasonDuplicateID      RejectReason = protocol.RejectReasonDuplicateID
-	RejectReasonOrderNotFound    RejectReason = protocol.RejectReasonOrderNotFound
-	RejectReasonInvalidPayload   RejectReason = protocol.RejectReasonInvalidPayload
-)
-
-type Response struct {
-	Error error
-	Data  any
-}
-
-type OrderBookUpdateEvent struct {
-	Bids []*UpdateEvent
-	Asks []*UpdateEvent
-	Time time.Time
 }
 
 // DepthChange represents a change in the order book depth.
