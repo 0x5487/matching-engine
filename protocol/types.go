@@ -64,4 +64,11 @@ const (
 	RejectReasonDuplicateID      RejectReason = "duplicate_order_id"
 	RejectReasonOrderNotFound    RejectReason = "order_not_found"
 	RejectReasonInvalidPayload   RejectReason = "invalid_payload"
+
+	// Market Management Reject Reasons
+	RejectReasonMarketNotFound      RejectReason = "market_not_found"      // Target market does not exist
+	RejectReasonMarketAlreadyExists RejectReason = "market_already_exists" // Market ID already in use
+	RejectReasonMarketSuspended     RejectReason = "market_suspended"      // Market is suspended, trading not allowed
+	RejectReasonMarketHalted        RejectReason = "market_halted"         // Market is permanently halted
+	RejectReasonUnauthorized        RejectReason = "unauthorized"          // Operator not authorized for this action
 )

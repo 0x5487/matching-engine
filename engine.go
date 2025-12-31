@@ -30,8 +30,7 @@ func NewMatchingEngine(publishTrader PublishLog) *MatchingEngine {
 	}
 }
 
-// ExecuteCommand implements protocol.OrderBookAPI.
-// It routes the command to the correct OrderBook based on the MarketID.
+// ExecuteCommand routes the command to the correct OrderBook based on the MarketID.
 func (engine *MatchingEngine) ExecuteCommand(cmd *protocol.Command) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown

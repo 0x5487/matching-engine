@@ -3,13 +3,33 @@ package protocol
 // CommandType defines the type of the command (using uint8 for memory alignment and performance)
 type CommandType uint8
 
+// Command Type Numbering Strategy:
+// - 0-50:  OrderBook Management Commands (internal, low-frequency admin operations)
+// - 51+:   Trading Commands (external, high-frequency hot path)
 const (
-	CmdUnknown     CommandType = 0
-	CmdPlaceOrder  CommandType = 1
-	CmdCancelOrder CommandType = 2
-	CmdAmendOrder  CommandType = 3
-	// CmdDepth       CommandType = 4 // Future use
-	// CmdSnapshot    CommandType = 5 // Future use
+	// OrderBook Management Commands (0-50, internal use)
+	CmdUnknown       CommandType = 0
+	CmdCreateMarket  CommandType = 1
+	CmdSuspendMarket CommandType = 2
+	CmdResumeMarket  CommandType = 3
+	CmdUpdateConfig  CommandType = 4
+
+	// Trading Commands (51+, external use)
+	CmdPlaceOrder  CommandType = 51
+	CmdCancelOrder CommandType = 52
+	CmdAmendOrder  CommandType = 53
+)
+
+// OrderBookState represents the lifecycle state of an order book.
+type OrderBookState uint8
+
+const (
+	// OrderBookStateRunning indicates the order book is active and accepting all trading operations.
+	OrderBookStateRunning OrderBookState = 0
+	// OrderBookStateSuspended indicates the order book is temporarily paused; only cancel operations are allowed.
+	OrderBookStateSuspended OrderBookState = 1
+	// OrderBookStateHalted indicates the order book is permanently stopped; no operations are allowed.
+	OrderBookStateHalted OrderBookState = 2
 )
 
 // Command is the standard carrier for commands entering the Matching Engine.
@@ -74,4 +94,31 @@ type GetDepthRequest struct {
 // GetStatsRequest is the payload for querying order book statistics.
 type GetStatsRequest struct {
 	MarketID string `json:"market_id"`
+}
+
+// CreateMarketCommand is the payload for creating a new market/order book.
+type CreateMarketCommand struct {
+	UserID     string `json:"user_id"`      // Operator ID for audit trail
+	MarketID   string `json:"market_id"`    // Unique market identifier
+	MinLotSize string `json:"min_lot_size"` // Minimum trade unit (e.g., "0.00000001")
+}
+
+// SuspendMarketCommand is the payload for suspending a market.
+type SuspendMarketCommand struct {
+	UserID   string `json:"user_id"`   // Operator ID for audit trail
+	MarketID string `json:"market_id"` // Target market to suspend
+	Reason   string `json:"reason"`    // Reason for suspension (for audit)
+}
+
+// ResumeMarketCommand is the payload for resuming a suspended market.
+type ResumeMarketCommand struct {
+	UserID   string `json:"user_id"`   // Operator ID for audit trail
+	MarketID string `json:"market_id"` // Target market to resume
+}
+
+// UpdateConfigCommand is the payload for updating market configuration.
+type UpdateConfigCommand struct {
+	UserID     string  `json:"user_id"`                // Operator ID for audit trail
+	MarketID   string  `json:"market_id"`              // Target market
+	MinLotSize *string `json:"min_lot_size,omitempty"` // New minimum lot size (optional)
 }
