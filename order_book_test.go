@@ -80,7 +80,7 @@ func TestLimitOrders(t *testing.T) {
 			UserID:    300,
 		}
 		bytes, _ := testOrderBook.serializer.Marshal(payload)
-		testOrderBook.ExecuteCommand(&protocol.Command{
+		testOrderBook.EnqueueCommand(&protocol.Command{
 			MarketID: testOrderBook.marketID,
 			SeqID:    100,
 			Type:     protocol.CmdPlaceOrder,

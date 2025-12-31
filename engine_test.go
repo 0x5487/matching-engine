@@ -22,7 +22,7 @@ func TestMatchingEngine(t *testing.T) {
 
 		// market1
 		market1 := "BTC-USDT"
-		_, err := engine.AddOrderBook(market1)
+		_, err := engine.AddOrderBook("admin", market1)
 		assert.NoError(t, err)
 
 		order1 := &protocol.PlaceOrderCommand{
@@ -44,7 +44,7 @@ func TestMatchingEngine(t *testing.T) {
 
 		// market2
 		market2 := "ETH-USDT"
-		_, err = engine.AddOrderBook(market2)
+		_, err = engine.AddOrderBook("admin", market2)
 		assert.NoError(t, err)
 
 		order2 := &protocol.PlaceOrderCommand{
@@ -72,7 +72,7 @@ func TestMatchingEngine(t *testing.T) {
 		ctx := context.Background()
 
 		market1 := "BTC-USDT"
-		_, err := engine.AddOrderBook(market1)
+		_, err := engine.AddOrderBook("admin", market1)
 		assert.NoError(t, err)
 
 		order1 := &protocol.PlaceOrderCommand{
@@ -139,7 +139,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		// Create orders in multiple markets
 		markets := []string{"BTC-USDT", "ETH-USDT", "SOL-USDT"}
 		for i, market := range markets {
-			_, err := engine.AddOrderBook(market)
+			_, err := engine.AddOrderBook("admin", market)
 			assert.NoError(t, err)
 
 			order := &protocol.PlaceOrderCommand{
@@ -176,7 +176,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		ctx := context.Background()
 
 		// Create one market first
-		_, err := engine.AddOrderBook("BTC-USDT")
+		_, err := engine.AddOrderBook("admin", "BTC-USDT")
 		assert.NoError(t, err)
 
 		order := &protocol.PlaceOrderCommand{
@@ -216,7 +216,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		ctx := context.Background()
 
 		// Create an order to ensure at least one market exists
-		_, err := engine.AddOrderBook("BTC-USDT")
+		_, err := engine.AddOrderBook("admin", "BTC-USDT")
 		assert.NoError(t, err)
 
 		order := &protocol.PlaceOrderCommand{
@@ -252,9 +252,9 @@ func TestEngineSnapshotRestore(t *testing.T) {
 	market1 := "BTC-USDT"
 	market2 := "ETH-USDT"
 
-	_, err = engine.AddOrderBook(market1)
+	_, err = engine.AddOrderBook("admin", market1)
 	assert.NoError(t, err)
-	_, err = engine.AddOrderBook(market2)
+	_, err = engine.AddOrderBook("admin", market2)
 	assert.NoError(t, err)
 
 	// Add orders to Market 1
@@ -352,7 +352,7 @@ func TestManagement_CreateMarket(t *testing.T) {
 
 	// 1. Create Market via Command
 	// MinLotSize: 0.01
-	err := engine.CreateMarket(marketID, "0.01")
+	err := engine.CreateMarket("admin", marketID, "0.01")
 	assert.NoError(t, err)
 
 	// Verify OrderBook existence
@@ -398,7 +398,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 	marketID := "ETH-USDT"
 	ctx := context.Background()
 
-	err := engine.CreateMarket(marketID, "0.0001")
+	err := engine.CreateMarket("admin", marketID, "0.0001")
 	assert.NoError(t, err)
 
 	// 1. Place Order (Should Succeed)
@@ -424,7 +424,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 2. Suspend Market
-	err = engine.SuspendMarket(marketID)
+	err = engine.SuspendMarket("admin", marketID)
 	assert.NoError(t, err)
 
 	// Give time for suspend command to process
@@ -475,7 +475,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 5. Resume Market
-	err = engine.ResumeMarket(marketID)
+	err = engine.ResumeMarket("admin", marketID)
 	assert.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
 
@@ -512,11 +512,11 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	marketID := "SUSPENDED-MARKET"
 
 	// 1. Create Market with specific LotSize
-	err = engine.CreateMarket(marketID, "0.1")
+	err = engine.CreateMarket("admin", marketID, "0.1")
 	assert.NoError(t, err)
 
 	// 2. Suspend Market
-	err = engine.SuspendMarket(marketID)
+	err = engine.SuspendMarket("admin", marketID)
 	assert.NoError(t, err)
 	time.Sleep(50 * time.Millisecond) // Wait for processing
 
@@ -557,7 +557,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 6. Resume
-	err = newEngine.ResumeMarket(marketID)
+	err = newEngine.ResumeMarket("admin", marketID)
 	assert.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
 
@@ -580,5 +580,58 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 		}
 		stats, _ := book.GetStats()
 		return stats.BidOrderCount == 1
+	}, 1*time.Second, 10*time.Millisecond)
+}
+
+func TestManagement_UpdateConfig(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine(publish)
+	marketID := "CONFIG-TEST"
+
+	err := engine.CreateMarket("admin", marketID, "1.0")
+	assert.NoError(t, err)
+
+	// 1. Update MinLotSize
+	err = engine.UpdateConfig("admin", marketID, "0.1")
+	assert.NoError(t, err)
+
+	// Wait for async processing
+	time.Sleep(50 * time.Millisecond)
+
+	// 2. Verify new LotSize by placing an order
+	ctx := context.Background()
+	order := &protocol.PlaceOrderCommand{
+		OrderID:   "cfg-order",
+		Side:      Buy,
+		OrderType: Market,
+		QuoteSize: "5.0",
+		Price:     "0",
+		Size:      "0",
+		UserID:    1,
+	}
+
+	// We'll need some liquidity to test Market order matching
+	err = engine.PlaceOrder(ctx, marketID, &protocol.PlaceOrderCommand{
+		OrderID:   "maker",
+		Side:      Sell,
+		OrderType: Limit,
+		Price:     "10",
+		Size:      "10",
+		UserID:    2,
+	})
+	assert.NoError(t, err)
+	time.Sleep(50 * time.Millisecond)
+
+	err = engine.PlaceOrder(ctx, marketID, order)
+	assert.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		logs := publish.Logs()
+		for _, l := range logs {
+			if l.OrderID == "cfg-order" && l.Type == protocol.LogTypeMatch {
+				return true
+			}
+		}
+		return false
 	}, 1*time.Second, 10*time.Millisecond)
 }

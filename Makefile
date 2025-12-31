@@ -9,6 +9,12 @@ lint:
 test:
 	go test -race -coverprofile=cover.out -covermode=atomic ./...
 
+coverage: test
+	go tool cover -func=cover.out
+
+coverage-html: test
+	go tool cover -html=cover.out -o coverage.html
+
 release: lint test
 
 prof-mem:

@@ -118,7 +118,7 @@ type ResumeMarketCommand struct {
 
 // UpdateConfigCommand is the payload for updating market configuration.
 type UpdateConfigCommand struct {
-	UserID     string  `json:"user_id"`                // Operator ID for audit trail
-	MarketID   string  `json:"market_id"`              // Target market
-	MinLotSize *string `json:"min_lot_size,omitempty"` // New minimum lot size (optional)
+	UserID     string `json:"user_id"`                // Operator ID for audit trail
+	MarketID   string `json:"market_id"`              // Target market
+	MinLotSize string `json:"min_lot_size,omitempty"` // New minimum lot size (optional)
 }

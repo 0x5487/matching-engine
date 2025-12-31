@@ -21,7 +21,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	engine := NewMatchingEngine(publishTrader)
 
 	marketID := "BTC-USDT"
-	_, _ = engine.AddOrderBook(marketID)
+	_, _ = engine.AddOrderBook("admin", marketID)
 
 	// Use fixed seed for repeatability
 	rng := rand.New(rand.NewSource(42))
@@ -93,7 +93,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		// Hot path: only ExecuteCommand (no serialization overhead)
-		_ = engine.ExecuteCommand(cmdPool[i%poolSize])
+		_ = engine.EnqueueCommand(cmdPool[i%poolSize])
 	}
 
 	b.StopTimer()
@@ -123,7 +123,7 @@ func BenchmarkMatching(b *testing.B) {
 	publishTrader := NewDiscardPublishLog()
 	engine := NewMatchingEngine(publishTrader)
 	marketID := "MATCH-USDT"
-	_, _ = engine.AddOrderBook(marketID)
+	_, _ = engine.AddOrderBook("admin", marketID)
 
 	price := udecimal.MustFromInt64(10000, 0)
 	size := udecimal.MustFromInt64(1, 0)
@@ -174,10 +174,10 @@ func BenchmarkMatching(b *testing.B) {
 		idx := (i * 2) % poolSize
 
 		// Place Sell (Resting)
-		_ = engine.ExecuteCommand(cmdPool[idx])
+		_ = engine.EnqueueCommand(cmdPool[idx])
 
 		// Place Buy (Matches immediately)
-		_ = engine.ExecuteCommand(cmdPool[idx+1])
+		_ = engine.EnqueueCommand(cmdPool[idx+1])
 	}
 
 	b.StopTimer()

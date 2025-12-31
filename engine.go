@@ -33,8 +33,8 @@ func NewMatchingEngine(publishTrader PublishLog) *MatchingEngine {
 	}
 }
 
-// ExecuteCommand routes the command to the correct OrderBook based on the MarketID.
-func (engine *MatchingEngine) ExecuteCommand(cmd *protocol.Command) error {
+// EnqueueCommand routes the command to the correct OrderBook based on the MarketID.
+func (engine *MatchingEngine) EnqueueCommand(cmd *protocol.Command) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown
 	}
@@ -64,7 +64,7 @@ func (engine *MatchingEngine) ExecuteCommand(cmd *protocol.Command) error {
 		return ErrNotFound
 	}
 
-	return orderbook.ExecuteCommand(cmd)
+	return orderbook.EnqueueCommand(cmd)
 }
 
 // PlaceOrder adds an order to the appropriate order book based on the market ID.
@@ -79,7 +79,7 @@ func (engine *MatchingEngine) PlaceOrder(ctx context.Context, marketID string, c
 		Type:     protocol.CmdPlaceOrder,
 		Payload:  bytes,
 	}
-	return engine.ExecuteCommand(protoCmd)
+	return engine.EnqueueCommand(protoCmd)
 }
 
 // AmendOrder modifies an existing order in the appropriate order book.
@@ -94,7 +94,7 @@ func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, c
 		Type:     protocol.CmdAmendOrder,
 		Payload:  bytes,
 	}
-	return engine.ExecuteCommand(protoCmd)
+	return engine.EnqueueCommand(protoCmd)
 }
 
 // CancelOrder cancels an order in the appropriate order book.
@@ -109,23 +109,23 @@ func (engine *MatchingEngine) CancelOrder(ctx context.Context, marketID string, 
 		Type:     protocol.CmdCancelOrder,
 		Payload:  bytes,
 	}
-	return engine.ExecuteCommand(protoCmd)
+	return engine.EnqueueCommand(protoCmd)
 }
 
 // AddOrderBook creates and starts a new order book for the specified market ID.
 //
 // Deprecated: Use CreateMarket instead.
-func (engine *MatchingEngine) AddOrderBook(marketID string) (*OrderBook, error) {
-	if err := engine.CreateMarket(marketID, ""); err != nil {
+func (engine *MatchingEngine) AddOrderBook(userID string, marketID string) (*OrderBook, error) {
+	if err := engine.CreateMarket(userID, marketID, ""); err != nil {
 		return nil, err
 	}
 	return engine.OrderBook(marketID), nil
 }
 
 // CreateMarket sends a command to create a new market.
-func (engine *MatchingEngine) CreateMarket(marketID string, minLotSize string) error {
+func (engine *MatchingEngine) CreateMarket(userID string, marketID string, minLotSize string) error {
 	cmd := &protocol.CreateMarketCommand{
-		UserID:     "system",
+		UserID:     userID,
 		MarketID:   marketID,
 		MinLotSize: minLotSize,
 	}
@@ -133,7 +133,7 @@ func (engine *MatchingEngine) CreateMarket(marketID string, minLotSize string) e
 	if err != nil {
 		return err
 	}
-	return engine.ExecuteCommand(&protocol.Command{
+	return engine.EnqueueCommand(&protocol.Command{
 		Type:     protocol.CmdCreateMarket,
 		MarketID: marketID,
 		Payload:  bytes,
@@ -141,9 +141,9 @@ func (engine *MatchingEngine) CreateMarket(marketID string, minLotSize string) e
 }
 
 // SuspendMarket sends a command to suspend a market.
-func (engine *MatchingEngine) SuspendMarket(marketID string) error {
+func (engine *MatchingEngine) SuspendMarket(userID string, marketID string) error {
 	cmd := &protocol.SuspendMarketCommand{
-		UserID:   "system",
+		UserID:   userID,
 		MarketID: marketID,
 		Reason:   string(protocol.RejectReasonMarketSuspended),
 	}
@@ -151,7 +151,7 @@ func (engine *MatchingEngine) SuspendMarket(marketID string) error {
 	if err != nil {
 		return err
 	}
-	return engine.ExecuteCommand(&protocol.Command{
+	return engine.EnqueueCommand(&protocol.Command{
 		Type:     protocol.CmdSuspendMarket,
 		MarketID: marketID,
 		Payload:  bytes,
@@ -159,16 +159,16 @@ func (engine *MatchingEngine) SuspendMarket(marketID string) error {
 }
 
 // ResumeMarket sends a command to resume a market.
-func (engine *MatchingEngine) ResumeMarket(marketID string) error {
+func (engine *MatchingEngine) ResumeMarket(userID string, marketID string) error {
 	cmd := &protocol.ResumeMarketCommand{
-		UserID:   "system",
+		UserID:   userID,
 		MarketID: marketID,
 	}
 	bytes, err := engine.serializer.Marshal(cmd)
 	if err != nil {
 		return err
 	}
-	return engine.ExecuteCommand(&protocol.Command{
+	return engine.EnqueueCommand(&protocol.Command{
 		Type:     protocol.CmdResumeMarket,
 		MarketID: marketID,
 		Payload:  bytes,
@@ -176,9 +176,9 @@ func (engine *MatchingEngine) ResumeMarket(marketID string) error {
 }
 
 // UpdateConfig sends a command to update market configuration.
-func (engine *MatchingEngine) UpdateConfig(marketID string, minLotSize *string) error {
+func (engine *MatchingEngine) UpdateConfig(userID string, marketID string, minLotSize string) error {
 	cmd := &protocol.UpdateConfigCommand{
-		UserID:     "system",
+		UserID:     userID,
 		MarketID:   marketID,
 		MinLotSize: minLotSize,
 	}
@@ -186,7 +186,7 @@ func (engine *MatchingEngine) UpdateConfig(marketID string, minLotSize *string) 
 	if err != nil {
 		return err
 	}
-	return engine.ExecuteCommand(&protocol.Command{
+	return engine.EnqueueCommand(&protocol.Command{
 		Type:     protocol.CmdUpdateConfig,
 		MarketID: marketID,
 		Payload:  bytes,
@@ -558,7 +558,7 @@ func (engine *MatchingEngine) handleSuspendMarket(cmd *protocol.Command) error {
 	if orderbook == nil {
 		return nil
 	}
-	return orderbook.ExecuteCommand(cmd)
+	return orderbook.EnqueueCommand(cmd)
 }
 
 // handleResumeMarket routes the resume command to the order book.
@@ -567,7 +567,7 @@ func (engine *MatchingEngine) handleResumeMarket(cmd *protocol.Command) error {
 	if orderbook == nil {
 		return nil
 	}
-	return orderbook.ExecuteCommand(cmd)
+	return orderbook.EnqueueCommand(cmd)
 }
 
 // handleUpdateConfig routes the update config command to the order book.
@@ -576,5 +576,5 @@ func (engine *MatchingEngine) handleUpdateConfig(cmd *protocol.Command) error {
 	if orderbook == nil {
 		return nil
 	}
-	return orderbook.ExecuteCommand(cmd)
+	return orderbook.EnqueueCommand(cmd)
 }

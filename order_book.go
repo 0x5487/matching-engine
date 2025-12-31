@@ -103,8 +103,8 @@ func NewOrderBook(marketID string, publishTrader PublishLog, opts ...OrderBookOp
 	return book
 }
 
-// ExecuteCommand submits a command to the order book's ring buffer.
-func (book *OrderBook) ExecuteCommand(cmd *protocol.Command) error {
+// EnqueueCommand submits a command to the order book's ring buffer.
+func (book *OrderBook) EnqueueCommand(cmd *protocol.Command) error {
 	if book.isShutdown.Load() {
 		return ErrShutdown
 	}
@@ -141,7 +141,7 @@ func (book *OrderBook) PlaceOrder(ctx context.Context, cmd *protocol.PlaceOrderC
 		Type:     protocol.CmdPlaceOrder,
 		Payload:  bytes,
 	}
-	return book.ExecuteCommand(protoCmd)
+	return book.EnqueueCommand(protoCmd)
 }
 
 // AmendOrder submits a request to modify an existing order asynchronously.
@@ -159,7 +159,7 @@ func (book *OrderBook) AmendOrder(ctx context.Context, cmd *protocol.AmendOrderC
 		Type:     protocol.CmdAmendOrder,
 		Payload:  bytes,
 	}
-	return book.ExecuteCommand(protoCmd)
+	return book.EnqueueCommand(protoCmd)
 }
 
 // CancelOrder submits a cancellation request for an order asynchronously.
@@ -177,7 +177,7 @@ func (book *OrderBook) CancelOrder(ctx context.Context, cmd *protocol.CancelOrde
 		Type:     protocol.CmdCancelOrder,
 		Payload:  bytes,
 	}
-	return book.ExecuteCommand(protoCmd)
+	return book.EnqueueCommand(protoCmd)
 }
 
 // Depth returns the current depth of the order book up to the specified limit.
@@ -993,8 +993,8 @@ func (book *OrderBook) handleResumeMarket(cmd *protocol.ResumeMarketCommand) {
 
 // handleUpdateConfig updates order book configuration.
 func (book *OrderBook) handleUpdateConfig(cmd *protocol.UpdateConfigCommand) {
-	if cmd.MinLotSize != nil {
-		size, err := udecimal.Parse(*cmd.MinLotSize)
+	if cmd.MinLotSize != "" {
+		size, err := udecimal.Parse(cmd.MinLotSize)
 		if err != nil {
 			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, nil)
 			return
