@@ -3,6 +3,7 @@
 ## [unreleased]
 
 - feature: add **Iceberg Orders** support with `VisibleSize` parameter, automatic replenishment, priority reset, and deterministic timestamps. See [doc/features/iceberg.md](doc/features/iceberg.md).
+- feature: add **Management Commands** (Create/Suspend/Resume/UpdateConfig) with centralized event sourcing routing, strict state management, and snapshot persistence.
 - feature: add **LotSize configuration** via `WithLotSize()` option for `NewOrderBook()`. Prevents infinite loops in Market orders using `quoteSize` by checking minimum trade unit. Default: `1e-8`. See [doc/features/precision.md](doc/features/precision.md).
 - perf: integrate custom Disruptor (MPSC RingBuffer) replacing Go channels for **~13x lower latency** (44µs → 3µs) and **zero-allocation** on hot paths. See [doc/disruptor.md](doc/disruptor.md).
 - perf: implement thread-safe `GetStats()` using unified command channel to eliminate race conditions in tests.

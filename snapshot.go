@@ -4,16 +4,21 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+
+	"github.com/0x5487/matching-engine/protocol"
+	"github.com/quagmt/udecimal"
 )
 
 // OrderBookSnapshot contains the full state of a single OrderBook.
 type OrderBookSnapshot struct {
-	MarketID     string   `json:"market_id"`
-	SeqID        uint64   `json:"seq_id"`          // Current BookLog sequence ID
-	LastCmdSeqID uint64   `json:"last_cmd_seq_id"` // Last processed command sequence ID from MQ
-	TradeID      uint64   `json:"trade_id"`        // Current Trade sequence ID
-	Bids         []*Order `json:"bids"`            // Ordered list of bids (best price first)
-	Asks         []*Order `json:"asks"`            // Ordered list of asks (best price first)
+	MarketID     string                  `json:"market_id"`
+	SeqID        uint64                  `json:"seq_id"`          // Current BookLog sequence ID
+	LastCmdSeqID uint64                  `json:"last_cmd_seq_id"` // Last processed command sequence ID from MQ
+	TradeID      uint64                  `json:"trade_id"`        // Current Trade sequence ID
+	Bids         []*Order                `json:"bids"`            // Ordered list of bids (best price first)
+	Asks         []*Order                `json:"asks"`            // Ordered list of asks (best price first)
+	State        protocol.OrderBookState `json:"state"`
+	MinLotSize   udecimal.Decimal        `json:"min_lot_size"`
 }
 
 // SnapshotMetadata holds the global metadata for a snapshot (stored in metadata.json).

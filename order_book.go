@@ -72,6 +72,7 @@ type OrderBook struct {
 	shutdownComplete chan struct{}
 	publishTrader    PublishLog
 	serializer       protocol.Serializer
+	state            protocol.OrderBookState
 }
 
 // NewOrderBook creates a new order book instance.
@@ -95,6 +96,10 @@ func NewOrderBook(marketID string, publishTrader PublishLog, opts ...OrderBookOp
 	}
 
 	book.cmdBuffer = NewRingBuffer(32768, book)
+
+	// Explicitly set initial state (Review 8.4.3)
+	book.state = protocol.OrderBookStateRunning
+
 	return book
 }
 
@@ -249,6 +254,30 @@ func (book *OrderBook) OnEvent(ev *InputEvent) {
 
 func (book *OrderBook) processCommand(cmd *protocol.Command) {
 	switch cmd.Type {
+	case protocol.CmdSuspendMarket:
+		payload := &protocol.SuspendMarketCommand{}
+		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
+			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
+			return
+		}
+		book.handleSuspendMarket(payload)
+
+	case protocol.CmdResumeMarket:
+		payload := &protocol.ResumeMarketCommand{}
+		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
+			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
+			return
+		}
+		book.handleResumeMarket(payload)
+
+	case protocol.CmdUpdateConfig:
+		payload := &protocol.UpdateConfigCommand{}
+		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
+			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
+			return
+		}
+		book.handleUpdateConfig(payload)
+
 	case protocol.CmdPlaceOrder:
 		payload := placeOrderCmdPool.Get().(*protocol.PlaceOrderCommand)
 		*payload = protocol.PlaceOrderCommand{} // Reset before use
@@ -257,6 +286,18 @@ func (book *OrderBook) processCommand(cmd *protocol.Command) {
 			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
 			return
 		}
+
+		if book.state == protocol.OrderBookStateHalted {
+			book.rejectInvalidPayload(payload.OrderID, payload.UserID, protocol.RejectReasonMarketHalted, cmd.Metadata)
+			placeOrderCmdPool.Put(payload)
+			return
+		}
+		if book.state == protocol.OrderBookStateSuspended {
+			book.rejectInvalidPayload(payload.OrderID, payload.UserID, protocol.RejectReasonMarketSuspended, cmd.Metadata)
+			placeOrderCmdPool.Put(payload)
+			return
+		}
+
 		book.handlePlaceOrder(payload)
 		placeOrderCmdPool.Put(payload)
 	case protocol.CmdCancelOrder:
@@ -267,6 +308,14 @@ func (book *OrderBook) processCommand(cmd *protocol.Command) {
 			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
 			return
 		}
+
+		// Cancel is allowed in Suspended state, but not Halted
+		if book.state == protocol.OrderBookStateHalted {
+			book.rejectInvalidPayload(payload.OrderID, payload.UserID, protocol.RejectReasonMarketHalted, cmd.Metadata)
+			cancelOrderCmdPool.Put(payload)
+			return
+		}
+
 		book.handleCancelOrder(payload)
 		cancelOrderCmdPool.Put(payload)
 	case protocol.CmdAmendOrder:
@@ -275,6 +324,16 @@ func (book *OrderBook) processCommand(cmd *protocol.Command) {
 			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
 			return
 		}
+
+		if book.state == protocol.OrderBookStateHalted {
+			book.rejectInvalidPayload(payload.OrderID, payload.UserID, protocol.RejectReasonMarketHalted, cmd.Metadata)
+			return
+		}
+		if book.state == protocol.OrderBookStateSuspended {
+			book.rejectInvalidPayload(payload.OrderID, payload.UserID, protocol.RejectReasonMarketSuspended, cmd.Metadata)
+			return
+		}
+
 		book.handleAmendOrder(&payload)
 	default:
 		// Ignore unknown command types
@@ -586,12 +645,21 @@ func (book *OrderBook) createSnapshot() *OrderBookSnapshot {
 		TradeID:      book.tradeID.Load(),
 		Bids:         book.bidQueue.toSnapshot(),
 		Asks:         book.askQueue.toSnapshot(),
+		State:        book.state,
+		MinLotSize:   book.lotSize,
 	}
 }
 
 // Restore restores the order book state from a snapshot.
 func (book *OrderBook) Restore(snap *OrderBookSnapshot) {
 	book.seqID.Store(snap.SeqID)
+	// Check for nil decimal (zero value) in case of old snapshot or default
+	if snap.MinLotSize.IsZero() {
+		book.lotSize = DefaultLotSize
+	} else {
+		book.lotSize = snap.MinLotSize
+	}
+	book.state = snap.State
 	book.lastCmdSeqID.Store(snap.LastCmdSeqID)
 	book.tradeID.Store(snap.TradeID)
 
@@ -900,4 +968,37 @@ func (book *OrderBook) checkReplenish(order *Order, q *queue, logsPtr *[]*OrderB
 		return true
 	}
 	return false
+}
+
+// handleSuspendMarket updates the order book state to Suspended.
+func (book *OrderBook) handleSuspendMarket(cmd *protocol.SuspendMarketCommand) {
+	// If already Halted, cannot Suspend (Halted is terminal state for now)
+	if book.state == protocol.OrderBookStateHalted {
+		book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonMarketHalted, nil)
+		return
+	}
+	book.state = protocol.OrderBookStateSuspended
+	// Note: We don't generate a specific log for state change yet,
+	// relying on the upstream Command Log for audit.
+}
+
+// handleResumeMarket updates the order book state to Running.
+func (book *OrderBook) handleResumeMarket(cmd *protocol.ResumeMarketCommand) {
+	if book.state == protocol.OrderBookStateHalted {
+		book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonMarketHalted, nil)
+		return
+	}
+	book.state = protocol.OrderBookStateRunning
+}
+
+// handleUpdateConfig updates order book configuration.
+func (book *OrderBook) handleUpdateConfig(cmd *protocol.UpdateConfigCommand) {
+	if cmd.MinLotSize != nil {
+		size, err := udecimal.Parse(*cmd.MinLotSize)
+		if err != nil {
+			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, nil)
+			return
+		}
+		book.lotSize = size
+	}
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/0x5487/matching-engine/protocol"
+	"github.com/quagmt/udecimal"
 )
 
 // MatchingEngine manages multiple order books for different markets.
@@ -20,6 +21,7 @@ type MatchingEngine struct {
 	isShutdown    atomic.Bool
 	orderbooks    sync.Map
 	publishTrader PublishLog
+	serializer    protocol.Serializer
 }
 
 // NewMatchingEngine creates a new matching engine instance.
@@ -27,6 +29,7 @@ func NewMatchingEngine(publishTrader PublishLog) *MatchingEngine {
 	return &MatchingEngine{
 		orderbooks:    sync.Map{},
 		publishTrader: publishTrader,
+		serializer:    &protocol.DefaultJSONSerializer{},
 	}
 }
 
@@ -34,6 +37,19 @@ func NewMatchingEngine(publishTrader PublishLog) *MatchingEngine {
 func (engine *MatchingEngine) ExecuteCommand(cmd *protocol.Command) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown
+	}
+
+	switch cmd.Type {
+	case protocol.CmdCreateMarket:
+		return engine.handleCreateMarket(cmd)
+	case protocol.CmdSuspendMarket:
+		return engine.handleSuspendMarket(cmd)
+	case protocol.CmdResumeMarket:
+		return engine.handleResumeMarket(cmd)
+	case protocol.CmdUpdateConfig:
+		return engine.handleUpdateConfig(cmd)
+	default:
+		// Other commands (e.g. Trading commands) are routed to the OrderBook below
 	}
 
 	// Host layer extracts MarketID directly from envelope.
@@ -54,59 +70,127 @@ func (engine *MatchingEngine) ExecuteCommand(cmd *protocol.Command) error {
 // PlaceOrder adds an order to the appropriate order book based on the market ID.
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
 func (engine *MatchingEngine) PlaceOrder(ctx context.Context, marketID string, cmd *protocol.PlaceOrderCommand) error {
-	if engine.isShutdown.Load() {
-		return ErrShutdown
+	bytes, err := engine.serializer.Marshal(cmd)
+	if err != nil {
+		return err
 	}
-	orderbook := engine.OrderBook(marketID)
-	if orderbook == nil {
-		return ErrNotFound
+	protoCmd := &protocol.Command{
+		MarketID: marketID,
+		Type:     protocol.CmdPlaceOrder,
+		Payload:  bytes,
 	}
-	return orderbook.PlaceOrder(ctx, cmd)
+	return engine.ExecuteCommand(protoCmd)
 }
 
 // AmendOrder modifies an existing order in the appropriate order book.
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
 func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, cmd *protocol.AmendOrderCommand) error {
-	if engine.isShutdown.Load() {
-		return ErrShutdown
+	bytes, err := engine.serializer.Marshal(cmd)
+	if err != nil {
+		return err
 	}
-	orderbook := engine.OrderBook(marketID)
-	if orderbook == nil {
-		return ErrNotFound
+	protoCmd := &protocol.Command{
+		MarketID: marketID,
+		Type:     protocol.CmdAmendOrder,
+		Payload:  bytes,
 	}
-	return orderbook.AmendOrder(ctx, cmd)
+	return engine.ExecuteCommand(protoCmd)
 }
 
 // CancelOrder cancels an order in the appropriate order book.
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
 func (engine *MatchingEngine) CancelOrder(ctx context.Context, marketID string, cmd *protocol.CancelOrderCommand) error {
-	if engine.isShutdown.Load() {
-		return ErrShutdown
+	bytes, err := engine.serializer.Marshal(cmd)
+	if err != nil {
+		return err
 	}
-	orderbook := engine.OrderBook(marketID)
-	if orderbook == nil {
-		return ErrNotFound
+	protoCmd := &protocol.Command{
+		MarketID: marketID,
+		Type:     protocol.CmdCancelOrder,
+		Payload:  bytes,
 	}
-	return orderbook.CancelOrder(ctx, cmd)
+	return engine.ExecuteCommand(protoCmd)
 }
 
 // AddOrderBook creates and starts a new order book for the specified market ID.
-// Returns the new order book or ErrShutdown if the engine is shutting down.
+//
+// Deprecated: Use CreateMarket instead.
 func (engine *MatchingEngine) AddOrderBook(marketID string) (*OrderBook, error) {
-	if engine.isShutdown.Load() {
-		return nil, ErrShutdown
+	if err := engine.CreateMarket(marketID, ""); err != nil {
+		return nil, err
 	}
+	return engine.OrderBook(marketID), nil
+}
 
-	newbook := NewOrderBook(marketID, engine.publishTrader)
-	book, loaded := engine.orderbooks.LoadOrStore(marketID, newbook)
-	if !loaded {
-		go func() {
-			_ = newbook.Start()
-		}()
-		return newbook, nil
+// CreateMarket sends a command to create a new market.
+func (engine *MatchingEngine) CreateMarket(marketID string, minLotSize string) error {
+	cmd := &protocol.CreateMarketCommand{
+		UserID:     "system",
+		MarketID:   marketID,
+		MinLotSize: minLotSize,
 	}
+	bytes, err := engine.serializer.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+	return engine.ExecuteCommand(&protocol.Command{
+		Type:     protocol.CmdCreateMarket,
+		MarketID: marketID,
+		Payload:  bytes,
+	})
+}
 
-	return book.(*OrderBook), nil
+// SuspendMarket sends a command to suspend a market.
+func (engine *MatchingEngine) SuspendMarket(marketID string) error {
+	cmd := &protocol.SuspendMarketCommand{
+		UserID:   "system",
+		MarketID: marketID,
+		Reason:   string(protocol.RejectReasonMarketSuspended),
+	}
+	bytes, err := engine.serializer.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+	return engine.ExecuteCommand(&protocol.Command{
+		Type:     protocol.CmdSuspendMarket,
+		MarketID: marketID,
+		Payload:  bytes,
+	})
+}
+
+// ResumeMarket sends a command to resume a market.
+func (engine *MatchingEngine) ResumeMarket(marketID string) error {
+	cmd := &protocol.ResumeMarketCommand{
+		UserID:   "system",
+		MarketID: marketID,
+	}
+	bytes, err := engine.serializer.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+	return engine.ExecuteCommand(&protocol.Command{
+		Type:     protocol.CmdResumeMarket,
+		MarketID: marketID,
+		Payload:  bytes,
+	})
+}
+
+// UpdateConfig sends a command to update market configuration.
+func (engine *MatchingEngine) UpdateConfig(marketID string, minLotSize *string) error {
+	cmd := &protocol.UpdateConfigCommand{
+		UserID:     "system",
+		MarketID:   marketID,
+		MinLotSize: minLotSize,
+	}
+	bytes, err := engine.serializer.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+	return engine.ExecuteCommand(&protocol.Command{
+		Type:     protocol.CmdUpdateConfig,
+		MarketID: marketID,
+		Payload:  bytes,
+	})
 }
 
 // OrderBook retrieves the order book for a specific market ID.
@@ -434,4 +518,63 @@ func (e *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMetadata
 	}
 
 	return &meta, nil
+}
+
+// handleCreateMarket handles the creation of a new market.
+func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) error {
+	payload := &protocol.CreateMarketCommand{}
+	if err := engine.serializer.Unmarshal(cmd.Payload, payload); err != nil {
+		logger.Error("failed to unmarshal CreateMarket command", "error", err)
+		return nil // Cannot process invalid payload
+	}
+
+	if _, exists := engine.orderbooks.Load(payload.MarketID); exists {
+		logger.Warn("market already exists", "market_id", payload.MarketID)
+		return nil // Market already exists
+	}
+
+	// Create and Start
+	opts := []OrderBookOption{}
+	if payload.MinLotSize != "" {
+		size, err := udecimal.Parse(payload.MinLotSize)
+		if err == nil {
+			opts = append(opts, WithLotSize(size))
+		}
+	}
+
+	newbook := NewOrderBook(payload.MarketID, engine.publishTrader, opts...)
+	engine.orderbooks.Store(payload.MarketID, newbook)
+
+	go func() {
+		_ = newbook.Start()
+	}()
+
+	return nil
+}
+
+// handleSuspendMarket routes the suspend command to the order book.
+func (engine *MatchingEngine) handleSuspendMarket(cmd *protocol.Command) error {
+	orderbook := engine.OrderBook(cmd.MarketID)
+	if orderbook == nil {
+		return nil
+	}
+	return orderbook.ExecuteCommand(cmd)
+}
+
+// handleResumeMarket routes the resume command to the order book.
+func (engine *MatchingEngine) handleResumeMarket(cmd *protocol.Command) error {
+	orderbook := engine.OrderBook(cmd.MarketID)
+	if orderbook == nil {
+		return nil
+	}
+	return orderbook.ExecuteCommand(cmd)
+}
+
+// handleUpdateConfig routes the update config command to the order book.
+func (engine *MatchingEngine) handleUpdateConfig(cmd *protocol.Command) error {
+	orderbook := engine.OrderBook(cmd.MarketID)
+	if orderbook == nil {
+		return nil
+	}
+	return orderbook.ExecuteCommand(cmd)
 }

@@ -438,3 +438,74 @@ func (e *MatchingEngine) CreateMarket(marketID string, config MarketConfig) erro
 ---
 *End of Architecture Review*
 
+---
+
+## 8. Code Review (代碼審查)
+
+> **審查日期**: 2025-12-31  
+> **審查人**: 首席架構師  
+> **審查範圍**: `engine.go`, `order_book.go`, `snapshot.go`, `protocol/command.go`, `protocol/types.go`
+
+### 8.1 審查結論
+
+✅ **通過 (Approved)**
+
+代碼實作符合規格書設計，核心功能正確實現。以下為詳細審查意見。
+
+---
+
+### 8.2 驗證結果
+
+| 項目 | 結果 |
+|------|------|
+| **單元測試** | ✅ 全部通過 (`go test -race ./...`) |
+| **Lint 檢查** | ✅ 0 issues (`make lint`) |
+| **Race Condition** | ✅ 無偵測到競態條件 |
+
+---
+
+### 8.3 實作亮點 (Positive Findings)
+
+| 項目 | 評價 |
+|------|------|
+| **統一路由** | ✅ `ExecuteCommand` 成功作為唯一入口，所有交易方法 (`PlaceOrder`, `CancelOrder`, `AmendOrder`) 都重構為封裝 Command 並調用 `ExecuteCommand` |
+| **狀態管理** | ✅ `OrderBook.state` 正確實現，`processCommand` 根據狀態檢查是否允許操作 |
+| **Snapshot 擴充** | ✅ `OrderBookSnapshot` 正確包含 `State` 和 `MinLotSize`，`Restore` 正確恢復狀態 |
+| **向後兼容** | ✅ `AddOrderBook` 保留並標記為 `Deprecated`，內部調用 `CreateMarket` |
+| **Object Pooling** | ✅ 繼續使用 `placeOrderCmdPool` 和 `cancelOrderCmdPool` 減少 GC 壓力 |
+
+---
+
+### 8.4 發現的問題
+#### 8.4.1 靜默失敗模式 ✅ 已修復
+
+已在 `handleCreateMarket` 中添加日誌記錄：
+- `logger.Error` 記錄反序列化失敗
+- `logger.Warn` 記錄市場已存在
+
+---
+
+#### 8.4.2 AmendOrder 狀態檢查 RejectReason ✅ 已修復
+
+`PlaceOrder` 和 `AmendOrder` 現在都正確區分 `Halted` 和 `Suspended` 狀態，返回精確的 RejectReason。
+
+---
+
+#### 8.4.3 初始狀態設置 ✅ 已修復
+
+`NewOrderBook` 現在明確設置初始狀態：
+```go
+book.state = protocol.OrderBookStateRunning // Explicit is better than implicit
+```
+
+---
+
+### 8.5 結語
+
+代碼實作品質優秀，所有評審建議均已實現。測試全部通過，無待處理問題。
+
+✅ **批准合併 (Approved to Merge)**
+
+---
+*End of Code Review*
+

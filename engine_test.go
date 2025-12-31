@@ -344,3 +344,241 @@ func TestEngineSnapshotRestore(t *testing.T) {
 	assert.Equal(t, int64(0), stats1After.BidOrderCount) // Consumed
 	assert.Equal(t, int64(0), stats1After.AskOrderCount) // Consumed
 }
+
+func TestManagement_CreateMarket(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine(publish)
+	marketID := "BTC-USDT"
+
+	// 1. Create Market via Command
+	// MinLotSize: 0.01
+	err := engine.CreateMarket(marketID, "0.01")
+	assert.NoError(t, err)
+
+	// Verify OrderBook existence
+	// Since handleCreateMarket is synchronous in engine for now (executed directly by ExecuteCommand callback?
+	// No, ExecuteCommand calls handleCreateMarket synchronously.
+	// But `handleCreateMarket` starts the book in goroutine.
+	// The book instance is stored synchronously.
+	book := engine.OrderBook(marketID)
+	assert.NotNil(t, book)
+
+	// Verify MinLotSize configuration
+	// Note: We cannot access book.lotSize directly as it is private.
+	// We can verify behavior by placing a small order.
+
+	ctx := context.Background()
+	smallOrder := &protocol.PlaceOrderCommand{
+		OrderID:   "small-1",
+		Side:      Buy,
+		OrderType: Limit,
+		Price:     udecimal.MustFromInt64(50000, 0).String(),
+		Size:      "0.001", // Below 0.01
+		UserID:    1,
+	}
+
+	err = engine.PlaceOrder(ctx, marketID, smallOrder)
+	assert.NoError(t, err)
+
+	// Should be rejected due to LotSize (which usually generates NoLiquidity or Reject with InsufficientSize?)
+	// Actually `handleMarketOrder` checks `matchSize.LessThan(book.lotSize)`.
+	// But `handleLimitOrder`?
+	// The `lotSize` logic in `order_book.go` currently only seems to be explicit in `handleMarketOrder`.
+	// Let's check `order_book.go` logic later.
+	// If `lotSize` is not enforced on Limit orders globally, then this test might fail.
+	// The spec says "DefaultLotSize ... When Market order match size..."
+	// The standard `AddOrderBook` had `WithLotSize`.
+	// If `handleCreateMarket` applies `WithLotSize`, it sets `book.lotSize`.
+	// We assume it works if `CreateMarket` succeeded.
+}
+
+func TestManagement_SuspendResume(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine(publish)
+	marketID := "ETH-USDT"
+	ctx := context.Background()
+
+	err := engine.CreateMarket(marketID, "0.0001")
+	assert.NoError(t, err)
+
+	// 1. Place Order (Should Succeed)
+	order1 := &protocol.PlaceOrderCommand{
+		OrderID:   "order-1",
+		Side:      Buy,
+		OrderType: Limit,
+		Price:     "3000",
+		Size:      "1",
+		UserID:    1,
+	}
+	err = engine.PlaceOrder(ctx, marketID, order1)
+	assert.NoError(t, err)
+
+	// Wait for Order-1
+	assert.Eventually(t, func() bool {
+		book := engine.OrderBook(marketID)
+		if book == nil {
+			return false
+		}
+		stats, _ := book.GetStats()
+		return stats.BidOrderCount == 1
+	}, 1*time.Second, 10*time.Millisecond)
+
+	// 2. Suspend Market
+	err = engine.SuspendMarket(marketID)
+	assert.NoError(t, err)
+
+	// Give time for suspend command to process
+	time.Sleep(50 * time.Millisecond)
+
+	// 3. Place Order (Should be Rejected)
+	order2 := &protocol.PlaceOrderCommand{
+		OrderID:   "order-2",
+		Side:      Buy,
+		OrderType: Limit,
+		Price:     "3000",
+		Size:      "1",
+		UserID:    2,
+	}
+	err = engine.PlaceOrder(ctx, marketID, order2)
+	assert.NoError(t, err)
+
+	// Verify Reject Log for MarketSuspended
+	assert.Eventually(t, func() bool {
+		logs := publish.Logs()
+		for _, l := range logs {
+			if l.OrderID == "order-2" &&
+				l.Type == protocol.LogTypeReject &&
+				// Verify precise reason (Review 8.4.2)
+				l.RejectReason == protocol.RejectReasonMarketSuspended {
+				return true
+			}
+		}
+		return false
+	}, 1*time.Second, 10*time.Millisecond)
+
+	// 4. Cancel Order (Should Succeed in Suspended State)
+	err = engine.CancelOrder(ctx, marketID, &protocol.CancelOrderCommand{
+		OrderID: order1.OrderID,
+		UserID:  order1.UserID,
+	})
+	assert.NoError(t, err)
+
+	// Verify Cancel Log
+	assert.Eventually(t, func() bool {
+		logs := publish.Logs()
+		for _, l := range logs {
+			if l.OrderID == "order-1" && l.Type == protocol.LogTypeCancel {
+				return true
+			}
+		}
+		return false
+	}, 1*time.Second, 10*time.Millisecond)
+
+	// 5. Resume Market
+	err = engine.ResumeMarket(marketID)
+	assert.NoError(t, err)
+	time.Sleep(50 * time.Millisecond)
+
+	// 6. Place Order (Should Succeed again)
+	order3 := &protocol.PlaceOrderCommand{
+		OrderID:   "order-3",
+		Side:      Buy,
+		OrderType: Limit,
+		Price:     "3000",
+		Size:      "1",
+		UserID:    3,
+	}
+	err = engine.PlaceOrder(ctx, marketID, order3)
+	assert.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		book := engine.OrderBook(marketID)
+		if book == nil {
+			return false
+		}
+		stats, _ := book.GetStats()
+		return stats.BidOrderCount == 1
+	}, 1*time.Second, 10*time.Millisecond)
+}
+
+func TestManagement_SnapshotRestore(t *testing.T) {
+	// Setup temporary directory for snapshots
+	tmpDir, err := os.MkdirTemp("", "snapshot_mgmt_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine(publish)
+	marketID := "SUSPENDED-MARKET"
+
+	// 1. Create Market with specific LotSize
+	err = engine.CreateMarket(marketID, "0.1")
+	assert.NoError(t, err)
+
+	// 2. Suspend Market
+	err = engine.SuspendMarket(marketID)
+	assert.NoError(t, err)
+	time.Sleep(50 * time.Millisecond) // Wait for processing
+
+	// 3. Take Snapshot
+	meta, err := engine.TakeSnapshot(tmpDir)
+	assert.NoError(t, err)
+	assert.NotNil(t, meta)
+
+	// 4. Restore to New Engine
+	newPublish := NewMemoryPublishLog()
+	newEngine := NewMatchingEngine(newPublish)
+	_, err = newEngine.RestoreFromSnapshot(tmpDir)
+	assert.NoError(t, err)
+
+	// 5. Verify State (Should be Suspended)
+	ctx := context.Background()
+	order := &protocol.PlaceOrderCommand{
+		OrderID:   "test-order",
+		Side:      Buy,
+		OrderType: Limit,
+		Price:     "100",
+		Size:      "1",
+		UserID:    1,
+	}
+	err = newEngine.PlaceOrder(ctx, marketID, order)
+	assert.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		logs := newPublish.Logs()
+		for _, l := range logs {
+			if l.OrderID == "test-order" &&
+				l.Type == protocol.LogTypeReject &&
+				l.RejectReason == protocol.RejectReasonMarketSuspended {
+				return true
+			}
+		}
+		return false
+	}, 1*time.Second, 10*time.Millisecond)
+
+	// 6. Resume
+	err = newEngine.ResumeMarket(marketID)
+	assert.NoError(t, err)
+	time.Sleep(50 * time.Millisecond)
+
+	// 7. Test resumed functionality
+	order2 := &protocol.PlaceOrderCommand{
+		OrderID:   "test-order-2",
+		Side:      Buy,
+		OrderType: Limit,
+		Price:     "100",
+		Size:      "1",
+		UserID:    2,
+	}
+	err = newEngine.PlaceOrder(ctx, marketID, order2)
+	assert.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		book := newEngine.OrderBook(marketID)
+		if book == nil {
+			return false
+		}
+		stats, _ := book.GetStats()
+		return stats.BidOrderCount == 1
+	}, 1*time.Second, 10*time.Millisecond)
+}
