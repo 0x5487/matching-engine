@@ -22,7 +22,7 @@ import (
 type MatchingEngine struct {
 	isShutdown    atomic.Bool
 	orderbooks    map[string]*OrderBook
-	cmdBuffer     *RingBuffer[InputEvent]
+	ring          *RingBuffer[InputEvent]
 	publishTrader PublishLog
 	serializer    protocol.Serializer
 }
@@ -35,12 +35,12 @@ func NewMatchingEngine(publishTrader PublishLog) *MatchingEngine {
 		serializer:    &protocol.DefaultJSONSerializer{},
 	}
 
-	engine.cmdBuffer = NewRingBuffer(32768, engine)
+	engine.ring = NewRingBuffer(32768, engine)
 
 	return engine
 }
 
-// Start starts the engine's event loop. This is a blocking call.
+// Run starts the engine's event loop. This is a blocking call.
 // The consumer loop runs on the calling goroutine, enabling the caller
 // to control thread affinity via runtime.LockOSThread().
 //
@@ -49,10 +49,10 @@ func NewMatchingEngine(publishTrader PublishLog) *MatchingEngine {
 //	go func() {
 //	    runtime.LockOSThread()
 //	    defer runtime.UnlockOSThread()
-//	    engine.Start()
+//	    engine.Run()
 //	}()
-func (engine *MatchingEngine) Start() error {
-	engine.cmdBuffer.Run()
+func (engine *MatchingEngine) Run() error {
+	engine.ring.Run()
 	return nil
 }
 
@@ -71,25 +71,19 @@ func (engine *MatchingEngine) OnEvent(ev *InputEvent) {
 }
 
 func (engine *MatchingEngine) processCommand(cmd *protocol.Command) {
-	switch cmd.Type {
-	case protocol.CmdSuspendMarket, protocol.CmdResumeMarket, protocol.CmdUpdateConfig:
-		book := engine.orderBook(cmd.MarketID)
-		if book != nil {
-			book.processCommand(cmd)
-		}
-	default:
-		// Trading commands (PlaceOrder, CancelOrder, AmendOrder)
-		book := engine.orderBook(cmd.MarketID)
-		if book != nil {
-			book.processCommand(cmd)
-		}
+	if cmd.Type == protocol.CmdCreateMarket {
+		engine.handleCreateMarket(cmd)
+		return
 	}
 
+	book := engine.orderBook(cmd.MarketID)
+	if book == nil {
+		return
+	}
+	book.processCommand(cmd)
+
 	if cmd.SeqID > 0 {
-		book := engine.orderBook(cmd.MarketID)
-		if book != nil {
-			book.lastCmdSeqID.Store(cmd.SeqID)
-		}
+		book.lastCmdSeqID.Store(cmd.SeqID)
 	}
 }
 
@@ -106,7 +100,6 @@ func (engine *MatchingEngine) processQuery(ev *InputEvent) {
 			book.processQuery(ev)
 		}
 	case *OrderBookSnapshot:
-		// Snapshot for a specific book (used by OrderBook.TakeSnapshot in standalone mode)
 		book := engine.orderBook(q.MarketID)
 		if book != nil {
 			book.processQuery(ev)
@@ -141,13 +134,8 @@ func (engine *MatchingEngine) EnqueueCommand(cmd *protocol.Command) error {
 		return ErrShutdown
 	}
 
-	// CreateMarket is handled synchronously (needs to be immediately visible)
-	if cmd.Type == protocol.CmdCreateMarket {
-		return engine.handleCreateMarket(cmd)
-	}
-
-	// All other commands go through the shared RingBuffer
-	seq, ev := engine.cmdBuffer.Claim()
+	// All commands go through the shared RingBuffer
+	seq, ev := engine.ring.Claim()
 	if seq == -1 {
 		return ErrShutdown
 	}
@@ -156,7 +144,7 @@ func (engine *MatchingEngine) EnqueueCommand(cmd *protocol.Command) error {
 	ev.Query = nil
 	ev.Resp = nil
 
-	engine.cmdBuffer.Commit(seq)
+	engine.ring.Commit(seq)
 	return nil
 }
 
@@ -279,7 +267,7 @@ func (engine *MatchingEngine) UpdateConfig(userID string, marketID string, minLo
 // GetStats returns usage statistics for the specified market.
 func (engine *MatchingEngine) GetStats(marketID string) (*protocol.GetStatsResponse, error) {
 	respChan := make(chan any, 1)
-	engine.cmdBuffer.Publish(InputEvent{
+	engine.ring.Publish(InputEvent{
 		Query: &protocol.GetStatsRequest{
 			MarketID: marketID,
 		},
@@ -304,7 +292,7 @@ func (engine *MatchingEngine) Depth(marketID string, limit uint32) (*protocol.Ge
 	}
 
 	respChan := make(chan any, 1)
-	engine.cmdBuffer.Publish(InputEvent{
+	engine.ring.Publish(InputEvent{
 		Query: &protocol.GetDepthRequest{
 			MarketID: marketID,
 			Limit:    limit,
@@ -328,7 +316,7 @@ func (engine *MatchingEngine) Depth(marketID string, limit uint32) (*protocol.Ge
 // or the context is cancelled.
 func (engine *MatchingEngine) Shutdown(ctx context.Context) error {
 	engine.isShutdown.Store(true)
-	return engine.cmdBuffer.Shutdown(ctx)
+	return engine.ring.Shutdown(ctx)
 }
 
 // snapshotResult wraps a snapshot result with potential error
@@ -344,7 +332,7 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 	// Request snapshots from all OrderBooks through the RingBuffer
 	// This ensures snapshots are taken on the consumer goroutine (no race conditions)
 	respChan := make(chan any, 1)
-	e.cmdBuffer.Publish(InputEvent{
+	e.ring.Publish(InputEvent{
 		Query: &engineSnapshotQuery{},
 		Resp:  respChan,
 	})
@@ -590,17 +578,17 @@ func (e *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMetadata
 }
 
 // handleCreateMarket handles the creation of a new market.
-// This is handled synchronously so the OrderBook is immediately available.
-func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) error {
+// This is handled asynchronously by the RingBuffer consumer.
+func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) {
 	payload := &protocol.CreateMarketCommand{}
 	if err := engine.serializer.Unmarshal(cmd.Payload, payload); err != nil {
 		logger.Error("failed to unmarshal CreateMarket command", "error", err)
-		return nil // Cannot process invalid payload
+		return
 	}
 
 	if _, exists := engine.orderbooks[payload.MarketID]; exists {
 		logger.Warn("market already exists", "market_id", payload.MarketID)
-		return nil // Market already exists
+		return
 	}
 
 	// Create and Store (no goroutine, no individual RingBuffer)
@@ -614,8 +602,6 @@ func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) error {
 
 	newbook := newOrderBook(payload.MarketID, engine.publishTrader, opts...)
 	engine.orderbooks[payload.MarketID] = newbook
-
-	return nil
 }
 
 // orderBook is an internal helper to look up an OrderBook by marketID.

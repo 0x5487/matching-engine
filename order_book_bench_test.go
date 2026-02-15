@@ -25,7 +25,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	_ = engine.CreateMarket("admin", marketID, "")
 
 	// Start engine event loop
-	go engine.Start()
+	go engine.Run()
 
 	// Use fixed seed for repeatability
 	rng := rand.New(rand.NewSource(42))
@@ -129,7 +129,7 @@ func BenchmarkMatching(b *testing.B) {
 	_ = engine.CreateMarket("admin", marketID, "")
 
 	// Start engine event loop
-	go engine.Start()
+	go engine.Run()
 
 	price := udecimal.MustFromInt64(10000, 0)
 	size := udecimal.MustFromInt64(1, 0)

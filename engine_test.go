@@ -31,7 +31,7 @@ func TestMatchingEngine(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Start engine event loop
-		go engine.Start()
+		go engine.Run()
 
 		order1 := &protocol.PlaceOrderCommand{
 			OrderID:   "order1",
@@ -79,7 +79,7 @@ func TestMatchingEngine(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Start engine event loop
-		go engine.Start()
+		go engine.Run()
 
 		order1 := &protocol.PlaceOrderCommand{
 			OrderID:   "order1",
@@ -116,7 +116,7 @@ func TestMatchingEngine(t *testing.T) {
 		engine := NewMatchingEngine(publishTrader)
 
 		// Start engine event loop
-		go engine.Start()
+		go engine.Run()
 
 		market := "NON-EXISTENT"
 
@@ -150,7 +150,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		}
 
 		// Start engine event loop
-		go engine.Start()
+		go engine.Run()
 
 		for i, market := range markets {
 			order := &protocol.PlaceOrderCommand{
@@ -191,7 +191,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Start engine event loop
-		go engine.Start()
+		go engine.Run()
 
 		order := &protocol.PlaceOrderCommand{
 			OrderID:   "order1",
@@ -234,7 +234,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Start engine event loop
-		go engine.Start()
+		go engine.Run()
 
 		order := &protocol.PlaceOrderCommand{
 			OrderID:   "order1",
@@ -275,7 +275,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Start engine event loop
-	go engine.Start()
+	go engine.Run()
 
 	// Add orders to Market 1
 	err = engine.PlaceOrder(ctx, market1, &protocol.PlaceOrderCommand{
@@ -337,7 +337,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 	assert.Equal(t, meta.GlobalLastCmdSeqID, restoredMeta.GlobalLastCmdSeqID)
 
 	// Start new engine event loop
-	go newEngine.Start()
+	go newEngine.Run()
 
 	// 4. Verify Restored State
 	assert.Eventually(t, func() bool {
@@ -373,17 +373,19 @@ func TestManagement_CreateMarket(t *testing.T) {
 	engine := NewMatchingEngine(publish)
 	marketID := "BTC-USDT"
 
+	// Start engine event loop
+	go engine.Run()
+
 	// 1. Create Market via Command
 	// MinLotSize: 0.01
 	err := engine.CreateMarket("admin", marketID, "0.01")
 	assert.NoError(t, err)
 
-	// Verify OrderBook existence (CreateMarket is synchronous)
-	book := engine.orderbooks[marketID]
-	assert.NotNil(t, book)
-
-	// Start engine event loop
-	go engine.Start()
+	// Verify OrderBook existence (CreateMarket is asynchronous)
+	assert.Eventually(t, func() bool {
+		_, err := engine.GetStats(marketID)
+		return err == nil
+	}, 1*time.Second, 10*time.Millisecond)
 
 	// Verify MinLotSize configuration by placing a small order
 	ctx := context.Background()
@@ -412,7 +414,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Start engine event loop
-	go engine.Start()
+	go engine.Run()
 
 	// 1. Place Order (Should Succeed)
 	order1 := &protocol.PlaceOrderCommand{
@@ -523,7 +525,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Start engine event loop
-	go engine.Start()
+	go engine.Run()
 
 	// 2. Suspend Market
 	err = engine.SuspendMarket("admin", marketID)
@@ -544,7 +546,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Start new engine event loop
-	go newEngine.Start()
+	go newEngine.Run()
 
 	// 5. Verify State (Should be Suspended)
 	ctx := context.Background()
@@ -605,7 +607,7 @@ func TestManagement_UpdateConfig(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Start engine event loop
-	go engine.Start()
+	go engine.Run()
 
 	// 1. Update MinLotSize
 	err = engine.UpdateConfig("admin", marketID, "0.1")

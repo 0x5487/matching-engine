@@ -5,7 +5,8 @@ A high-performance, in-memory order matching engine written in Go. Designed for 
 ## 🚀 Features
 
 - **High Performance**: Pure in-memory matching using efficient SkipList data structures ($O(\log N)$) and **Disruptor** pattern (RingBuffer) for **microsecond latency**.
-- **Concurrency Safe**: Built on the Actor model to ensure thread safety without heavy lock contention.
+- **Single Thread Actor**: Adopts a **Lock-Free** architecture where a single pinned goroutine processes all state mutations. This eliminates context switching and mutex contention, maximizing CPU cache locality.
+- **Concurrency Safe**: All state mutations are serialized through the RingBuffer, eliminating race conditions without heavy lock contention.
 - **Zero-Allocation**: Uses `udecimal` (uint64-based) and extensive object pooling to minimize GC pressure on hot paths.
 - **Multi-Market Support**: Manages multiple trading pairs (e.g., BTC-USDT, ETH-USDT) within a single `MatchingEngine` instance.
 - **Management Commands**: Dynamic market management (Create, Suspend, Resume, UpdateConfig) via Event Sourcing.
@@ -46,13 +47,21 @@ func main() {
 	// 2. Initialize the Matching Engine
 	engine := match.NewMatchingEngine(publish)
 
-	// 3. Create a Market (Event Sourcing Command)
-	// MarketID: "BTC-USDT", MinLotSize: "0.00000001"
-	if err := engine.CreateMarket("BTC-USDT", "0.00000001"); err != nil {
+	// 3. Start the Engine (Actor Loop)
+	// This must be run in a separate goroutine
+	go func() {
+		if err := engine.Run(); err != nil {
+			panic(err)
+		}
+	}()
+
+	// 4. Create a Market
+	// This cmd is now async and thread-safe via RingBuffer
+	if err := engine.CreateMarket("admin", "BTC-USDT", "0.00000001"); err != nil {
 		panic(err)
 	}
 
-	// 4. Place a Sell Limit Order
+	// 5. Place a Sell Limit Order
 	sellCmd := &protocol.PlaceOrderCommand{
 		OrderID:   "sell-1",
 		OrderType: protocol.OrderTypeLimit,
@@ -65,7 +74,7 @@ func main() {
 		fmt.Printf("Error placing sell order: %v\n", err)
 	}
 
-	// 5. Place a Buy Limit Order (Matches immediately)
+	// 6. Place a Buy Limit Order (Matches immediately)
 	buyCmd := &protocol.PlaceOrderCommand{
 		OrderID:   "buy-1",
 		OrderType: protocol.OrderTypeLimit,
@@ -81,9 +90,10 @@ func main() {
 	// Allow some time for async processing
 	time.Sleep(100 * time.Millisecond)
 
-	// 6. Check Logs
+	// 7. Check Logs
 	fmt.Printf("Total events: %d\n", publish.Count())
-	for _, log := range publish.Logs() {
+	logs := publish.Logs()
+	for _, log := range logs {
 		switch log.Type {
 		case protocol.LogTypeMatch:
 			fmt.Printf("[MATCH] TradeID: %d, Price: %s, Size: %s\n",
