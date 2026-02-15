@@ -8,7 +8,6 @@ import (
 	"hash/crc32"
 	"os"
 	"path/filepath"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,54 +16,148 @@ import (
 )
 
 // MatchingEngine manages multiple order books for different markets.
+// It uses a single shared RingBuffer (Disruptor) for all commands,
+// allowing the entire event loop to run on a single goroutine.
+// This enables runtime.LockOSThread() for CPU affinity scenarios.
 type MatchingEngine struct {
 	isShutdown    atomic.Bool
-	orderbooks    sync.Map
+	orderbooks    map[string]*OrderBook
+	cmdBuffer     *RingBuffer[InputEvent]
 	publishTrader PublishLog
 	serializer    protocol.Serializer
 }
 
 // NewMatchingEngine creates a new matching engine instance.
 func NewMatchingEngine(publishTrader PublishLog) *MatchingEngine {
-	return &MatchingEngine{
-		orderbooks:    sync.Map{},
+	engine := &MatchingEngine{
+		orderbooks:    make(map[string]*OrderBook),
 		publishTrader: publishTrader,
 		serializer:    &protocol.DefaultJSONSerializer{},
 	}
+
+	engine.cmdBuffer = NewRingBuffer(32768, engine)
+
+	return engine
 }
 
-// EnqueueCommand routes the command to the correct OrderBook based on the MarketID.
+// Start starts the engine's event loop. This is a blocking call.
+// The consumer loop runs on the calling goroutine, enabling the caller
+// to control thread affinity via runtime.LockOSThread().
+//
+// Usage:
+//
+//	go func() {
+//	    runtime.LockOSThread()
+//	    defer runtime.UnlockOSThread()
+//	    engine.Start()
+//	}()
+func (engine *MatchingEngine) Start() error {
+	engine.cmdBuffer.Run()
+	return nil
+}
+
+// OnEvent implements EventHandler[InputEvent] for the Engine's shared RingBuffer.
+// It routes events to the appropriate OrderBook based on MarketID.
+func (engine *MatchingEngine) OnEvent(ev *InputEvent) {
+	if ev.Cmd != nil {
+		engine.processCommand(ev.Cmd)
+		return
+	}
+
+	if ev.Query != nil {
+		engine.processQuery(ev)
+		return
+	}
+}
+
+func (engine *MatchingEngine) processCommand(cmd *protocol.Command) {
+	switch cmd.Type {
+	case protocol.CmdSuspendMarket, protocol.CmdResumeMarket, protocol.CmdUpdateConfig:
+		book := engine.orderBook(cmd.MarketID)
+		if book != nil {
+			book.processCommand(cmd)
+		}
+	default:
+		// Trading commands (PlaceOrder, CancelOrder, AmendOrder)
+		book := engine.orderBook(cmd.MarketID)
+		if book != nil {
+			book.processCommand(cmd)
+		}
+	}
+
+	if cmd.SeqID > 0 {
+		book := engine.orderBook(cmd.MarketID)
+		if book != nil {
+			book.lastCmdSeqID.Store(cmd.SeqID)
+		}
+	}
+}
+
+func (engine *MatchingEngine) processQuery(ev *InputEvent) {
+	switch q := ev.Query.(type) {
+	case *protocol.GetDepthRequest:
+		book := engine.orderBook(q.MarketID)
+		if book != nil {
+			book.processQuery(ev)
+		}
+	case *protocol.GetStatsRequest:
+		book := engine.orderBook(q.MarketID)
+		if book != nil {
+			book.processQuery(ev)
+		}
+	case *OrderBookSnapshot:
+		// Snapshot for a specific book (used by OrderBook.TakeSnapshot in standalone mode)
+		book := engine.orderBook(q.MarketID)
+		if book != nil {
+			book.processQuery(ev)
+		}
+	case *engineSnapshotQuery:
+		engine.handleSnapshotQuery(ev)
+	}
+}
+
+// handleSnapshotQuery creates snapshots for all OrderBooks synchronously
+// (on the same goroutine as the event loop, ensuring consistency).
+func (engine *MatchingEngine) handleSnapshotQuery(ev *InputEvent) {
+	var results []snapshotResult
+
+	for _, book := range engine.orderbooks {
+		snap := book.createSnapshot()
+		results = append(results, snapshotResult{snap: snap})
+	}
+
+	if ev.Resp != nil {
+		select {
+		case ev.Resp <- results:
+		default:
+		}
+	}
+}
+
+// EnqueueCommand routes the command to the Engine's shared RingBuffer.
+// CreateMarket is handled synchronously so the OrderBook is immediately available.
 func (engine *MatchingEngine) EnqueueCommand(cmd *protocol.Command) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown
 	}
 
-	switch cmd.Type {
-	case protocol.CmdCreateMarket:
+	// CreateMarket is handled synchronously (needs to be immediately visible)
+	if cmd.Type == protocol.CmdCreateMarket {
 		return engine.handleCreateMarket(cmd)
-	case protocol.CmdSuspendMarket:
-		return engine.handleSuspendMarket(cmd)
-	case protocol.CmdResumeMarket:
-		return engine.handleResumeMarket(cmd)
-	case protocol.CmdUpdateConfig:
-		return engine.handleUpdateConfig(cmd)
-	default:
-		// Other commands (e.g. Trading commands) are routed to the OrderBook below
 	}
 
-	// Host layer extracts MarketID directly from envelope.
-	marketID := cmd.MarketID
-
-	if len(marketID) == 0 {
-		return ErrNotFound
+	// All other commands go through the shared RingBuffer
+	seq, ev := engine.cmdBuffer.Claim()
+	if seq == -1 {
+		return ErrShutdown
 	}
 
-	orderbook := engine.OrderBook(marketID)
-	if orderbook == nil {
-		return ErrNotFound
-	}
+	ev.Cmd = cmd
+	ev.Query = nil
+	ev.Resp = nil
 
-	return orderbook.EnqueueCommand(cmd)
+	engine.cmdBuffer.Commit(seq)
+	return nil
 }
 
 // PlaceOrder adds an order to the appropriate order book based on the market ID.
@@ -110,16 +203,6 @@ func (engine *MatchingEngine) CancelOrder(ctx context.Context, marketID string, 
 		Payload:  bytes,
 	}
 	return engine.EnqueueCommand(protoCmd)
-}
-
-// AddOrderBook creates and starts a new order book for the specified market ID.
-//
-// Deprecated: Use CreateMarket instead.
-func (engine *MatchingEngine) AddOrderBook(userID string, marketID string) (*OrderBook, error) {
-	if err := engine.CreateMarket(userID, marketID, ""); err != nil {
-		return nil, err
-	}
-	return engine.OrderBook(marketID), nil
 }
 
 // CreateMarket sends a command to create a new market.
@@ -193,51 +276,59 @@ func (engine *MatchingEngine) UpdateConfig(userID string, marketID string, minLo
 	})
 }
 
-// OrderBook retrieves the order book for a specific market ID.
-// Returns nil if the market does not exist.
-func (engine *MatchingEngine) OrderBook(marketID string) *OrderBook {
-	book, found := engine.orderbooks.Load(marketID)
-	if !found {
-		return nil
-	}
-
-	orderbook, _ := book.(*OrderBook)
-	return orderbook
-}
-
-// Shutdown gracefully shuts down all order books in the engine.
-// It blocks until all order books have completed their shutdown or the context is cancelled.
-// Returns nil if all order books shut down successfully, or an aggregated error otherwise.
-func (engine *MatchingEngine) Shutdown(ctx context.Context) error {
-	// Set shutdown flag to prevent new orders and new market creation
-	engine.isShutdown.Store(true)
-
-	var wg sync.WaitGroup
-	var errs []error
-	var errMu sync.Mutex
-
-	// Shutdown all order books in parallel
-	engine.orderbooks.Range(func(key, value any) bool {
-		wg.Add(1)
-		go func(marketID string, book *OrderBook) {
-			defer wg.Done()
-			if err := book.Shutdown(ctx); err != nil {
-				errMu.Lock()
-				errs = append(errs, err)
-				errMu.Unlock()
-			}
-		}(key.(string), value.(*OrderBook))
-		return true
+// GetStats returns usage statistics for the specified market.
+func (engine *MatchingEngine) GetStats(marketID string) (*protocol.GetStatsResponse, error) {
+	respChan := make(chan any, 1)
+	engine.cmdBuffer.Publish(InputEvent{
+		Query: &protocol.GetStatsRequest{
+			MarketID: marketID,
+		},
+		Resp: respChan,
 	})
 
-	// Wait for all order books to complete shutdown
-	wg.Wait()
-
-	// Return aggregated errors if any
-	if len(errs) > 0 {
-		return errors.Join(errs...)
+	select {
+	case res := <-respChan:
+		if result, ok := res.(*protocol.GetStatsResponse); ok {
+			return result, nil
+		}
+		return nil, errors.New("unexpected response type")
+	case <-time.After(time.Second):
+		return nil, ErrTimeout
 	}
-	return nil
+}
+
+// Depth returns the current depth of the order book for the specified market.
+func (engine *MatchingEngine) Depth(marketID string, limit uint32) (*protocol.GetDepthResponse, error) {
+	if limit == 0 {
+		return nil, ErrInvalidParam
+	}
+
+	respChan := make(chan any, 1)
+	engine.cmdBuffer.Publish(InputEvent{
+		Query: &protocol.GetDepthRequest{
+			MarketID: marketID,
+			Limit:    limit,
+		},
+		Resp: respChan,
+	})
+
+	select {
+	case res := <-respChan:
+		if result, ok := res.(*protocol.GetDepthResponse); ok {
+			return result, nil
+		}
+		return nil, errors.New("unexpected response type")
+	case <-time.After(time.Second):
+		return nil, ErrTimeout
+	}
+}
+
+// Shutdown gracefully shuts down the engine.
+// It blocks until all pending commands in the RingBuffer are processed
+// or the context is cancelled.
+func (engine *MatchingEngine) Shutdown(ctx context.Context) error {
+	engine.isShutdown.Store(true)
+	return engine.cmdBuffer.Shutdown(ctx)
 }
 
 // snapshotResult wraps a snapshot result with potential error
@@ -246,42 +337,26 @@ type snapshotResult struct {
 	err  error
 }
 
-// takeSnapshot orchestrates the snapshot process across all order books.
-// It returns a channel that streams snapshot results (including errors).
-func (e *MatchingEngine) takeSnapshot() chan snapshotResult {
-	ch := make(chan snapshotResult)
-
-	go func() {
-		defer close(ch)
-		var wg sync.WaitGroup
-
-		e.orderbooks.Range(func(key, value any) bool {
-			book := value.(*OrderBook)
-			wg.Add(1)
-			go func(b *OrderBook, marketID string) {
-				defer wg.Done()
-				snap, err := b.TakeSnapshot()
-				if err != nil {
-					ch <- snapshotResult{snap: nil, err: errors.New("snapshot failed for market " + marketID + ": " + err.Error())}
-					return
-				}
-				if snap != nil {
-					ch <- snapshotResult{snap: snap, err: nil}
-				}
-			}(book, key.(string))
-			return true
-		})
-
-		wg.Wait()
-	}()
-
-	return ch
-}
-
 // TakeSnapshot captures a consistent snapshot of all order books and writes them to the specified directory.
 // It generates two files: `snapshot.bin` (binary data) and `metadata.json` (metadata).
 // Returns the metadata object or an error.
 func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, error) {
+	// Request snapshots from all OrderBooks through the RingBuffer
+	// This ensures snapshots are taken on the consumer goroutine (no race conditions)
+	respChan := make(chan any, 1)
+	e.cmdBuffer.Publish(InputEvent{
+		Query: &engineSnapshotQuery{},
+		Resp:  respChan,
+	})
+
+	var results []snapshotResult
+	select {
+	case res := <-respChan:
+		results = res.([]snapshotResult)
+	case <-time.After(10 * time.Second):
+		return nil, ErrTimeout
+	}
+
 	// Use a temporary directory for atomic writes
 	tmpDir := outputDir + ".tmp"
 	if err := os.RemoveAll(tmpDir); err != nil {
@@ -290,8 +365,6 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
 		return nil, err
 	}
-
-	snapChan := e.takeSnapshot()
 
 	// Track GlobalLastCmdSeqID as max of all snapshots
 	var globalSeqID uint64
@@ -308,9 +381,8 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 	currentOffset := int64(0)
 	var snapshotErrors []error
 
-	// Stream write
-	for result := range snapChan {
-		// Check for snapshot errors
+	// Write snapshots
+	for _, result := range results {
 		if result.err != nil {
 			snapshotErrors = append(snapshotErrors, result.err)
 			continue
@@ -322,7 +394,7 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 		data, err := json.Marshal(snap)
 		if err != nil {
 			binFile.Close()
-			return nil, err // Should probably handle partial failure better, but fail-fast for now
+			return nil, err
 		}
 
 		n, err := binFile.Write(data)
@@ -394,7 +466,7 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 		return nil, err
 	}
 
-	// Calculate full file checksum (Issue 2)
+	// Calculate full file checksum
 	snapshotChecksum, err := calculateFileCRC32(binPath)
 	if err != nil {
 		return nil, err
@@ -419,7 +491,7 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 		return nil, err
 	}
 
-	// Atomic rename: remove old dir and rename temp to final (Issue 3)
+	// Atomic rename: remove old dir and rename temp to final
 	if err := os.RemoveAll(outputDir); err != nil {
 		return nil, err
 	}
@@ -487,7 +559,7 @@ func (e *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMetadata
 		return nil, err
 	}
 
-	// 5. Restore OrderBooks
+	// 5. Restore OrderBooks (as managed books, no individual RingBuffers)
 	for _, segment := range footer.Markets {
 		// Read segment data
 		segmentData := make([]byte, segment.Length)
@@ -506,21 +578,19 @@ func (e *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMetadata
 			return nil, err
 		}
 
-		// Create and restore OrderBook
-		book := NewOrderBook(segment.MarketID, e.publishTrader)
+		// Create managed OrderBook (no individual RingBuffer) and restore
+		book := newOrderBook(segment.MarketID, e.publishTrader)
 		book.Restore(&snap)
 
-		// Add to engine map and start
-		e.orderbooks.Store(segment.MarketID, book)
-		go func(b *OrderBook) {
-			_ = b.Start()
-		}(book)
+		// Add to engine map (no goroutine needed)
+		e.orderbooks[segment.MarketID] = book
 	}
 
 	return &meta, nil
 }
 
 // handleCreateMarket handles the creation of a new market.
+// This is handled synchronously so the OrderBook is immediately available.
 func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) error {
 	payload := &protocol.CreateMarketCommand{}
 	if err := engine.serializer.Unmarshal(cmd.Payload, payload); err != nil {
@@ -528,12 +598,12 @@ func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) error {
 		return nil // Cannot process invalid payload
 	}
 
-	if _, exists := engine.orderbooks.Load(payload.MarketID); exists {
+	if _, exists := engine.orderbooks[payload.MarketID]; exists {
 		logger.Warn("market already exists", "market_id", payload.MarketID)
 		return nil // Market already exists
 	}
 
-	// Create and Start
+	// Create and Store (no goroutine, no individual RingBuffer)
 	opts := []OrderBookOption{}
 	if payload.MinLotSize != "" {
 		size, err := udecimal.Parse(payload.MinLotSize)
@@ -542,39 +612,13 @@ func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) error {
 		}
 	}
 
-	newbook := NewOrderBook(payload.MarketID, engine.publishTrader, opts...)
-	engine.orderbooks.Store(payload.MarketID, newbook)
-
-	go func() {
-		_ = newbook.Start()
-	}()
+	newbook := newOrderBook(payload.MarketID, engine.publishTrader, opts...)
+	engine.orderbooks[payload.MarketID] = newbook
 
 	return nil
 }
 
-// handleSuspendMarket routes the suspend command to the order book.
-func (engine *MatchingEngine) handleSuspendMarket(cmd *protocol.Command) error {
-	orderbook := engine.OrderBook(cmd.MarketID)
-	if orderbook == nil {
-		return nil
-	}
-	return orderbook.EnqueueCommand(cmd)
-}
-
-// handleResumeMarket routes the resume command to the order book.
-func (engine *MatchingEngine) handleResumeMarket(cmd *protocol.Command) error {
-	orderbook := engine.OrderBook(cmd.MarketID)
-	if orderbook == nil {
-		return nil
-	}
-	return orderbook.EnqueueCommand(cmd)
-}
-
-// handleUpdateConfig routes the update config command to the order book.
-func (engine *MatchingEngine) handleUpdateConfig(cmd *protocol.Command) error {
-	orderbook := engine.OrderBook(cmd.MarketID)
-	if orderbook == nil {
-		return nil
-	}
-	return orderbook.EnqueueCommand(cmd)
+// orderBook is an internal helper to look up an OrderBook by marketID.
+func (engine *MatchingEngine) orderBook(marketID string) *OrderBook {
+	return engine.orderbooks[marketID]
 }

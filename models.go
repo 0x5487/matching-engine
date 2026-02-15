@@ -68,3 +68,6 @@ type InputEvent struct {
 	Query any // e.g. *protocol.GetDepthRequest
 	Resp  chan any
 }
+
+// engineSnapshotQuery is an internal query type for Engine-level snapshot requests.
+type engineSnapshotQuery struct{}

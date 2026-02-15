@@ -121,6 +121,13 @@ func (rb *RingBuffer[T]) Start() {
 	go rb.consumerLoop()
 }
 
+// Run starts the consumer loop in the calling goroutine (blocking).
+// This allows the caller to control the goroutine and OS thread,
+// enabling runtime.LockOSThread() for CPU affinity scenarios.
+func (rb *RingBuffer[T]) Run() {
+	rb.consumerLoop()
+}
+
 // Shutdown gracefully stops the disruptor, ensuring all pending events are processed.
 // It blocks until all events are processed or the context is cancelled.
 func (rb *RingBuffer[T]) Shutdown(ctx context.Context) error {
