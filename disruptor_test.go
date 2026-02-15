@@ -58,7 +58,7 @@ func TestRingBuffer_BasicOperations(t *testing.T) {
 	}
 
 	rb := NewRingBuffer[TestEvent](16, handler)
-	rb.Start()
+	go rb.Run()
 
 	// Publish 10 events
 	for i := int64(1); i <= 10; i++ {
@@ -90,7 +90,7 @@ func TestRingBuffer_ClaimCommit(t *testing.T) {
 	}
 
 	rb := NewRingBuffer[TestEvent](16, handler)
-	rb.Start()
+	go rb.Run()
 
 	// Use Claim/Commit pattern
 	seq, slot := rb.Claim()
@@ -112,7 +112,7 @@ func TestRingBuffer_ClaimCommit(t *testing.T) {
 func TestRingBuffer_ClaimAfterShutdown(t *testing.T) {
 	handler := &simpleHandler[TestEvent]{fn: func(e *TestEvent) {}}
 	rb := NewRingBuffer[TestEvent](16, handler)
-	rb.Start()
+	go rb.Run()
 
 	// Shutdown first
 	ctx := context.Background()
@@ -134,7 +134,7 @@ func TestRingBuffer_GetPendingEvents(t *testing.T) {
 	}
 
 	rb := NewRingBuffer[TestEvent](16, handler)
-	rb.Start()
+	go rb.Run()
 
 	// Publish 5 events (they will be pending because handler is blocked)
 	for i := 0; i < 5; i++ {
@@ -167,7 +167,7 @@ func TestRingBuffer_SequenceMonitoring(t *testing.T) {
 	assert.Equal(t, int64(-1), rb.ProducerSequence())
 	assert.Equal(t, int64(-1), rb.ConsumerSequence())
 
-	rb.Start()
+	go rb.Run()
 
 	// Publish some events
 	for i := 0; i < 3; i++ {
@@ -192,7 +192,7 @@ func TestRingBuffer_ShutdownTimeout(t *testing.T) {
 	}
 
 	rb := NewRingBuffer[TestEvent](16, handler)
-	rb.Start()
+	go rb.Run()
 
 	// Publish an event
 	rb.Publish(TestEvent{ID: 1})
@@ -215,7 +215,7 @@ func TestRingBuffer_ConcurrentPublish(t *testing.T) {
 	}
 
 	rb := NewRingBuffer[TestEvent](1024, handler)
-	rb.Start()
+	go rb.Run()
 
 	// Concurrent publishers
 	const numPublishers = 10
@@ -285,7 +285,7 @@ func BenchmarkDisruptor(b *testing.B) {
 	}
 
 	rb := NewRingBuffer[TestEvent](1024*1024, handler)
-	rb.Start()
+	go rb.Run()
 
 	b.ResetTimer()
 

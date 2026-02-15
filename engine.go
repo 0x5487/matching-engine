@@ -8,6 +8,7 @@ import (
 	"hash/crc32"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,6 +26,7 @@ type MatchingEngine struct {
 	ring          *RingBuffer[InputEvent]
 	publishTrader PublishLog
 	serializer    protocol.Serializer
+	responsePool  *sync.Pool
 }
 
 // NewMatchingEngine creates a new matching engine instance.
@@ -33,6 +35,11 @@ func NewMatchingEngine(publishTrader PublishLog) *MatchingEngine {
 		orderbooks:    make(map[string]*OrderBook),
 		publishTrader: publishTrader,
 		serializer:    &protocol.DefaultJSONSerializer{},
+		responsePool: &sync.Pool{
+			New: func() any {
+				return make(chan any, 1)
+			},
+		},
 	}
 
 	engine.ring = NewRingBuffer(32768, engine)
@@ -266,7 +273,16 @@ func (engine *MatchingEngine) UpdateConfig(userID string, marketID string, minLo
 
 // GetStats returns usage statistics for the specified market.
 func (engine *MatchingEngine) GetStats(marketID string) (*protocol.GetStatsResponse, error) {
-	respChan := make(chan any, 1)
+	respChan := engine.responsePool.Get().(chan any)
+	defer func() {
+		// Ensure channel is drained before putting back
+		select {
+		case <-respChan:
+		default:
+		}
+		engine.responsePool.Put(respChan)
+	}()
+
 	engine.ring.Publish(InputEvent{
 		Query: &protocol.GetStatsRequest{
 			MarketID: marketID,
@@ -291,7 +307,14 @@ func (engine *MatchingEngine) Depth(marketID string, limit uint32) (*protocol.Ge
 		return nil, ErrInvalidParam
 	}
 
-	respChan := make(chan any, 1)
+	respChan := engine.responsePool.Get().(chan any)
+	defer func() {
+		select {
+		case <-respChan:
+		default:
+		}
+		engine.responsePool.Put(respChan)
+	}()
 	engine.ring.Publish(InputEvent{
 		Query: &protocol.GetDepthRequest{
 			MarketID: marketID,
@@ -331,7 +354,14 @@ type snapshotResult struct {
 func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, error) {
 	// Request snapshots from all OrderBooks through the RingBuffer
 	// This ensures snapshots are taken on the consumer goroutine (no race conditions)
-	respChan := make(chan any, 1)
+	respChan := e.responsePool.Get().(chan any)
+	defer func() {
+		select {
+		case <-respChan:
+		default:
+		}
+		e.responsePool.Put(respChan)
+	}()
 	e.ring.Publish(InputEvent{
 		Query: &engineSnapshotQuery{},
 		Resp:  respChan,
