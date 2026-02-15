@@ -90,7 +90,7 @@ type Order struct {
     Price     decimal.Decimal
     Size      decimal.Decimal
     Type      OrderType
-    UserID    int64
+    UserID    uint64
     Timestamp int64           // 用於重建優先級
     // 未來擴充: VisibleLimit, HiddenSize (for Iceberg)
 }

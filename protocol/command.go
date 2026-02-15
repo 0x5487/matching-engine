@@ -64,21 +64,21 @@ type PlaceOrderCommand struct {
 	Size        string    `json:"size"`
 	VisibleSize string    `json:"visible_size,omitempty"`
 	QuoteSize   string    `json:"quote_size,omitempty"`
-	UserID      int64     `json:"user_id"`
+	UserID      uint64    `json:"user_id"`
 	Timestamp   int64     `json:"timestamp"`
 }
 
 // CancelOrderCommand is the payload for cancelling an existing order.
 type CancelOrderCommand struct {
 	OrderID   string `json:"order_id"`
-	UserID    int64  `json:"user_id"`
+	UserID    uint64 `json:"user_id"`
 	Timestamp int64  `json:"timestamp"`
 }
 
 // AmendOrderCommand is the payload for modifying an existing order.
 type AmendOrderCommand struct {
 	OrderID   string `json:"order_id"`
-	UserID    int64  `json:"user_id"`
+	UserID    uint64 `json:"user_id"`
 	NewPrice  string `json:"new_price"`
 	NewSize   string `json:"new_size"`
 	Timestamp int64  `json:"timestamp"`

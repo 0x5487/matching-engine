@@ -81,7 +81,7 @@ func TestMatchingEngine(t *testing.T) {
 			Side:      Buy,
 			Price:     udecimal.MustFromInt64(100, 0).String(),
 			Size:      udecimal.MustFromInt64(2, 0).String(),
-			UserID:    1,
+			UserID:    uint64(1),
 		}
 
 		err = engine.PlaceOrder(ctx, market1, order1)
@@ -264,7 +264,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 		OrderType: Limit,
 		Price:     udecimal.MustFromInt64(50000, 0).String(),
 		Size:      udecimal.MustFromInt64(1, 0).String(),
-		UserID:    1,
+		UserID:    uint64(1),
 	})
 	assert.NoError(t, err)
 
@@ -275,7 +275,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 		OrderType: Limit,
 		Price:     udecimal.MustFromInt64(3000, 0).String(),
 		Size:      udecimal.MustFromInt64(10, 0).String(),
-		UserID:    2,
+		UserID:    uint64(2),
 	})
 	assert.NoError(t, err)
 
@@ -333,7 +333,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 		OrderType: Limit,
 		Price:     udecimal.MustFromInt64(50000, 0).String(),
 		Size:      udecimal.MustFromInt64(1, 0).String(),
-		UserID:    3,
+		UserID:    uint64(3),
 	})
 	assert.NoError(t, err)
 
@@ -374,7 +374,7 @@ func TestManagement_CreateMarket(t *testing.T) {
 		OrderType: Limit,
 		Price:     udecimal.MustFromInt64(50000, 0).String(),
 		Size:      "0.001", // Below 0.01
-		UserID:    1,
+		UserID:    uint64(1),
 	}
 
 	err = engine.PlaceOrder(ctx, marketID, smallOrder)
@@ -408,7 +408,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 		OrderType: Limit,
 		Price:     "3000",
 		Size:      "1",
-		UserID:    1,
+		UserID:    uint64(1),
 	}
 	err = engine.PlaceOrder(ctx, marketID, order1)
 	assert.NoError(t, err)
@@ -437,7 +437,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 		OrderType: Limit,
 		Price:     "3000",
 		Size:      "1",
-		UserID:    2,
+		UserID:    uint64(2),
 	}
 	err = engine.PlaceOrder(ctx, marketID, order2)
 	assert.NoError(t, err)
@@ -486,7 +486,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 		OrderType: Limit,
 		Price:     "3000",
 		Size:      "1",
-		UserID:    3,
+		UserID:    uint64(3),
 	}
 	err = engine.PlaceOrder(ctx, marketID, order3)
 	assert.NoError(t, err)
@@ -539,7 +539,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 		OrderType: Limit,
 		Price:     "100",
 		Size:      "1",
-		UserID:    1,
+		UserID:    uint64(1),
 	}
 	err = newEngine.PlaceOrder(ctx, marketID, order)
 	assert.NoError(t, err)
@@ -568,7 +568,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 		OrderType: Limit,
 		Price:     "100",
 		Size:      "1",
-		UserID:    2,
+		UserID:    uint64(2),
 	}
 	err = newEngine.PlaceOrder(ctx, marketID, order2)
 	assert.NoError(t, err)
@@ -617,7 +617,7 @@ func TestManagement_UpdateConfig(t *testing.T) {
 		OrderType: Limit,
 		Price:     "10",
 		Size:      "10",
-		UserID:    2,
+		UserID:    uint64(2),
 	})
 	assert.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)

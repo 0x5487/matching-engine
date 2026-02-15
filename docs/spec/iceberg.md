@@ -68,7 +68,7 @@ type Command struct {
     // ... existing fields ...
     Size        udecimal.Decimal
     QuoteSize   udecimal.Decimal
-    UserID      int64
+    UserID      uint64
     VisibleSize udecimal.Decimal  // [NEW] For Iceberg orders
     Timestamp   int64             // [NEW] Command timestamp
     // ...

@@ -40,7 +40,7 @@ type Order struct {
 	Price     udecimal.Decimal `json:"price"`
 	Size      udecimal.Decimal `json:"size"` // Remaining visible size
 	Type      OrderType        `json:"type"`
-	UserID    int64            `json:"user_id"`
+	UserID    uint64           `json:"user_id"`
 	Timestamp int64            `json:"timestamp"` // Unix nano, creation time
 
 	// Iceberg fields

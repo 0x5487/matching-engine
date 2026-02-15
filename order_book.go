@@ -378,7 +378,7 @@ func (book *OrderBook) processQuery(ev *InputEvent) {
 	}
 }
 
-func (book *OrderBook) rejectInvalidPayload(orderID string, userID int64, reason protocol.RejectReason, _ map[string]string) {
+func (book *OrderBook) rejectInvalidPayload(orderID string, userID uint64, reason protocol.RejectReason, _ map[string]string) {
 	logsPtr := acquireLogSlice()
 	log := NewRejectLog(book.seqID.Add(1), book.marketID, orderID, userID, reason, time.Now().UnixNano())
 	*logsPtr = append(*logsPtr, log)
@@ -426,7 +426,7 @@ func (book *OrderBook) Shutdown(ctx context.Context) error {
 }
 
 // placeOrder processes the addition of an order.
-func (book *OrderBook) placeOrder(orderID string, side Side, price, size, visibleSize, quoteSize udecimal.Decimal, orderType OrderType, userID int64, timestamp int64) {
+func (book *OrderBook) placeOrder(orderID string, side Side, price, size, visibleSize, quoteSize udecimal.Decimal, orderType OrderType, userID uint64, timestamp int64) {
 	if book.bidQueue.order(orderID) != nil || book.askQueue.order(orderID) != nil {
 		logsPtr := acquireLogSlice()
 		log := NewRejectLog(book.seqID.Add(1), book.marketID, orderID, userID, protocol.RejectReasonDuplicateID, timestamp)
@@ -483,7 +483,7 @@ func (book *OrderBook) placeOrder(orderID string, side Side, price, size, visibl
 }
 
 // amendOrder processes the modification of an order.
-func (book *OrderBook) amendOrder(orderID string, userID int64, newPrice, newSize udecimal.Decimal, timestamp int64) {
+func (book *OrderBook) amendOrder(orderID string, userID uint64, newPrice, newSize udecimal.Decimal, timestamp int64) {
 	order, ok := book.findOrder(orderID)
 	if !ok || order.UserID != userID {
 		logsPtr := acquireLogSlice()
@@ -569,7 +569,7 @@ func (book *OrderBook) amendOrder(orderID string, userID int64, newPrice, newSiz
 }
 
 // cancelOrder processes an order cancellation.
-func (book *OrderBook) cancelOrder(orderID string, userID int64, timestamp int64) {
+func (book *OrderBook) cancelOrder(orderID string, userID uint64, timestamp int64) {
 	order, ok := book.findOrder(orderID)
 	if !ok || order.UserID != userID {
 		logsPtr := acquireLogSlice()

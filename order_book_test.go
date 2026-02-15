@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func newPlaceCmd(id string, ot OrderType, s Side, price, size float64, userID int64) *protocol.PlaceOrderCommand {
+func newPlaceCmd(id string, ot OrderType, s Side, price, size float64, userID uint64) *protocol.PlaceOrderCommand {
 	return &protocol.PlaceOrderCommand{
 		OrderID:   id,
 		OrderType: ot,
@@ -21,7 +21,7 @@ func newPlaceCmd(id string, ot OrderType, s Side, price, size float64, userID in
 	}
 }
 
-func newAmendCmd(id string, price, size float64, userID int64) *protocol.AmendOrderCommand {
+func newAmendCmd(id string, price, size float64, userID uint64) *protocol.AmendOrderCommand {
 	return &protocol.AmendOrderCommand{
 		OrderID:  id,
 		NewPrice: udecimal.MustFromFloat64(price).String(),
@@ -30,7 +30,7 @@ func newAmendCmd(id string, price, size float64, userID int64) *protocol.AmendOr
 	}
 }
 
-func newCancelCmd(id string, userID int64) *protocol.CancelOrderCommand {
+func newCancelCmd(id string, userID uint64) *protocol.CancelOrderCommand {
 	return &protocol.CancelOrderCommand{
 		OrderID: id,
 		UserID:  userID,
@@ -104,19 +104,19 @@ func TestLimitOrders(t *testing.T) {
 		match1 := memoryPublishTrader.Get(6)
 		assert.Equal(t, protocol.LogTypeMatch, match1.Type)
 		assert.Equal(t, "sell-1", match1.MakerOrderID)
-		assert.Equal(t, int64(201), match1.MakerUserID)
+		assert.Equal(t, uint64(201), match1.MakerUserID)
 		assert.Equal(t, "buyAll", match1.OrderID)
-		assert.Equal(t, int64(300), match1.UserID)
+		assert.Equal(t, uint64(300), match1.UserID)
 
 		match2 := memoryPublishTrader.Get(7)
 		assert.Equal(t, protocol.LogTypeMatch, match2.Type)
 		assert.Equal(t, "sell-2", match2.MakerOrderID)
-		assert.Equal(t, int64(202), match2.MakerUserID)
+		assert.Equal(t, uint64(202), match2.MakerUserID)
 
 		match3 := memoryPublishTrader.Get(8)
 		assert.Equal(t, protocol.LogTypeMatch, match3.Type)
 		assert.Equal(t, "sell-3", match3.MakerOrderID)
-		assert.Equal(t, int64(203), match3.MakerUserID)
+		assert.Equal(t, uint64(203), match3.MakerUserID)
 	})
 
 	t.Run("MatchLimitOrder", func(t *testing.T) {
@@ -177,14 +177,14 @@ func TestLimitOrders(t *testing.T) {
 		match1 := memoryPublishTrader.Get(6)
 		assert.Equal(t, protocol.LogTypeMatch, match1.Type)
 		assert.Equal(t, "buy-1", match1.MakerOrderID)
-		assert.Equal(t, int64(101), match1.MakerUserID)
+		assert.Equal(t, uint64(101), match1.MakerUserID)
 		assert.Equal(t, "sell-match", match1.OrderID)
-		assert.Equal(t, int64(204), match1.UserID)
+		assert.Equal(t, uint64(204), match1.UserID)
 
 		match2 := memoryPublishTrader.Get(7)
 		assert.Equal(t, protocol.LogTypeMatch, match2.Type)
 		assert.Equal(t, "buy-2", match2.MakerOrderID)
-		assert.Equal(t, int64(102), match2.MakerUserID)
+		assert.Equal(t, uint64(102), match2.MakerUserID)
 	})
 
 	t.Run("take all orders and finish as cancel because of price", func(t *testing.T) {
@@ -722,7 +722,7 @@ func TestFOKOrder(t *testing.T) {
 
 		// Setup: 3 orders at price 110, each size=1, totalSize=3
 		for i := 1; i <= 3; i++ {
-			_ = orderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-"+udecimal.MustFromInt64(int64(i), 0).String(), Limit, Sell, 110, 1, int64(200+i)))
+			_ = orderBook.PlaceOrder(context.Background(), newPlaceCmd("sell-"+udecimal.MustFromInt64(int64(i), 0).String(), Limit, Sell, 110, 1, uint64(200+i)))
 		}
 
 		assert.Eventually(t, func() bool {
@@ -817,9 +817,9 @@ func TestAmendOrder(t *testing.T) {
 		matchLog := memoryPublishTrader.Get(8)
 		assert.Equal(t, protocol.LogTypeMatch, matchLog.Type)
 		assert.Equal(t, "buy-1", matchLog.MakerOrderID) // Priority kept!
-		assert.Equal(t, int64(101), matchLog.MakerUserID)
+		assert.Equal(t, uint64(101), matchLog.MakerUserID)
 		assert.Equal(t, "sell-match", matchLog.OrderID)
-		assert.Equal(t, int64(402), matchLog.UserID)
+		assert.Equal(t, uint64(402), matchLog.UserID)
 	})
 
 	t.Run("increase size loses priority", func(t *testing.T) {
@@ -827,7 +827,7 @@ func TestAmendOrder(t *testing.T) {
 		// Initial: Buy 90(1)
 
 		// 1. Add another order at 90 to compete
-		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("buy-2-compete", Limit, Buy, 90, 1, 0))
+		_ = testOrderBook.PlaceOrder(context.Background(), newPlaceCmd("buy-2-compete", Limit, Buy, 90, 1, uint64(0)))
 
 		// 2. Amend buy-1 size from 1 to 2 (Increase) -> Should lose priority to buy-2-compete
 		err := testOrderBook.AmendOrder(context.Background(), newAmendCmd("buy-1", 90, 2, 101))
@@ -969,7 +969,7 @@ func TestShutdown(t *testing.T) {
 
 		// Add some orders
 		for i := 0; i < 10; i++ {
-			err := orderBook.PlaceOrder(context.Background(), newPlaceCmd("order-"+string(rune('a'+i)), Limit, Buy, float64(100-i), 1, int64(i)))
+			err := orderBook.PlaceOrder(context.Background(), newPlaceCmd("order-"+string(rune('a'+i)), Limit, Buy, float64(100-i), 1, uint64(i)))
 			assert.NoError(t, err)
 		}
 

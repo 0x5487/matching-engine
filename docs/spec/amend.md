@@ -43,7 +43,7 @@
 type AmendOrderCommand struct {
     SeqID    uint64           `json:"seq_id"`
     OrderID  string           `json:"order_id"`
-    UserID   int64            `json:"user_id"`
+    UserID   uint64            `json:"user_id"`
     NewPrice udecimal.Decimal `json:"new_price"`
     NewSize  udecimal.Decimal `json:"new_size"`
     Timestamp int64           `json:"timestamp"`

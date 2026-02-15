@@ -63,7 +63,7 @@ type Order struct {
     Price     decimal.Decimal
     Size      decimal.Decimal // 剩餘數量
     Type      OrderType       // Limit/Market/...
-    UserID    int64
+    UserID    uint64
     Timestamp int64           // Unix nano, 用於優先級重建
 }
 

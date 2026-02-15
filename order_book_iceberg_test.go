@@ -340,7 +340,7 @@ func TestIceberg_TakerAggressiveMatch(t *testing.T) {
 			Side:      Sell,
 			Size:      "20",
 			Price:     "100",
-			UserID:    int64(100 + i),
+			UserID:    uint64(100 + i),
 			Timestamp: ts + int64(i),
 		})
 	}

@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/0x5487/matching-engine/protocol"
 	"github.com/quagmt/udecimal"
@@ -77,7 +78,8 @@ func BenchmarkPlaceOrders(b *testing.B) {
 			Side:      side,
 			Price:     priceCache[priceIdx].String(),
 			Size:      sizeOne.String(),
-			UserID:    int64(rng.Intn(1000) + 1),
+			UserID:    uint64(rng.Intn(1000) + 1),
+			Timestamp: time.Now().UnixNano(),
 		}
 
 		// Pre-serialize payload (simulating MQ message already serialized)

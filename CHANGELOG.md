@@ -11,6 +11,8 @@
 - feature: implement non-blocking snapshot/restore and refactor order structure/API for better performance and maintainability.
 - perf: replace `shopspring/decimal` with `udecimal` (uint64-based) for **zero-allocation arithmetic**, reducing hot-path allocations from 27/op to 4/op.
 - perf: optimize core engine performance to achieve **~3M orders/sec throughput** and **0 allocs/op** via intrusive lists, map key optimization, and strict object pooling.
+- refactor: unify `UserID` type to `uint64` across all command payloads, order book logs, and internal models for better type consistency and to prevent signed integer issues.
+
 
 ## v0.7.0 (2025-12-14)
 
