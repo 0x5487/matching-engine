@@ -50,6 +50,7 @@ const (
 	LogTypeCancel LogType = "cancel"
 	LogTypeAmend  LogType = "amend"
 	LogTypeReject LogType = "reject"
+	LogTypeUser   LogType = "user_event"
 )
 
 // RejectReason represents the reason why an order was rejected.

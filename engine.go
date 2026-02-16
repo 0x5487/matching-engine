@@ -83,6 +83,11 @@ func (engine *MatchingEngine) processCommand(cmd *protocol.Command) {
 		return
 	}
 
+	if cmd.Type == protocol.CmdUserEvent {
+		engine.handleUserEvent(cmd)
+		return
+	}
+
 	book := engine.orderBook(cmd.MarketID)
 	if book == nil {
 		return
@@ -268,6 +273,27 @@ func (engine *MatchingEngine) UpdateConfig(userID string, marketID string, minLo
 		Type:     protocol.CmdUpdateConfig,
 		MarketID: marketID,
 		Payload:  bytes,
+	})
+}
+
+// SendUserEvent sends a generic user event to the matching engine.
+// These events are processed sequentially with trades and emitted via PublishLog.
+func (engine *MatchingEngine) SendUserEvent(userID uint64, eventType string, key string, data []byte) error {
+	cmd := &protocol.UserEventCommand{
+		UserID:    userID,
+		EventType: eventType,
+		Key:       key,
+		Data:      data,
+	}
+	bytes, err := engine.serializer.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+	// MarketID is empty for global events, or could be specific if needed.
+	// For now we treat them as global or engine-level events.
+	return engine.EnqueueCommand(&protocol.Command{
+		Type:    protocol.CmdUserEvent,
+		Payload: bytes,
 	})
 }
 
@@ -632,6 +658,32 @@ func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) {
 
 	newbook := newOrderBook(payload.MarketID, engine.publishTrader, opts...)
 	engine.orderbooks[payload.MarketID] = newbook
+}
+
+// handleUserEvent processes a generic user event.
+func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
+	payload := &protocol.UserEventCommand{}
+	if err := engine.serializer.Unmarshal(cmd.Payload, payload); err != nil {
+		logger.Error("failed to unmarshal UserEvent command", "error", err)
+		return
+	}
+
+	// Create and Publish Log
+	log := NewUserEventLog(
+		cmd.SeqID,
+		payload.UserID,
+		payload.EventType,
+		payload.Key,
+		payload.Data,
+		time.Now().UnixNano(),
+	)
+
+	// Publish via the shared publishTrader
+	// We wrap it in a slice as required by the interface
+	logs := acquireLogSlice()
+	*logs = append(*logs, log)
+	engine.publishTrader.Publish(*logs)
+	releaseLogSlice(logs)
 }
 
 // orderBook is an internal helper to look up an OrderBook by marketID.

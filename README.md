@@ -141,10 +141,27 @@ type MyHandler struct{}
 func (h *MyHandler) Publish(logs []*match.OrderBookLog) {
 	for _, log := range logs {
 		// Send to WebSocket, save to DB, publish to MQ, etc.
-		fmt.Printf("Event: %s | OrderID: %s\n", log.Type, log.OrderID)
+		if log.Type == protocol.LogTypeUser {
+			fmt.Printf("User Event: %s, Data: %s\n", log.EventType, string(log.Data))
+		} else {
+			fmt.Printf("Event: %s | OrderID: %s\n", log.Type, log.OrderID)
+		}
 	}
 }
 ```
+
+### Generic User Events (Extension Protocol)
+
+Inject custom events into the matching engine's log stream. These events are processed sequentially with trades, ensuring deterministic ordering for valid use cases like **L1 Block Boundaries**, **Audit Checkpoints**, or **Oracle Updates**.
+
+```go
+// Example: Sending an End-Of-Block signal from an L1 Blockchain
+blockHash := []byte("0x123abc...")
+// SendUserEvent(userID, eventType, key, data)
+err := engine.SendUserEvent(999, "EndOfBlock", "block-100", blockHash)
+```
+
+The event will appear in the `PublishLog` stream as `LogTypeUser` with your custom data payload.
 
 ## Benchmark
 

@@ -106,6 +106,8 @@ type OrderBookLog struct {
 	MakerOrderID string                `json:"maker_order_id,omitempty"`
 	MakerUserID  uint64                `json:"maker_user_id,omitempty"`
 	RejectReason protocol.RejectReason `json:"reject_reason,omitempty"` // Reason for rejection, only set for Reject events
+	EventType    string                `json:"event_type,omitempty"`    // User defined event type
+	Data         []byte                `json:"data,omitempty"`          // Arbitrary data for user events
 	Timestamp    int64                 `json:"timestamp"`               // Command timestamp for determinism
 	CreatedAt    time.Time             `json:"created_at"`
 }
@@ -123,6 +125,8 @@ func acquireBookLog() *OrderBookLog {
 func releaseBookLog(log *OrderBookLog) {
 	// Reset structure to zero values.
 	// For decimal.Decimal, the zero value (nil internal pointer) represents 0, which is valid.
+	log.EventType = ""
+	log.Data = nil
 	*log = OrderBookLog{}
 	bookLogPool.Put(log)
 }
@@ -224,6 +228,19 @@ func NewRejectLog(seqID uint64, marketID string, orderID string, userID uint64, 
 	log.OrderID = orderID
 	log.UserID = userID
 	log.RejectReason = reason
+	log.Timestamp = timestamp
+	log.CreatedAt = time.Now().UTC()
+	return log
+}
+
+func NewUserEventLog(seqID uint64, userID uint64, eventType string, key string, data []byte, timestamp int64) *OrderBookLog {
+	log := acquireBookLog()
+	log.SeqID = seqID
+	log.Type = protocol.LogTypeUser
+	log.UserID = userID
+	log.EventType = eventType
+	log.OrderID = key // We use OrderID field to store the Key for simpler indexing/lookup if needed
+	log.Data = data
 	log.Timestamp = timestamp
 	log.CreatedAt = time.Now().UTC()
 	return log

@@ -18,6 +18,7 @@ const (
 	CmdPlaceOrder  CommandType = 51
 	CmdCancelOrder CommandType = 52
 	CmdAmendOrder  CommandType = 53
+	CmdUserEvent   CommandType = 100 // Generic User Event (e.g., EndOfBlock, Audit)
 )
 
 // OrderBookState represents the lifecycle state of an order book.
@@ -121,4 +122,12 @@ type UpdateConfigCommand struct {
 	UserID     string `json:"user_id"`                // Operator ID for audit trail
 	MarketID   string `json:"market_id"`              // Target market
 	MinLotSize string `json:"min_lot_size,omitempty"` // New minimum lot size (optional)
+}
+
+// UserEventCommand is the payload for generic user events.
+type UserEventCommand struct {
+	UserID    uint64 `json:"user_id"`    // Operator ID for audit trail
+	EventType string `json:"event_type"` // e.g. "EndOfBlock", "AdminMarker"
+	Key       string `json:"key,omitempty"`
+	Data      []byte `json:"data,omitempty"`
 }

@@ -13,7 +13,7 @@
 - perf: optimize core engine performance to achieve **~3M orders/sec throughput** and **0 allocs/op** via intrusive lists, map key optimization, and strict object pooling.
 - refactor: unify `UserID` type to `uint64` across all command payloads, order book logs, and internal models for better type consistency and to prevent signed integer issues.
 - refactor: consolidate `MatchingEngine` into a **single-thread actor model**, enabling external goroutine CPU pinning and eliminating unnecessary context switches between order book goroutines.
-
+- feature: add `UserEventCommand` to support generic user events (e.g., EndOfBlock, Audit).
 
 ## v0.7.0 (2025-12-14)
 
