@@ -1,8 +1,6 @@
 package match
 
 import (
-	"context"
-	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,34 +55,30 @@ func WithLotSize(size udecimal.Decimal) OrderBookOption {
 	}
 }
 
-// OrderBook type
+// OrderBook is a pure logic object that maintains the state of an order book.
+// It must be managed by a MatchingEngine which provides the event loop.
 type OrderBook struct {
-	marketID         string
-	lotSize          udecimal.Decimal // Minimum trade unit for Market orders
-	seqID            atomic.Uint64    // Globally increasing sequence ID
-	lastCmdSeqID     atomic.Uint64    // Last sequence ID of the command
-	tradeID          atomic.Uint64    // Sequential trade ID counter
-	isShutdown       atomic.Bool
-	bidQueue         *queue
-	askQueue         *queue
-	cmdBuffer        *RingBuffer[InputEvent]
-	done             chan struct{}
-	shutdownComplete chan struct{}
-	publishTrader    PublishLog
-	serializer       protocol.Serializer
-	state            protocol.OrderBookState
+	marketID      string
+	lotSize       udecimal.Decimal // Minimum trade unit for Market orders
+	seqID         atomic.Uint64    // Globally increasing sequence ID
+	lastCmdSeqID  atomic.Uint64    // Last sequence ID of the command
+	tradeID       atomic.Uint64    // Sequential trade ID counter
+	bidQueue      *queue
+	askQueue      *queue
+	publishTrader PublishLog
+	serializer    protocol.Serializer
+	state         protocol.OrderBookState
 }
 
-// NewOrderBook creates a new order book instance.
-func NewOrderBook(marketID string, publishTrader PublishLog, opts ...OrderBookOption) *OrderBook {
+// newOrderBook creates a new OrderBook instance.
+// OrderBooks are managed by a MatchingEngine and do not have their own event loop.
+func newOrderBook(marketID string, publishTrader PublishLog, opts ...OrderBookOption) *OrderBook {
 	book := &OrderBook{
-		marketID:         marketID,
-		lotSize:          DefaultLotSize,
-		bidQueue:         NewBuyerQueue(),
-		askQueue:         NewSellerQueue(),
-		done:             make(chan struct{}),
-		shutdownComplete: make(chan struct{}),
-		publishTrader:    publishTrader,
+		marketID:      marketID,
+		lotSize:       DefaultLotSize,
+		bidQueue:      NewBuyerQueue(),
+		askQueue:      NewSellerQueue(),
+		publishTrader: publishTrader,
 	}
 
 	for _, opt := range opts {
@@ -95,161 +89,15 @@ func NewOrderBook(marketID string, publishTrader PublishLog, opts ...OrderBookOp
 		book.serializer = &protocol.DefaultJSONSerializer{}
 	}
 
-	book.cmdBuffer = NewRingBuffer(32768, book)
-
 	// Explicitly set initial state (Review 8.4.3)
 	book.state = protocol.OrderBookStateRunning
 
 	return book
 }
 
-// EnqueueCommand submits a command to the order book's ring buffer.
-func (book *OrderBook) EnqueueCommand(cmd *protocol.Command) error {
-	if book.isShutdown.Load() {
-		return ErrShutdown
-	}
-
-	seq, ev := book.cmdBuffer.Claim()
-	if seq == -1 {
-		return ErrShutdown
-	}
-
-	ev.Cmd = cmd
-	ev.Query = nil
-	ev.Resp = nil
-
-	book.cmdBuffer.Commit(seq)
-	return nil
-}
-
-// PlaceOrder submits an order to the order book asynchronously.
-func (book *OrderBook) PlaceOrder(ctx context.Context, cmd *protocol.PlaceOrderCommand) error {
-	if book.isShutdown.Load() {
-		return ErrShutdown
-	}
-
-	if len(cmd.OrderType) == 0 || len(cmd.OrderID) == 0 {
-		return ErrInvalidParam
-	}
-
-	bytes, err := book.serializer.Marshal(cmd)
-	if err != nil {
-		return err
-	}
-	protoCmd := &protocol.Command{
-		MarketID: book.marketID,
-		Type:     protocol.CmdPlaceOrder,
-		Payload:  bytes,
-	}
-	return book.EnqueueCommand(protoCmd)
-}
-
-// AmendOrder submits a request to modify an existing order asynchronously.
-func (book *OrderBook) AmendOrder(ctx context.Context, cmd *protocol.AmendOrderCommand) error {
-	if len(cmd.OrderID) == 0 {
-		return ErrInvalidParam
-	}
-
-	bytes, err := book.serializer.Marshal(cmd)
-	if err != nil {
-		return err
-	}
-	protoCmd := &protocol.Command{
-		MarketID: book.marketID,
-		Type:     protocol.CmdAmendOrder,
-		Payload:  bytes,
-	}
-	return book.EnqueueCommand(protoCmd)
-}
-
-// CancelOrder submits a cancellation request for an order asynchronously.
-func (book *OrderBook) CancelOrder(ctx context.Context, cmd *protocol.CancelOrderCommand) error {
-	if len(cmd.OrderID) == 0 {
-		return nil
-	}
-
-	bytes, err := book.serializer.Marshal(cmd)
-	if err != nil {
-		return err
-	}
-	protoCmd := &protocol.Command{
-		MarketID: book.marketID,
-		Type:     protocol.CmdCancelOrder,
-		Payload:  bytes,
-	}
-	return book.EnqueueCommand(protoCmd)
-}
-
-// Depth returns the current depth of the order book up to the specified limit.
-func (book *OrderBook) Depth(limit uint32) (*protocol.GetDepthResponse, error) {
-	if limit == 0 {
-		return nil, ErrInvalidParam
-	}
-
-	respChan := make(chan any, 1)
-	book.cmdBuffer.Publish(InputEvent{
-		Query: &protocol.GetDepthRequest{
-			MarketID: book.marketID,
-			Limit:    limit,
-		},
-		Resp: respChan,
-	})
-
-	select {
-	case res := <-respChan:
-		if result, ok := res.(*protocol.GetDepthResponse); ok {
-			return result, nil
-		}
-		return nil, errors.New("unexpected response type")
-	case <-time.After(time.Second):
-		return nil, ErrTimeout
-	}
-}
-
-// GetStats returns usage statistics for the order book.
-func (book *OrderBook) GetStats() (*protocol.GetStatsResponse, error) {
-	respChan := make(chan any, 1)
-	book.cmdBuffer.Publish(InputEvent{
-		Query: &protocol.GetStatsRequest{
-			MarketID: book.marketID,
-		},
-		Resp: respChan,
-	})
-
-	select {
-	case res := <-respChan:
-		if result, ok := res.(*protocol.GetStatsResponse); ok {
-			return result, nil
-		}
-		return nil, errors.New("unexpected response type")
-	case <-time.After(time.Second):
-		return nil, ErrTimeout
-	}
-}
-
 // LastCmdSeqID returns the sequence ID of the last processed command.
 func (book *OrderBook) LastCmdSeqID() uint64 {
 	return book.lastCmdSeqID.Load()
-}
-
-// Start starts the order book loop.
-func (book *OrderBook) Start() error {
-	book.cmdBuffer.Start()
-	<-book.done
-	return nil
-}
-
-// OnEvent processes events from the RingBuffer.
-func (book *OrderBook) OnEvent(ev *InputEvent) {
-	if ev.Cmd != nil {
-		book.processCommand(ev.Cmd)
-		return
-	}
-
-	if ev.Query != nil {
-		book.processQuery(ev)
-		return
-	}
 }
 
 func (book *OrderBook) processCommand(cmd *protocol.Command) {
@@ -415,14 +263,6 @@ func (book *OrderBook) handleAmendOrder(cmd *protocol.AmendOrderCommand) {
 	newPrice, _ := udecimal.Parse(cmd.NewPrice)
 	newSize, _ := udecimal.Parse(cmd.NewSize)
 	book.amendOrder(cmd.OrderID, cmd.UserID, newPrice, newSize, cmd.Timestamp)
-}
-
-// Shutdown signals the order book to stop.
-func (book *OrderBook) Shutdown(ctx context.Context) error {
-	if book.isShutdown.CompareAndSwap(false, true) {
-		close(book.done)
-	}
-	return book.cmdBuffer.Shutdown(ctx)
 }
 
 // placeOrder processes the addition of an order.
@@ -614,25 +454,6 @@ func (book *OrderBook) depth(limit uint32) *protocol.GetDepthResponse {
 		UpdateID: book.seqID.Load(),
 		Asks:     book.askQueue.depth(limit),
 		Bids:     book.bidQueue.depth(limit),
-	}
-}
-
-// TakeSnapshot is used by the Engine to request a snapshot.
-func (book *OrderBook) TakeSnapshot() (*OrderBookSnapshot, error) {
-	respChan := make(chan any, 1)
-	book.cmdBuffer.Publish(InputEvent{
-		Query: &OrderBookSnapshot{}, // Use empty snapshot as query signal
-		Resp:  respChan,
-	})
-
-	select {
-	case res := <-respChan:
-		if snap, ok := res.(*OrderBookSnapshot); ok {
-			return snap, nil
-		}
-		return nil, errors.New("unexpected snapshot response")
-	case <-time.After(5 * time.Second):
-		return nil, ErrTimeout
 	}
 }
 

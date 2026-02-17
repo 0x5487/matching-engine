@@ -52,8 +52,9 @@ func CalculateDepthChange(log *OrderBookLog) DepthChange {
 			Price:    log.Price,
 			SizeDiff: log.Size.Sub(log.OldSize),
 		}
-	case protocol.LogTypeReject:
+	case protocol.LogTypeReject, protocol.LogTypeUser:
 		// Rejected orders never entered the book, so no depth change.
+		// User events interact with the log stream but do not affect order book depth.
 		return DepthChange{}
 	}
 

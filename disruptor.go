@@ -116,9 +116,11 @@ func (rb *RingBuffer[T]) Commit(seq int64) {
 	atomic.StoreInt64(&rb.published[seq&rb.bufferMask], seq)
 }
 
-// Start starts the consumer worker goroutine.
-func (rb *RingBuffer[T]) Start() {
-	go rb.consumerLoop()
+// Run starts the consumer loop in the calling goroutine (blocking).
+// This allows the caller to control the goroutine and OS thread,
+// enabling runtime.LockOSThread() for CPU affinity scenarios.
+func (rb *RingBuffer[T]) Run() {
+	rb.consumerLoop()
 }
 
 // Shutdown gracefully stops the disruptor, ensuring all pending events are processed.

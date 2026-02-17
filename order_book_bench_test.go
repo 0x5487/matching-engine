@@ -22,7 +22,10 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	engine := NewMatchingEngine(publishTrader)
 
 	marketID := "BTC-USDT"
-	_, _ = engine.AddOrderBook("admin", marketID)
+	_ = engine.CreateMarket("admin", marketID, "")
+
+	// Start engine event loop
+	go engine.Run()
 
 	// Use fixed seed for repeatability
 	rng := rand.New(rand.NewSource(42))
@@ -101,10 +104,8 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	b.StopTimer()
 
 	// Report final state of the order book
-	if ob := engine.OrderBook(marketID); ob != nil {
-		if stats, err := ob.GetStats(); err == nil {
-			fmt.Printf("\nFinal Order Book State: Bids=%d levels, Asks=%d levels\n", stats.BidDepthCount, stats.AskDepthCount)
-		}
+	if stats, err := engine.GetStats(marketID); err == nil {
+		fmt.Printf("\nFinal Order Book State: Bids=%d levels, Asks=%d levels\n", stats.BidDepthCount, stats.AskDepthCount)
 	}
 
 	// Report custom metric: orders per second
@@ -125,7 +126,10 @@ func BenchmarkMatching(b *testing.B) {
 	publishTrader := NewDiscardPublishLog()
 	engine := NewMatchingEngine(publishTrader)
 	marketID := "MATCH-USDT"
-	_, _ = engine.AddOrderBook("admin", marketID)
+	_ = engine.CreateMarket("admin", marketID, "")
+
+	// Start engine event loop
+	go engine.Run()
 
 	price := udecimal.MustFromInt64(10000, 0)
 	size := udecimal.MustFromInt64(1, 0)
