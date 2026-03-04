@@ -11,7 +11,7 @@ import (
 
 func TestIceberg_Placement(t *testing.T) {
 	publishTrader := NewMemoryPublishLog()
-	orderBook := newOrderBook("BTC-USDT", publishTrader)
+	orderBook := newOrderBook("test-engine", "BTC-USDT", publishTrader)
 
 	// Iceberg: Total 100, Visible 10
 	testPlace(orderBook, &protocol.PlaceOrderCommand{
@@ -32,7 +32,7 @@ func TestIceberg_Placement(t *testing.T) {
 
 func TestIceberg_Replenishment(t *testing.T) {
 	publishTrader := NewMemoryPublishLog()
-	orderBook := newOrderBook("BTC-USDT", publishTrader)
+	orderBook := newOrderBook("test-engine", "BTC-USDT", publishTrader)
 
 	ts := time.Now().UnixNano()
 
@@ -84,7 +84,7 @@ func TestIceberg_Replenishment(t *testing.T) {
 
 func TestIceberg_ReplenishmentPriority(t *testing.T) {
 	publishTrader := NewMemoryPublishLog()
-	orderBook := newOrderBook("BTC-USDT", publishTrader)
+	orderBook := newOrderBook("test-engine", "BTC-USDT", publishTrader)
 
 	ts := time.Now().UnixNano()
 
@@ -150,7 +150,7 @@ func TestIceberg_ReplenishmentPriority(t *testing.T) {
 
 func TestIceberg_Amend(t *testing.T) {
 	publishTrader := NewMemoryPublishLog()
-	orderBook := newOrderBook("BTC-USDT", publishTrader)
+	orderBook := newOrderBook("test-engine", "BTC-USDT", publishTrader)
 
 	ts := time.Now().UnixNano()
 
@@ -239,7 +239,7 @@ func TestIceberg_Amend(t *testing.T) {
 // TestIceberg_PartialFillNoReplenish verifies that partial fill does NOT trigger replenishment.
 func TestIceberg_PartialFillNoReplenish(t *testing.T) {
 	publishTrader := NewMemoryPublishLog()
-	orderBook := newOrderBook("BTC-USDT", publishTrader)
+	orderBook := newOrderBook("test-engine", "BTC-USDT", publishTrader)
 
 	ts := time.Now().UnixNano()
 
@@ -289,7 +289,7 @@ func TestIceberg_PartialFillNoReplenish(t *testing.T) {
 // TestIceberg_TakerAggressiveMatch verifies Iceberg as Taker uses FULL size (not just visible) for matching.
 func TestIceberg_TakerAggressiveMatch(t *testing.T) {
 	publishTrader := NewMemoryPublishLog()
-	orderBook := newOrderBook("BTC-USDT", publishTrader)
+	orderBook := newOrderBook("test-engine", "BTC-USDT", publishTrader)
 
 	ts := time.Now().UnixNano()
 
@@ -344,7 +344,7 @@ func TestIceberg_TakerAggressiveMatch(t *testing.T) {
 // TestIceberg_SnapshotRestore verifies Iceberg state is correctly preserved across Snapshot/Restore.
 func TestIceberg_SnapshotRestore(t *testing.T) {
 	publishTrader := NewMemoryPublishLog()
-	orderBook := newOrderBook("BTC-USDT", publishTrader)
+	orderBook := newOrderBook("test-engine", "BTC-USDT", publishTrader)
 
 	ts := time.Now().UnixNano()
 
@@ -377,7 +377,7 @@ func TestIceberg_SnapshotRestore(t *testing.T) {
 
 	// 3. Create a new order book and restore from snapshot
 	publishTrader2 := NewMemoryPublishLog()
-	orderBook2 := newOrderBook("BTC-USDT", publishTrader2)
+	orderBook2 := newOrderBook("test-engine", "BTC-USDT", publishTrader2)
 	orderBook2.Restore(snapshot)
 
 	// 4. Verify restored state

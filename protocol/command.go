@@ -48,6 +48,9 @@ type Command struct {
 	// Type identifies the payload type for fast routing.
 	Type CommandType `json:"type"`
 
+	// CommandID is the original identifier provided by the submitter.
+	CommandID string `json:"command_id"`
+
 	// Payload contains the serialized business data (e.g., JSON bytes of PlaceOrderCommand).
 	// We use lazy deserialization to optimize routing performance.
 	Payload []byte `json:"payload"`

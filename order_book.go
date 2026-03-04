@@ -58,6 +58,7 @@ func WithLotSize(size udecimal.Decimal) OrderBookOption {
 // OrderBook is a pure logic object that maintains the state of an order book.
 // It must be managed by a MatchingEngine which provides the event loop.
 type OrderBook struct {
+	engineID      string
 	marketID      string
 	lotSize       udecimal.Decimal // Minimum trade unit for Market orders
 	seqID         atomic.Uint64    // Globally increasing sequence ID
@@ -72,8 +73,9 @@ type OrderBook struct {
 
 // newOrderBook creates a new OrderBook instance.
 // OrderBooks are managed by a MatchingEngine and do not have their own event loop.
-func newOrderBook(marketID string, publishTrader PublishLog, opts ...OrderBookOption) *OrderBook {
+func newOrderBook(engineID string, marketID string, publishTrader PublishLog, opts ...OrderBookOption) *OrderBook {
 	book := &OrderBook{
+		engineID:      engineID,
 		marketID:      marketID,
 		lotSize:       DefaultLotSize,
 		bidQueue:      NewBuyerQueue(),
@@ -105,84 +107,84 @@ func (book *OrderBook) processCommand(cmd *protocol.Command) {
 	case protocol.CmdSuspendMarket:
 		payload := &protocol.SuspendMarketCommand{}
 		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
-			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
 			return
 		}
-		book.handleSuspendMarket(payload)
+		book.handleSuspendMarket(cmd.CommandID, payload)
 
 	case protocol.CmdResumeMarket:
 		payload := &protocol.ResumeMarketCommand{}
 		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
-			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
 			return
 		}
-		book.handleResumeMarket(payload)
+		book.handleResumeMarket(cmd.CommandID, payload)
 
 	case protocol.CmdUpdateConfig:
 		payload := &protocol.UpdateConfigCommand{}
 		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
-			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
 			return
 		}
-		book.handleUpdateConfig(payload)
+		book.handleUpdateConfig(cmd.CommandID, payload)
 
 	case protocol.CmdPlaceOrder:
 		payload := placeOrderCmdPool.Get().(*protocol.PlaceOrderCommand)
 		*payload = protocol.PlaceOrderCommand{} // Reset before use
 		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
 			placeOrderCmdPool.Put(payload)
-			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
 			return
 		}
 
 		if book.state == protocol.OrderBookStateHalted {
-			book.rejectInvalidPayload(payload.OrderID, payload.UserID, protocol.RejectReasonMarketHalted, cmd.Metadata)
+			book.rejectInvalidPayload(cmd.CommandID, payload.OrderID, payload.UserID, protocol.RejectReasonMarketHalted, cmd.Metadata)
 			placeOrderCmdPool.Put(payload)
 			return
 		}
 		if book.state == protocol.OrderBookStateSuspended {
-			book.rejectInvalidPayload(payload.OrderID, payload.UserID, protocol.RejectReasonMarketSuspended, cmd.Metadata)
+			book.rejectInvalidPayload(cmd.CommandID, payload.OrderID, payload.UserID, protocol.RejectReasonMarketSuspended, cmd.Metadata)
 			placeOrderCmdPool.Put(payload)
 			return
 		}
 
-		book.handlePlaceOrder(payload)
+		book.handlePlaceOrder(cmd.CommandID, payload)
 		placeOrderCmdPool.Put(payload)
 	case protocol.CmdCancelOrder:
 		payload := cancelOrderCmdPool.Get().(*protocol.CancelOrderCommand)
 		*payload = protocol.CancelOrderCommand{} // Reset before use
 		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
 			cancelOrderCmdPool.Put(payload)
-			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
 			return
 		}
 
 		// Cancel is allowed in Suspended state, but not Halted
 		if book.state == protocol.OrderBookStateHalted {
-			book.rejectInvalidPayload(payload.OrderID, payload.UserID, protocol.RejectReasonMarketHalted, cmd.Metadata)
+			book.rejectInvalidPayload(cmd.CommandID, payload.OrderID, payload.UserID, protocol.RejectReasonMarketHalted, cmd.Metadata)
 			cancelOrderCmdPool.Put(payload)
 			return
 		}
 
-		book.handleCancelOrder(payload)
+		book.handleCancelOrder(cmd.CommandID, payload)
 		cancelOrderCmdPool.Put(payload)
 	case protocol.CmdAmendOrder:
 		var payload protocol.AmendOrderCommand
 		if err := book.serializer.Unmarshal(cmd.Payload, &payload); err != nil {
-			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata)
 			return
 		}
 
 		if book.state == protocol.OrderBookStateHalted {
-			book.rejectInvalidPayload(payload.OrderID, payload.UserID, protocol.RejectReasonMarketHalted, cmd.Metadata)
+			book.rejectInvalidPayload(cmd.CommandID, payload.OrderID, payload.UserID, protocol.RejectReasonMarketHalted, cmd.Metadata)
 			return
 		}
 		if book.state == protocol.OrderBookStateSuspended {
-			book.rejectInvalidPayload(payload.OrderID, payload.UserID, protocol.RejectReasonMarketSuspended, cmd.Metadata)
+			book.rejectInvalidPayload(cmd.CommandID, payload.OrderID, payload.UserID, protocol.RejectReasonMarketSuspended, cmd.Metadata)
 			return
 		}
 
-		book.handleAmendOrder(&payload)
+		book.handleAmendOrder(cmd.CommandID, &payload)
 	default:
 		// Ignore unknown command types
 	}
@@ -226,9 +228,9 @@ func (book *OrderBook) processQuery(ev *InputEvent) {
 	}
 }
 
-func (book *OrderBook) rejectInvalidPayload(orderID string, userID uint64, reason protocol.RejectReason, _ map[string]string) {
+func (book *OrderBook) rejectInvalidPayload(commandID string, orderID string, userID uint64, reason protocol.RejectReason, _ map[string]string) {
 	logsPtr := acquireLogSlice()
-	log := NewRejectLog(book.seqID.Add(1), book.marketID, orderID, userID, reason, time.Now().UnixNano())
+	log := NewRejectLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, orderID, userID, reason, time.Now().UnixNano())
 	*logsPtr = append(*logsPtr, log)
 	book.publishTrader.Publish(*logsPtr)
 	releaseBookLog(log)
@@ -236,40 +238,40 @@ func (book *OrderBook) rejectInvalidPayload(orderID string, userID uint64, reaso
 }
 
 // handlePlaceOrder matches protocol Payloads to internal logic.
-func (book *OrderBook) handlePlaceOrder(cmd *protocol.PlaceOrderCommand) {
+func (book *OrderBook) handlePlaceOrder(commandID string, cmd *protocol.PlaceOrderCommand) {
 	// Parse strings to decimals
 	price, err := udecimal.Parse(cmd.Price)
 	if err != nil {
-		book.rejectInvalidPayload(cmd.OrderID, cmd.UserID, protocol.RejectReasonInvalidPayload, nil)
+		book.rejectInvalidPayload(commandID, cmd.OrderID, cmd.UserID, protocol.RejectReasonInvalidPayload, nil)
 		return
 	}
 	size, err := udecimal.Parse(cmd.Size)
 	if err != nil {
-		book.rejectInvalidPayload(cmd.OrderID, cmd.UserID, protocol.RejectReasonInvalidPayload, nil)
+		book.rejectInvalidPayload(commandID, cmd.OrderID, cmd.UserID, protocol.RejectReasonInvalidPayload, nil)
 		return
 	}
 
 	visibleSize, _ := udecimal.Parse(cmd.VisibleSize)
 	quoteSize, _ := udecimal.Parse(cmd.QuoteSize)
 
-	book.placeOrder(cmd.OrderID, cmd.Side, price, size, visibleSize, quoteSize, cmd.OrderType, cmd.UserID, cmd.Timestamp)
+	book.placeOrder(commandID, cmd.OrderID, cmd.Side, price, size, visibleSize, quoteSize, cmd.OrderType, cmd.UserID, cmd.Timestamp)
 }
 
-func (book *OrderBook) handleCancelOrder(cmd *protocol.CancelOrderCommand) {
-	book.cancelOrder(cmd.OrderID, cmd.UserID, cmd.Timestamp)
+func (book *OrderBook) handleCancelOrder(commandID string, cmd *protocol.CancelOrderCommand) {
+	book.cancelOrder(commandID, cmd.OrderID, cmd.UserID, cmd.Timestamp)
 }
 
-func (book *OrderBook) handleAmendOrder(cmd *protocol.AmendOrderCommand) {
+func (book *OrderBook) handleAmendOrder(commandID string, cmd *protocol.AmendOrderCommand) {
 	newPrice, _ := udecimal.Parse(cmd.NewPrice)
 	newSize, _ := udecimal.Parse(cmd.NewSize)
-	book.amendOrder(cmd.OrderID, cmd.UserID, newPrice, newSize, cmd.Timestamp)
+	book.amendOrder(commandID, cmd.OrderID, cmd.UserID, newPrice, newSize, cmd.Timestamp)
 }
 
 // placeOrder processes the addition of an order.
-func (book *OrderBook) placeOrder(orderID string, side Side, price, size, visibleSize, quoteSize udecimal.Decimal, orderType OrderType, userID uint64, timestamp int64) {
+func (book *OrderBook) placeOrder(commandID string, orderID string, side Side, price, size, visibleSize, quoteSize udecimal.Decimal, orderType OrderType, userID uint64, timestamp int64) {
 	if book.bidQueue.order(orderID) != nil || book.askQueue.order(orderID) != nil {
 		logsPtr := acquireLogSlice()
-		log := NewRejectLog(book.seqID.Add(1), book.marketID, orderID, userID, protocol.RejectReasonDuplicateID, timestamp)
+		log := NewRejectLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, orderID, userID, protocol.RejectReasonDuplicateID, timestamp)
 		*logsPtr = append(*logsPtr, log)
 		book.publishTrader.Publish(*logsPtr)
 		releaseBookLog(log)
@@ -298,15 +300,15 @@ func (book *OrderBook) placeOrder(orderID string, side Side, price, size, visibl
 	var logsPtr *[]*OrderBookLog
 	switch order.Type {
 	case Limit:
-		logsPtr = book.handleLimitOrder(order, timestamp)
+		logsPtr = book.handleLimitOrder(commandID, order, timestamp)
 	case FOK:
-		logsPtr = book.handleFOKOrder(order, timestamp)
+		logsPtr = book.handleFOKOrder(commandID, order, timestamp)
 	case IOC:
-		logsPtr = book.handleIOCOrder(order, timestamp)
+		logsPtr = book.handleIOCOrder(commandID, order, timestamp)
 	case PostOnly:
-		logsPtr = book.handlePostOnlyOrder(order, timestamp)
+		logsPtr = book.handlePostOnlyOrder(commandID, order, timestamp)
 	case Market:
-		logsPtr = book.handleMarketOrder(order, quoteSize, timestamp)
+		logsPtr = book.handleMarketOrder(commandID, order, quoteSize, timestamp)
 	default:
 		// Ignore or handle unknown types
 	}
@@ -323,11 +325,11 @@ func (book *OrderBook) placeOrder(orderID string, side Side, price, size, visibl
 }
 
 // amendOrder processes the modification of an order.
-func (book *OrderBook) amendOrder(orderID string, userID uint64, newPrice, newSize udecimal.Decimal, timestamp int64) {
+func (book *OrderBook) amendOrder(commandID string, orderID string, userID uint64, newPrice, newSize udecimal.Decimal, timestamp int64) {
 	order, ok := book.findOrder(orderID)
 	if !ok || order.UserID != userID {
 		logsPtr := acquireLogSlice()
-		log := NewRejectLog(book.seqID.Add(1), book.marketID, orderID, userID, protocol.RejectReasonOrderNotFound, timestamp)
+		log := NewRejectLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, orderID, userID, protocol.RejectReasonOrderNotFound, timestamp)
 		*logsPtr = append(*logsPtr, log)
 		book.publishTrader.Publish(*logsPtr)
 		releaseBookLog(log)
@@ -366,14 +368,14 @@ func (book *OrderBook) amendOrder(orderID string, userID uint64, newPrice, newSi
 			}
 		}
 
-		log := NewAmendLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, newSize, oldPrice, oldTotalSize, order.Type, timestamp)
+		log := NewAmendLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, order.ID, order.UserID, order.Side, order.Price, newSize, oldPrice, oldTotalSize, order.Type, timestamp)
 		amendLogsPtr := acquireLogSlice()
 		*amendLogsPtr = append(*amendLogsPtr, log)
 		book.publishTrader.Publish(*amendLogsPtr)
 		releaseBookLog(log)
 		releaseLogSlice(amendLogsPtr)
 
-		logsPtr := book.handleLimitOrder(order, timestamp)
+		logsPtr := book.handleLimitOrder(commandID, order, timestamp)
 		if logsPtr != nil {
 			if len(*logsPtr) > 0 {
 				book.publishTrader.Publish(*logsPtr)
@@ -399,7 +401,7 @@ func (book *OrderBook) amendOrder(orderID string, userID uint64, newPrice, newSi
 			}
 		}
 
-		log := NewAmendLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, newSize, oldPrice, oldTotalSize, order.Type, timestamp)
+		log := NewAmendLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, order.ID, order.UserID, order.Side, order.Price, newSize, oldPrice, oldTotalSize, order.Type, timestamp)
 		amendLogsPtr := acquireLogSlice()
 		*amendLogsPtr = append(*amendLogsPtr, log)
 		book.publishTrader.Publish(*amendLogsPtr)
@@ -409,11 +411,11 @@ func (book *OrderBook) amendOrder(orderID string, userID uint64, newPrice, newSi
 }
 
 // cancelOrder processes an order cancellation.
-func (book *OrderBook) cancelOrder(orderID string, userID uint64, timestamp int64) {
+func (book *OrderBook) cancelOrder(commandID string, orderID string, userID uint64, timestamp int64) {
 	order, ok := book.findOrder(orderID)
 	if !ok || order.UserID != userID {
 		logsPtr := acquireLogSlice()
-		log := NewRejectLog(book.seqID.Add(1), book.marketID, orderID, userID, protocol.RejectReasonOrderNotFound, timestamp)
+		log := NewRejectLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, orderID, userID, protocol.RejectReasonOrderNotFound, timestamp)
 		*logsPtr = append(*logsPtr, log)
 		book.publishTrader.Publish(*logsPtr)
 		releaseBookLog(log)
@@ -429,7 +431,7 @@ func (book *OrderBook) cancelOrder(orderID string, userID uint64, timestamp int6
 	myQueue.removeOrder(order.Price, order.ID)
 	logsPtr := acquireLogSlice()
 	totalSize := order.Size.Add(order.HiddenSize)
-	log := NewCancelLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, totalSize, order.Type, timestamp)
+	log := NewCancelLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, order.ID, order.UserID, order.Side, order.Price, totalSize, order.Type, timestamp)
 	*logsPtr = append(*logsPtr, log)
 	book.publishTrader.Publish(*logsPtr)
 	releaseBookLog(log)
@@ -497,7 +499,7 @@ func (book *OrderBook) Restore(snap *OrderBookSnapshot) {
 }
 
 // handleLimitOrder handles Limit orders.
-func (book *OrderBook) handleLimitOrder(order *Order, timestamp int64) *[]*OrderBookLog {
+func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestamp int64) *[]*OrderBookLog {
 	var myQueue, targetQueue *queue
 	if order.Side == Buy {
 		myQueue = book.bidQueue
@@ -514,7 +516,7 @@ func (book *OrderBook) handleLimitOrder(order *Order, timestamp int64) *[]*Order
 		if tOrd == nil {
 			book.prepareIcebergForResting(order)
 			myQueue.insertOrder(order, false)
-			log := NewOpenLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type, timestamp)
+			log := NewOpenLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type, timestamp)
 			*logsPtr = append(*logsPtr, log)
 			return logsPtr
 		}
@@ -523,18 +525,18 @@ func (book *OrderBook) handleLimitOrder(order *Order, timestamp int64) *[]*Order
 			(order.Side == Sell && order.Price.GreaterThan(tOrd.Price)) {
 			book.prepareIcebergForResting(order)
 			myQueue.insertOrder(order, false)
-			log := NewOpenLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type, timestamp)
+			log := NewOpenLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type, timestamp)
 			*logsPtr = append(*logsPtr, log)
 			return logsPtr
 		}
 
 		tOrd = targetQueue.popHeadOrder()
 		if order.Size.GreaterThanOrEqual(tOrd.Size) {
-			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size, timestamp)
+			log := NewMatchLog(book.seqID.Add(1), commandID, book.engineID, book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size, timestamp)
 			*logsPtr = append(*logsPtr, log)
 			order.Size = order.Size.Sub(tOrd.Size)
 
-			if !book.checkReplenish(tOrd, targetQueue, logsPtr, timestamp) {
+			if !book.checkReplenish(commandID, tOrd, targetQueue, logsPtr, timestamp) {
 				releaseOrder(tOrd)
 			}
 
@@ -543,7 +545,7 @@ func (book *OrderBook) handleLimitOrder(order *Order, timestamp int64) *[]*Order
 				break
 			}
 		} else {
-			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, order.Size, timestamp)
+			log := NewMatchLog(book.seqID.Add(1), commandID, book.engineID, book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, order.Size, timestamp)
 			*logsPtr = append(*logsPtr, log)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			targetQueue.insertOrder(tOrd, true)
@@ -564,7 +566,7 @@ func (book *OrderBook) prepareIcebergForResting(order *Order) {
 }
 
 // handleIOCOrder handles Immediate Or Cancel orders.
-func (book *OrderBook) handleIOCOrder(order *Order, timestamp int64) *[]*OrderBookLog {
+func (book *OrderBook) handleIOCOrder(commandID string, order *Order, timestamp int64) *[]*OrderBookLog {
 	var targetQueue *queue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -576,7 +578,7 @@ func (book *OrderBook) handleIOCOrder(order *Order, timestamp int64) *[]*OrderBo
 	for {
 		tOrd := targetQueue.peekHeadOrder()
 		if tOrd == nil {
-			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, protocol.RejectReasonNoLiquidity, timestamp)
+			log := NewRejectLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, order.ID, order.UserID, protocol.RejectReasonNoLiquidity, timestamp)
 			log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
 			*logsPtr = append(*logsPtr, log)
 			releaseOrder(order)
@@ -584,7 +586,7 @@ func (book *OrderBook) handleIOCOrder(order *Order, timestamp int64) *[]*OrderBo
 		}
 
 		if (order.Side == Buy && order.Price.LessThan(tOrd.Price)) || (order.Side == Sell && order.Price.GreaterThan(tOrd.Price)) {
-			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, protocol.RejectReasonPriceMismatch, timestamp)
+			log := NewRejectLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, order.ID, order.UserID, protocol.RejectReasonPriceMismatch, timestamp)
 			log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
 			*logsPtr = append(*logsPtr, log)
 			releaseOrder(order)
@@ -593,11 +595,11 @@ func (book *OrderBook) handleIOCOrder(order *Order, timestamp int64) *[]*OrderBo
 
 		tOrd = targetQueue.popHeadOrder()
 		if order.Size.GreaterThanOrEqual(tOrd.Size) {
-			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size, timestamp)
+			log := NewMatchLog(book.seqID.Add(1), commandID, book.engineID, book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, tOrd.Size, timestamp)
 			*logsPtr = append(*logsPtr, log)
 			order.Size = order.Size.Sub(tOrd.Size)
 
-			if !book.checkReplenish(tOrd, targetQueue, logsPtr, timestamp) {
+			if !book.checkReplenish(commandID, tOrd, targetQueue, logsPtr, timestamp) {
 				releaseOrder(tOrd)
 			}
 
@@ -606,7 +608,7 @@ func (book *OrderBook) handleIOCOrder(order *Order, timestamp int64) *[]*OrderBo
 				break
 			}
 		} else {
-			log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, order.Size, timestamp)
+			log := NewMatchLog(book.seqID.Add(1), commandID, book.engineID, book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, order.Size, timestamp)
 			*logsPtr = append(*logsPtr, log)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			targetQueue.insertOrder(tOrd, true)
@@ -618,7 +620,7 @@ func (book *OrderBook) handleIOCOrder(order *Order, timestamp int64) *[]*OrderBo
 }
 
 // handleFOKOrder handles Fill Or Kill orders.
-func (book *OrderBook) handleFOKOrder(order *Order, timestamp int64) *[]*OrderBookLog {
+func (book *OrderBook) handleFOKOrder(commandID string, order *Order, timestamp int64) *[]*OrderBookLog {
 	var targetQueue *queue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -657,7 +659,7 @@ func (book *OrderBook) handleFOKOrder(order *Order, timestamp int64) *[]*OrderBo
 				reason = protocol.RejectReasonPriceMismatch
 			}
 		}
-		log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, reason, timestamp)
+		log := NewRejectLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, order.ID, order.UserID, reason, timestamp)
 		log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
 		*logsPtr = append(*logsPtr, log)
 		releaseOrder(order)
@@ -665,11 +667,11 @@ func (book *OrderBook) handleFOKOrder(order *Order, timestamp int64) *[]*OrderBo
 	}
 
 	// Phase 2: Execute match (same as IOC/Limit logic but guaranteed to finish)
-	return book.handleIOCOrder(order, timestamp)
+	return book.handleIOCOrder(commandID, order, timestamp)
 }
 
 // handlePostOnlyOrder handles Post-Only orders.
-func (book *OrderBook) handlePostOnlyOrder(order *Order, timestamp int64) *[]*OrderBookLog {
+func (book *OrderBook) handlePostOnlyOrder(commandID string, order *Order, timestamp int64) *[]*OrderBookLog {
 	var targetQueue *queue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -681,7 +683,7 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order, timestamp int64) *[]*Or
 	if tOrd != nil {
 		if (order.Side == Buy && order.Price.GreaterThanOrEqual(tOrd.Price)) || (order.Side == Sell && order.Price.LessThanOrEqual(tOrd.Price)) {
 			logsPtr := acquireLogSlice()
-			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, protocol.RejectReasonPostOnlyMatch, timestamp)
+			log := NewRejectLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, order.ID, order.UserID, protocol.RejectReasonPostOnlyMatch, timestamp)
 			log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
 			*logsPtr = append(*logsPtr, log)
 			releaseOrder(order)
@@ -689,11 +691,11 @@ func (book *OrderBook) handlePostOnlyOrder(order *Order, timestamp int64) *[]*Or
 		}
 	}
 
-	return book.handleLimitOrder(order, timestamp)
+	return book.handleLimitOrder(commandID, order, timestamp)
 }
 
 // handleMarketOrder handles Market orders.
-func (book *OrderBook) handleMarketOrder(order *Order, quoteSize udecimal.Decimal, timestamp int64) *[]*OrderBookLog {
+func (book *OrderBook) handleMarketOrder(commandID string, order *Order, quoteSize udecimal.Decimal, timestamp int64) *[]*OrderBookLog {
 	var targetQueue *queue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -705,7 +707,7 @@ func (book *OrderBook) handleMarketOrder(order *Order, quoteSize udecimal.Decima
 	for {
 		tOrd := targetQueue.peekHeadOrder()
 		if tOrd == nil {
-			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, protocol.RejectReasonNoLiquidity, timestamp)
+			log := NewRejectLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, order.ID, order.UserID, protocol.RejectReasonNoLiquidity, timestamp)
 			log.Side, log.Price, log.OrderType = order.Side, order.Price, order.Type
 			if order.Type == Market && !quoteSize.IsZero() {
 				log.Size = quoteSize
@@ -733,7 +735,7 @@ func (book *OrderBook) handleMarketOrder(order *Order, quoteSize udecimal.Decima
 		if matchSize.LessThan(book.lotSize) {
 			// Cannot match anymore (remaining quantity below minimum trade unit)
 			// Produce Reject Log so OMS can unfreeze the remaining funds.
-			log := NewRejectLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, protocol.RejectReasonNoLiquidity, timestamp)
+			log := NewRejectLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, order.ID, order.UserID, protocol.RejectReasonNoLiquidity, timestamp)
 			log.Side, log.Price, log.OrderType = order.Side, order.Price, order.Type
 			if useQuote {
 				log.Size = quoteSize // Remaining quote size that couldn't be matched
@@ -745,7 +747,7 @@ func (book *OrderBook) handleMarketOrder(order *Order, quoteSize udecimal.Decima
 			break
 		}
 
-		log := NewMatchLog(book.seqID.Add(1), book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, matchSize, timestamp)
+		log := NewMatchLog(book.seqID.Add(1), commandID, book.engineID, book.tradeID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Type, tOrd.ID, tOrd.UserID, tOrd.Price, matchSize, timestamp)
 		*logsPtr = append(*logsPtr, log)
 
 		if useQuote {
@@ -756,7 +758,7 @@ func (book *OrderBook) handleMarketOrder(order *Order, quoteSize udecimal.Decima
 
 		tOrd = targetQueue.popHeadOrder()
 		if matchSize.Equal(tOrd.Size) {
-			if !book.checkReplenish(tOrd, targetQueue, logsPtr, timestamp) {
+			if !book.checkReplenish(commandID, tOrd, targetQueue, logsPtr, timestamp) {
 				releaseOrder(tOrd)
 			}
 		} else {
@@ -773,7 +775,7 @@ func (book *OrderBook) handleMarketOrder(order *Order, quoteSize udecimal.Decima
 	return logsPtr
 }
 
-func (book *OrderBook) checkReplenish(order *Order, q *queue, logsPtr *[]*OrderBookLog, timestamp int64) bool {
+func (book *OrderBook) checkReplenish(commandID string, order *Order, q *queue, logsPtr *[]*OrderBookLog, timestamp int64) bool {
 	if order.HiddenSize.GreaterThan(udecimal.Zero) {
 		reloadQty := order.VisibleLimit
 		if order.HiddenSize.LessThan(reloadQty) {
@@ -784,7 +786,7 @@ func (book *OrderBook) checkReplenish(order *Order, q *queue, logsPtr *[]*OrderB
 		order.Timestamp = timestamp
 		q.insertOrder(order, false) // Insert at end (Priority Loss)
 
-		log := NewOpenLog(book.seqID.Add(1), book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type, timestamp)
+		log := NewOpenLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type, timestamp)
 		*logsPtr = append(*logsPtr, log)
 		return true
 	}
@@ -792,10 +794,10 @@ func (book *OrderBook) checkReplenish(order *Order, q *queue, logsPtr *[]*OrderB
 }
 
 // handleSuspendMarket updates the order book state to Suspended.
-func (book *OrderBook) handleSuspendMarket(cmd *protocol.SuspendMarketCommand) {
+func (book *OrderBook) handleSuspendMarket(commandID string, payload *protocol.SuspendMarketCommand) {
 	// If already Halted, cannot Suspend (Halted is terminal state for now)
 	if book.state == protocol.OrderBookStateHalted {
-		book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonMarketHalted, nil)
+		book.rejectInvalidPayload(commandID, "unknown", 0, protocol.RejectReasonMarketHalted, nil)
 		return
 	}
 	book.state = protocol.OrderBookStateSuspended
@@ -804,22 +806,22 @@ func (book *OrderBook) handleSuspendMarket(cmd *protocol.SuspendMarketCommand) {
 }
 
 // handleResumeMarket updates the order book state to Running.
-func (book *OrderBook) handleResumeMarket(cmd *protocol.ResumeMarketCommand) {
+func (book *OrderBook) handleResumeMarket(commandID string, payload *protocol.ResumeMarketCommand) {
 	if book.state == protocol.OrderBookStateHalted {
-		book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonMarketHalted, nil)
+		book.rejectInvalidPayload(commandID, "unknown", 0, protocol.RejectReasonMarketHalted, nil)
 		return
 	}
 	book.state = protocol.OrderBookStateRunning
 }
 
 // handleUpdateConfig updates order book configuration.
-func (book *OrderBook) handleUpdateConfig(cmd *protocol.UpdateConfigCommand) {
-	if cmd.MinLotSize != "" {
-		size, err := udecimal.Parse(cmd.MinLotSize)
-		if err != nil {
-			book.rejectInvalidPayload("unknown", 0, protocol.RejectReasonInvalidPayload, nil)
-			return
+func (book *OrderBook) handleUpdateConfig(commandID string, payload *protocol.UpdateConfigCommand) {
+	if payload.MinLotSize != "" {
+		size, err := udecimal.Parse(payload.MinLotSize)
+		if err == nil {
+			book.lotSize = size
+		} else {
+			book.rejectInvalidPayload(commandID, "unknown", 0, protocol.RejectReasonInvalidPayload, nil)
 		}
-		book.lotSize = size
 	}
 }

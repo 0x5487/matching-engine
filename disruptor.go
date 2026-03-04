@@ -81,15 +81,33 @@ func (rb *RingBuffer[T]) Publish(event T) {
 // Returns (-1, nil) if the RingBuffer is shut down.
 // The caller should write to the slot and then call Commit(seq).
 func (rb *RingBuffer[T]) Claim() (int64, *T) {
-	// Check if shutdown
-	if rb.isShutdown.Load() {
+	seq, _ := rb.ClaimN(1)
+	if seq == -1 {
 		return -1, nil
 	}
+	return seq, &rb.buffer[seq&rb.bufferMask]
+}
 
-	var nextSeq int64
+// ClaimN atomically claims n sequences and returns the start and end sequence numbers.
+// Returns (-1, -1) if the RingBuffer is shut down.
+// The caller should write to the slots from startSeq to endSeq and then call CommitN(startSeq, endSeq).
+func (rb *RingBuffer[T]) ClaimN(n int64) (int64, int64) {
+	// Check if shutdown
+	if rb.isShutdown.Load() {
+		return -1, -1
+	}
+
+	if n <= 0 {
+		return -1, -1
+	}
+
+	if n > rb.capacity {
+		n = rb.capacity
+	}
+
 	for {
 		currentProducerSeq := rb.producerSequence.Load()
-		nextSeq = currentProducerSeq + 1
+		nextSeq := currentProducerSeq + n
 
 		// Check if there is enough space
 		wrapPoint := nextSeq - rb.capacity
@@ -104,7 +122,8 @@ func (rb *RingBuffer[T]) Claim() (int64, *T) {
 		// Try to atomically update producer sequence
 		if rb.producerSequence.CompareAndSwap(currentProducerSeq, nextSeq) {
 			// Successfully claimed the sequence
-			return nextSeq, &rb.buffer[nextSeq&rb.bufferMask]
+			// Return the range [start, end]
+			return currentProducerSeq + 1, nextSeq
 		}
 		// CAS failed, retry
 		runtime.Gosched()
@@ -114,6 +133,13 @@ func (rb *RingBuffer[T]) Claim() (int64, *T) {
 // Commit marks the slot as published, making it visible to the consumer.
 func (rb *RingBuffer[T]) Commit(seq int64) {
 	atomic.StoreInt64(&rb.published[seq&rb.bufferMask], seq)
+}
+
+// CommitN marks the slots from startSeq to endSeq as published, making them visible to the consumer.
+func (rb *RingBuffer[T]) CommitN(startSeq int64, endSeq int64) {
+	for seq := startSeq; seq <= endSeq; seq++ {
+		atomic.StoreInt64(&rb.published[seq&rb.bufferMask], seq)
+	}
 }
 
 // Run starts the consumer loop in the calling goroutine (blocking).

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 // This enables runtime.LockOSThread() for CPU affinity scenarios.
 type MatchingEngine struct {
 	isShutdown    atomic.Bool
+	engineID      string
 	orderbooks    map[string]*OrderBook
 	ring          *RingBuffer[InputEvent]
 	publishTrader PublishLog
@@ -30,8 +32,9 @@ type MatchingEngine struct {
 }
 
 // NewMatchingEngine creates a new matching engine instance.
-func NewMatchingEngine(publishTrader PublishLog) *MatchingEngine {
+func NewMatchingEngine(engineID string, publishTrader PublishLog) *MatchingEngine {
 	engine := &MatchingEngine{
+		engineID:      engineID,
 		orderbooks:    make(map[string]*OrderBook),
 		publishTrader: publishTrader,
 		serializer:    &protocol.DefaultJSONSerializer{},
@@ -160,6 +163,56 @@ func (engine *MatchingEngine) EnqueueCommand(cmd *protocol.Command) error {
 	return nil
 }
 
+// EnqueueCommandBatch routes a batch of commands to the Engine's shared RingBuffer.
+// It claims n contiguous slots in the RingBuffer to amortize synchronization overhead.
+func (engine *MatchingEngine) EnqueueCommandBatch(cmds []*protocol.Command) error {
+	if len(cmds) == 0 {
+		return nil
+	}
+
+	if engine.isShutdown.Load() {
+		return ErrShutdown
+	}
+
+	n := int64(len(cmds))
+
+	// Handle case where batch size exceeds ring buffer capacity limit
+	// Simplest approach: if it's too large, we fall back to smaller chunks or single enqueues.
+	// In practice, RingBuffer capacity is large (32768), so typical batches (100-1000) will fit.
+	if n > engine.ring.capacity {
+		// Fallback to individual enqueues if batch is larger than capacity
+		for _, cmd := range cmds {
+			if err := engine.EnqueueCommand(cmd); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	startSeq, endSeq := engine.ring.ClaimN(n)
+	if startSeq == -1 {
+		return ErrShutdown
+	}
+
+	for i, cmd := range cmds {
+		seq := startSeq + int64(i)
+		slot := &engine.ring.buffer[seq&engine.ring.bufferMask]
+		slot.Cmd = cmd
+		slot.Query = nil
+		slot.Resp = nil
+	}
+
+	engine.ring.CommitN(startSeq, endSeq)
+	return nil
+}
+
+func defaultCommandID(cmdType protocol.CommandType, marketID, key string) string {
+	if key != "" {
+		return key
+	}
+	return fmt.Sprintf("%d:%s:%d", cmdType, marketID, time.Now().UnixNano())
+}
+
 // PlaceOrder adds an order to the appropriate order book based on the market ID.
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
 func (engine *MatchingEngine) PlaceOrder(ctx context.Context, marketID string, cmd *protocol.PlaceOrderCommand) error {
@@ -170,9 +223,48 @@ func (engine *MatchingEngine) PlaceOrder(ctx context.Context, marketID string, c
 	protoCmd := &protocol.Command{
 		MarketID: marketID,
 		Type:     protocol.CmdPlaceOrder,
+		CommandID: defaultCommandID(
+			protocol.CmdPlaceOrder,
+			marketID,
+			cmd.OrderID,
+		),
 		Payload:  bytes,
 	}
 	return engine.EnqueueCommand(protoCmd)
+}
+
+// PlaceOrderBatch adds multiple orders to the appropriate order book(s).
+// This method performs serialization before acquiring RingBuffer slots,
+// ensuring that serialization errors do not block or waste RingBuffer sequences.
+func (engine *MatchingEngine) PlaceOrderBatch(ctx context.Context, marketID string, cmds []*protocol.PlaceOrderCommand) error {
+	if len(cmds) == 0 {
+		return nil
+	}
+
+	if engine.isShutdown.Load() {
+		return ErrShutdown
+	}
+
+	protoCmds := make([]*protocol.Command, 0, len(cmds))
+	for _, cmd := range cmds {
+		bytes, err := engine.serializer.Marshal(cmd)
+		if err != nil {
+			// Early return on serialization error - nothing has been inserted into the queue yet.
+			return err
+		}
+		protoCmds = append(protoCmds, &protocol.Command{
+			MarketID: marketID,
+			Type:     protocol.CmdPlaceOrder,
+			CommandID: defaultCommandID(
+				protocol.CmdPlaceOrder,
+				marketID,
+				cmd.OrderID,
+			),
+			Payload:  bytes,
+		})
+	}
+
+	return engine.EnqueueCommandBatch(protoCmds)
 }
 
 // AmendOrder modifies an existing order in the appropriate order book.
@@ -185,6 +277,11 @@ func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, c
 	protoCmd := &protocol.Command{
 		MarketID: marketID,
 		Type:     protocol.CmdAmendOrder,
+		CommandID: defaultCommandID(
+			protocol.CmdAmendOrder,
+			marketID,
+			cmd.OrderID,
+		),
 		Payload:  bytes,
 	}
 	return engine.EnqueueCommand(protoCmd)
@@ -200,6 +297,11 @@ func (engine *MatchingEngine) CancelOrder(ctx context.Context, marketID string, 
 	protoCmd := &protocol.Command{
 		MarketID: marketID,
 		Type:     protocol.CmdCancelOrder,
+		CommandID: defaultCommandID(
+			protocol.CmdCancelOrder,
+			marketID,
+			cmd.OrderID,
+		),
 		Payload:  bytes,
 	}
 	return engine.EnqueueCommand(protoCmd)
@@ -219,6 +321,11 @@ func (engine *MatchingEngine) CreateMarket(userID string, marketID string, minLo
 	return engine.EnqueueCommand(&protocol.Command{
 		Type:     protocol.CmdCreateMarket,
 		MarketID: marketID,
+		CommandID: defaultCommandID(
+			protocol.CmdCreateMarket,
+			marketID,
+			marketID,
+		),
 		Payload:  bytes,
 	})
 }
@@ -237,6 +344,11 @@ func (engine *MatchingEngine) SuspendMarket(userID string, marketID string) erro
 	return engine.EnqueueCommand(&protocol.Command{
 		Type:     protocol.CmdSuspendMarket,
 		MarketID: marketID,
+		CommandID: defaultCommandID(
+			protocol.CmdSuspendMarket,
+			marketID,
+			marketID,
+		),
 		Payload:  bytes,
 	})
 }
@@ -254,6 +366,11 @@ func (engine *MatchingEngine) ResumeMarket(userID string, marketID string) error
 	return engine.EnqueueCommand(&protocol.Command{
 		Type:     protocol.CmdResumeMarket,
 		MarketID: marketID,
+		CommandID: defaultCommandID(
+			protocol.CmdResumeMarket,
+			marketID,
+			marketID,
+		),
 		Payload:  bytes,
 	})
 }
@@ -272,6 +389,11 @@ func (engine *MatchingEngine) UpdateConfig(userID string, marketID string, minLo
 	return engine.EnqueueCommand(&protocol.Command{
 		Type:     protocol.CmdUpdateConfig,
 		MarketID: marketID,
+		CommandID: defaultCommandID(
+			protocol.CmdUpdateConfig,
+			marketID,
+			marketID,
+		),
 		Payload:  bytes,
 	})
 }
@@ -292,8 +414,9 @@ func (engine *MatchingEngine) SendUserEvent(userID uint64, eventType string, key
 	// MarketID is empty for global events, or could be specific if needed.
 	// For now we treat them as global or engine-level events.
 	return engine.EnqueueCommand(&protocol.Command{
-		Type:    protocol.CmdUserEvent,
-		Payload: bytes,
+		Type:      protocol.CmdUserEvent,
+		CommandID: defaultCommandID(protocol.CmdUserEvent, "", key),
+		Payload:   bytes,
 	})
 }
 
@@ -623,7 +746,7 @@ func (e *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMetadata
 		}
 
 		// Create managed OrderBook (no individual RingBuffer) and restore
-		book := newOrderBook(segment.MarketID, e.publishTrader)
+		book := newOrderBook(e.engineID, segment.MarketID, e.publishTrader)
 		book.Restore(&snap)
 
 		// Add to engine map (no goroutine needed)
@@ -656,7 +779,7 @@ func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) {
 		}
 	}
 
-	newbook := newOrderBook(payload.MarketID, engine.publishTrader, opts...)
+	newbook := newOrderBook(engine.engineID, payload.MarketID, engine.publishTrader, opts...)
 	engine.orderbooks[payload.MarketID] = newbook
 }
 
@@ -671,6 +794,8 @@ func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
 	// Create and Publish Log
 	log := NewUserEventLog(
 		cmd.SeqID,
+		cmd.CommandID,
+		engine.engineID,
 		payload.UserID,
 		payload.EventType,
 		payload.Key,

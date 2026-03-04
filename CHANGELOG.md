@@ -14,6 +14,8 @@
 - refactor: unify `UserID` type to `uint64` across all command payloads, order book logs, and internal models for better type consistency and to prevent signed integer issues.
 - refactor: consolidate `MatchingEngine` into a **single-thread actor model**, enabling external goroutine CPU pinning and eliminating unnecessary context switches between order book goroutines.
 - feature: add `UserEventCommand` to support generic user events (e.g., EndOfBlock, Audit).
+- feat: add `PlaceOrderBatch` command to place multiple orders at once.
+- refactor: add `EngineID` and `CommandID` to `MatchingEngine` and `OrderBook` to support multiple engines.
 
 ## v0.7.0 (2025-12-14)
 

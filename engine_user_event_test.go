@@ -11,7 +11,7 @@ import (
 
 func TestUserEvent_GenericPayload(t *testing.T) {
 	publish := NewMemoryPublishLog()
-	engine := NewMatchingEngine(publish)
+	engine := NewMatchingEngine("event-test-engine", publish)
 	marketID := "EVENT-TEST"
 	ctx := context.Background()
 

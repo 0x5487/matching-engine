@@ -16,7 +16,7 @@ import (
 func TestMatchingEngine(t *testing.T) {
 	t.Run("PlaceOrders", func(t *testing.T) {
 		publishTrader := NewMemoryPublishLog()
-		engine := NewMatchingEngine(publishTrader)
+		engine := NewMatchingEngine("test-engine", publishTrader)
 
 		ctx := context.Background()
 
@@ -70,7 +70,7 @@ func TestMatchingEngine(t *testing.T) {
 
 	t.Run("CancelOrder", func(t *testing.T) {
 		publishTrader := NewMemoryPublishLog()
-		engine := NewMatchingEngine(publishTrader)
+		engine := NewMatchingEngine("test-engine", publishTrader)
 
 		ctx := context.Background()
 
@@ -113,7 +113,7 @@ func TestMatchingEngine(t *testing.T) {
 
 	t.Run("MarketNotFound", func(t *testing.T) {
 		publishTrader := NewMemoryPublishLog()
-		engine := NewMatchingEngine(publishTrader)
+		engine := NewMatchingEngine("test-engine", publishTrader)
 
 		// Start engine event loop
 		go engine.Run()
@@ -135,10 +135,79 @@ func TestMatchingEngine(t *testing.T) {
 	})
 }
 
+func TestCommandAndEngineIDPropagation(t *testing.T) {
+	ctx := context.Background()
+	publishTrader := NewMemoryPublishLog()
+	engine := NewMatchingEngine("corr-engine", publishTrader)
+	marketID := "BTC-USDT"
+
+	err := engine.CreateMarket("admin", marketID, "")
+	assert.NoError(t, err)
+
+	go engine.Run()
+
+	// Single submit: fallback CommandID should be OrderID.
+	err = engine.PlaceOrder(ctx, marketID, &protocol.PlaceOrderCommand{
+		OrderID:   "single-oid",
+		OrderType: Limit,
+		Side:      Buy,
+		Price:     "100",
+		Size:      "1",
+		UserID:    1,
+	})
+	assert.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		for _, log := range publishTrader.Logs() {
+			if log.OrderID == "single-oid" && log.Type == protocol.LogTypeOpen {
+				return log.CommandID == "single-oid" && log.EngineID == "corr-engine"
+			}
+		}
+		return false
+	}, time.Second, 10*time.Millisecond)
+
+	// Batch submit: each command should keep per-order fallback CommandID.
+	err = engine.PlaceOrderBatch(ctx, marketID, []*protocol.PlaceOrderCommand{
+		{
+			OrderID:   "batch-oid-1",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "99",
+			Size:      "1",
+			UserID:    2,
+		},
+		{
+			OrderID:   "batch-oid-2",
+			OrderType: Limit,
+			Side:      Sell,
+			Price:     "101",
+			Size:      "1",
+			UserID:    3,
+		},
+	})
+	assert.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		found1 := false
+		found2 := false
+		for _, log := range publishTrader.Logs() {
+			if log.OrderID == "batch-oid-1" && log.Type == protocol.LogTypeOpen {
+				found1 = log.CommandID == "batch-oid-1" && log.EngineID == "corr-engine"
+			}
+			if log.OrderID == "batch-oid-2" && log.Type == protocol.LogTypeOpen {
+				found2 = log.CommandID == "batch-oid-2" && log.EngineID == "corr-engine"
+			}
+		}
+		return found1 && found2
+	}, time.Second, 10*time.Millisecond)
+
+	_ = engine.Shutdown(ctx)
+}
+
 func TestMatchingEngineShutdown(t *testing.T) {
 	t.Run("ShutdownMultipleMarkets", func(t *testing.T) {
 		publishTrader := NewMemoryPublishLog()
-		engine := NewMatchingEngine(publishTrader)
+		engine := NewMatchingEngine("test-engine", publishTrader)
 
 		ctx := context.Background()
 
@@ -182,7 +251,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 
 	t.Run("RejectsNewMarkets", func(t *testing.T) {
 		publishTrader := NewMemoryPublishLog()
-		engine := NewMatchingEngine(publishTrader)
+		engine := NewMatchingEngine("test-engine", publishTrader)
 
 		ctx := context.Background()
 
@@ -225,7 +294,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 
 	t.Run("RespectsContextTimeout", func(t *testing.T) {
 		publishTrader := NewMemoryPublishLog()
-		engine := NewMatchingEngine(publishTrader)
+		engine := NewMatchingEngine("test-engine", publishTrader)
 
 		ctx := context.Background()
 
@@ -263,7 +332,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 
 	ctx := context.Background()
 	publishTrader := NewMemoryPublishLog()
-	engine := NewMatchingEngine(publishTrader)
+	engine := NewMatchingEngine("test-engine", publishTrader)
 
 	// 1. Setup State: Create 2 OrderBooks with Orders
 	market1 := "BTC-USDT"
@@ -329,7 +398,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 
 	// 3. Restore to a NEW Engine
 	newPublishTrader := NewMemoryPublishLog()
-	newEngine := NewMatchingEngine(newPublishTrader)
+	newEngine := NewMatchingEngine("test-engine-restored", newPublishTrader)
 
 	restoredMeta, err := newEngine.RestoreFromSnapshot(tmpDir)
 	assert.NoError(t, err)
@@ -370,7 +439,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 
 func TestManagement_CreateMarket(t *testing.T) {
 	publish := NewMemoryPublishLog()
-	engine := NewMatchingEngine(publish)
+	engine := NewMatchingEngine("test-engine", publish)
 	marketID := "BTC-USDT"
 
 	// Start engine event loop
@@ -406,7 +475,7 @@ func TestManagement_CreateMarket(t *testing.T) {
 
 func TestManagement_SuspendResume(t *testing.T) {
 	publish := NewMemoryPublishLog()
-	engine := NewMatchingEngine(publish)
+	engine := NewMatchingEngine("test-engine", publish)
 	marketID := "ETH-USDT"
 	ctx := context.Background()
 
@@ -517,7 +586,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	publish := NewMemoryPublishLog()
-	engine := NewMatchingEngine(publish)
+	engine := NewMatchingEngine("test-engine", publish)
 	marketID := "SUSPENDED-MARKET"
 
 	// 1. Create Market with specific LotSize
@@ -541,7 +610,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 
 	// 4. Restore to New Engine
 	newPublish := NewMemoryPublishLog()
-	newEngine := NewMatchingEngine(newPublish)
+	newEngine := NewMatchingEngine("test-engine-restored", newPublish)
 	_, err = newEngine.RestoreFromSnapshot(tmpDir)
 	assert.NoError(t, err)
 
@@ -600,7 +669,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 
 func TestManagement_UpdateConfig(t *testing.T) {
 	publish := NewMemoryPublishLog()
-	engine := NewMatchingEngine(publish)
+	engine := NewMatchingEngine("test-engine", publish)
 	marketID := "CONFIG-TEST"
 
 	err := engine.CreateMarket("admin", marketID, "1.0")

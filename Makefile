@@ -15,7 +15,7 @@ coverage: test
 coverage-html: test
 	go tool cover -html=cover.out -o coverage.html
 
-release: lint test
+check: lint test
 
 prof-mem:
 	go test -v -run=none -bench "BenchmarkPlaceOrders|BenchmarkMatching" -benchmem -memprofile mem.out .

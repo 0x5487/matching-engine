@@ -91,6 +91,8 @@ func (p *DiscardPublishLog) Publish(trades []*OrderBookLog) {
 // - Reject: does not affect order book state
 type OrderBookLog struct {
 	SeqID        uint64                `json:"seq_id"`
+	CommandID    string                `json:"command_id,omitempty"`
+	EngineID     string                `json:"engine_id,omitempty"`
 	TradeID      uint64                `json:"trade_id,omitempty"` // Sequential trade ID, only set for Match events
 	Type         protocol.LogType      `json:"type"`               // Event type: open, match, cancel, amend, reject
 	MarketID     string                `json:"market_id"`
@@ -150,9 +152,11 @@ func releaseLogSlice(ps *[]*OrderBookLog) {
 	logSlicePool.Put(ps)
 }
 
-func NewOpenLog(seqID uint64, marketID string, orderID string, userID uint64, side Side, price, size udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
+func NewOpenLog(seqID uint64, commandID, engineID, marketID string, orderID string, userID uint64, side Side, price, size udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
 	log.SeqID = seqID
+	log.CommandID = commandID
+	log.EngineID = engineID
 	log.Type = protocol.LogTypeOpen
 	log.MarketID = marketID
 	log.Side = side
@@ -166,9 +170,11 @@ func NewOpenLog(seqID uint64, marketID string, orderID string, userID uint64, si
 	return log
 }
 
-func NewMatchLog(seqID uint64, tradeID uint64, marketID string, takerID string, takerUserID uint64, takerSide Side, takerType OrderType, makerID string, makerUserID uint64, price udecimal.Decimal, size udecimal.Decimal, timestamp int64) *OrderBookLog {
+func NewMatchLog(seqID uint64, commandID, engineID string, tradeID uint64, marketID string, takerID string, takerUserID uint64, takerSide Side, takerType OrderType, makerID string, makerUserID uint64, price udecimal.Decimal, size udecimal.Decimal, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
 	log.SeqID = seqID
+	log.CommandID = commandID
+	log.EngineID = engineID
 	log.TradeID = tradeID
 	log.Type = protocol.LogTypeMatch
 	log.MarketID = marketID
@@ -186,9 +192,11 @@ func NewMatchLog(seqID uint64, tradeID uint64, marketID string, takerID string, 
 	return log
 }
 
-func NewCancelLog(seqID uint64, marketID string, orderID string, userID uint64, side Side, price, size udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
+func NewCancelLog(seqID uint64, commandID, engineID, marketID string, orderID string, userID uint64, side Side, price, size udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
 	log.SeqID = seqID
+	log.CommandID = commandID
+	log.EngineID = engineID
 	log.Type = protocol.LogTypeCancel
 	log.MarketID = marketID
 	log.Side = side
@@ -202,9 +210,11 @@ func NewCancelLog(seqID uint64, marketID string, orderID string, userID uint64, 
 	return log
 }
 
-func NewAmendLog(seqID uint64, marketID string, orderID string, userID uint64, side Side, price, size udecimal.Decimal, oldPrice udecimal.Decimal, oldSize udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
+func NewAmendLog(seqID uint64, commandID, engineID, marketID string, orderID string, userID uint64, side Side, price, size udecimal.Decimal, oldPrice udecimal.Decimal, oldSize udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
 	log.SeqID = seqID
+	log.CommandID = commandID
+	log.EngineID = engineID
 	log.Type = protocol.LogTypeAmend
 	log.MarketID = marketID
 	log.Side = side
@@ -220,9 +230,11 @@ func NewAmendLog(seqID uint64, marketID string, orderID string, userID uint64, s
 	return log
 }
 
-func NewRejectLog(seqID uint64, marketID string, orderID string, userID uint64, reason protocol.RejectReason, timestamp int64) *OrderBookLog {
+func NewRejectLog(seqID uint64, commandID, engineID, marketID string, orderID string, userID uint64, reason protocol.RejectReason, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
 	log.SeqID = seqID
+	log.CommandID = commandID
+	log.EngineID = engineID
 	log.Type = protocol.LogTypeReject
 	log.MarketID = marketID
 	log.OrderID = orderID
@@ -233,9 +245,11 @@ func NewRejectLog(seqID uint64, marketID string, orderID string, userID uint64, 
 	return log
 }
 
-func NewUserEventLog(seqID uint64, userID uint64, eventType string, key string, data []byte, timestamp int64) *OrderBookLog {
+func NewUserEventLog(seqID uint64, commandID, engineID string, userID uint64, eventType string, key string, data []byte, timestamp int64) *OrderBookLog {
 	log := acquireBookLog()
 	log.SeqID = seqID
+	log.CommandID = commandID
+	log.EngineID = engineID
 	log.Type = protocol.LogTypeUser
 	log.UserID = userID
 	log.EventType = eventType

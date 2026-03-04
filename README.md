@@ -45,7 +45,7 @@ func main() {
 	publish := match.NewMemoryPublishLog()
 
 	// 2. Initialize the Matching Engine
-	engine := match.NewMatchingEngine(publish)
+	engine := match.NewMatchingEngine("engine-1", publish)
 
 	// 3. Start the Engine (Actor Loop)
 	// This must be run in a separate goroutine

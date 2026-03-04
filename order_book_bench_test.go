@@ -19,7 +19,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	defer runtime.GOMAXPROCS(oldProcs)
 
 	publishTrader := NewDiscardPublishLog()
-	engine := NewMatchingEngine(publishTrader)
+	engine := NewMatchingEngine("bench-engine", publishTrader)
 
 	marketID := "BTC-USDT"
 	_ = engine.CreateMarket("admin", marketID, "")
@@ -118,13 +118,114 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	_ = engine.Shutdown(context.Background())
 }
 
+func BenchmarkPlaceOrderBatch(b *testing.B) {
+	// Ensure engine and producer can run concurrently
+	oldProcs := runtime.GOMAXPROCS(runtime.NumCPU())
+	defer runtime.GOMAXPROCS(oldProcs)
+
+	publishTrader := NewDiscardPublishLog()
+	engine := NewMatchingEngine("bench-engine", publishTrader)
+
+	marketID := "BTC-USDT"
+	_ = engine.CreateMarket("admin", marketID, "")
+
+	// Start engine event loop
+	go engine.Run()
+
+	// Use fixed seed for repeatability
+	rng := rand.New(rand.NewSource(42))
+	midPrice := int64(10000)
+
+	// Pre-compute decimal prices to reduce allocations in hot loop
+	priceCache := make([]udecimal.Decimal, 1001)
+	for i := int64(0); i <= 1000; i++ {
+		priceCache[i] = udecimal.MustFromInt64(midPrice-500+i, 0)
+	}
+	sizeOne := udecimal.MustFromInt64(1, 0)
+
+	const poolSize = 65536
+	const batchSize = 100 // Size of each batch
+
+	serializer := &protocol.DefaultJSONSerializer{}
+	cmdPool := make([]*protocol.Command, poolSize)
+
+	for i := 0; i < poolSize; i++ {
+		var side Side
+		var priceIdx int
+
+		r := rng.Intn(100)
+		if r < 80 {
+			sideR := rng.Intn(2)
+			offset := rng.Intn(10) + 1
+			if sideR == 0 {
+				side = Buy
+				priceIdx = 500 - offset
+			} else {
+				side = Sell
+				priceIdx = 500 + offset
+			}
+		} else {
+			sideR := rng.Intn(2)
+			offset := rng.Intn(490) + 11
+			if sideR == 0 {
+				side = Buy
+				priceIdx = 500 - offset
+			} else {
+				side = Sell
+				priceIdx = 500 + offset
+			}
+		}
+
+		placeCmd := &protocol.PlaceOrderCommand{
+			OrderID:   strconv.Itoa(i),
+			OrderType: Limit,
+			Side:      side,
+			Price:     priceCache[priceIdx].String(),
+			Size:      sizeOne.String(),
+			UserID:    uint64(rng.Intn(1000) + 1),
+			Timestamp: time.Now().UnixNano(),
+		}
+
+		payload, _ := serializer.Marshal(placeCmd)
+		cmdPool[i] = &protocol.Command{
+			MarketID: marketID,
+			Type:     protocol.CmdPlaceOrder,
+			Payload:  payload,
+		}
+	}
+
+	// Create batches
+	batches := make([][]*protocol.Command, poolSize/batchSize)
+	for i := 0; i < len(batches); i++ {
+		batches[i] = cmdPool[i*batchSize : (i+1)*batchSize]
+	}
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		// Hot path: ExecuteCommandBatch
+		_ = engine.EnqueueCommandBatch(batches[i%len(batches)])
+	}
+
+	b.StopTimer()
+
+	// Report custom metric: orders per second (N iterations * batchSize orders per iteration)
+	totalSeconds := b.Elapsed().Seconds()
+	if totalSeconds > 0 {
+		ordersPerSec := float64(b.N*batchSize) / totalSeconds
+		b.ReportMetric(ordersPerSec, "orders/sec")
+	}
+
+	_ = engine.Shutdown(context.Background())
+}
+
 func BenchmarkMatching(b *testing.B) {
 	// Ensure engine run concurrently
 	oldProcs := runtime.GOMAXPROCS(runtime.NumCPU())
 	defer runtime.GOMAXPROCS(oldProcs)
 
 	publishTrader := NewDiscardPublishLog()
-	engine := NewMatchingEngine(publishTrader)
+	engine := NewMatchingEngine("bench-engine", publishTrader)
 	marketID := "MATCH-USDT"
 	_ = engine.CreateMarket("admin", marketID, "")
 
