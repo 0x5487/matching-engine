@@ -37,7 +37,7 @@ func NewMatchingEngine(engineID string, publishTrader PublishLog) *MatchingEngin
 		engineID:      engineID,
 		orderbooks:    make(map[string]*OrderBook),
 		publishTrader: publishTrader,
-		serializer:    &protocol.DefaultJSONSerializer{},
+		serializer:    &protocol.FastBinarySerializer{},
 		responsePool: &sync.Pool{
 			New: func() any {
 				return make(chan any, 1)
@@ -228,7 +228,7 @@ func (engine *MatchingEngine) PlaceOrder(ctx context.Context, marketID string, c
 			marketID,
 			cmd.OrderID,
 		),
-		Payload:  bytes,
+		Payload: bytes,
 	}
 	return engine.EnqueueCommand(protoCmd)
 }
@@ -260,7 +260,7 @@ func (engine *MatchingEngine) PlaceOrderBatch(ctx context.Context, marketID stri
 				marketID,
 				cmd.OrderID,
 			),
-			Payload:  bytes,
+			Payload: bytes,
 		})
 	}
 
@@ -282,7 +282,7 @@ func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, c
 			marketID,
 			cmd.OrderID,
 		),
-		Payload:  bytes,
+		Payload: bytes,
 	}
 	return engine.EnqueueCommand(protoCmd)
 }
@@ -302,7 +302,7 @@ func (engine *MatchingEngine) CancelOrder(ctx context.Context, marketID string, 
 			marketID,
 			cmd.OrderID,
 		),
-		Payload:  bytes,
+		Payload: bytes,
 	}
 	return engine.EnqueueCommand(protoCmd)
 }
@@ -326,7 +326,7 @@ func (engine *MatchingEngine) CreateMarket(userID string, marketID string, minLo
 			marketID,
 			marketID,
 		),
-		Payload:  bytes,
+		Payload: bytes,
 	})
 }
 
@@ -349,7 +349,7 @@ func (engine *MatchingEngine) SuspendMarket(userID string, marketID string) erro
 			marketID,
 			marketID,
 		),
-		Payload:  bytes,
+		Payload: bytes,
 	})
 }
 
@@ -371,7 +371,7 @@ func (engine *MatchingEngine) ResumeMarket(userID string, marketID string) error
 			marketID,
 			marketID,
 		),
-		Payload:  bytes,
+		Payload: bytes,
 	})
 }
 
@@ -394,7 +394,7 @@ func (engine *MatchingEngine) UpdateConfig(userID string, marketID string, minLo
 			marketID,
 			marketID,
 		),
-		Payload:  bytes,
+		Payload: bytes,
 	})
 }
 

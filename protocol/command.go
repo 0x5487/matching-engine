@@ -1,5 +1,11 @@
 package protocol
 
+import (
+	"encoding/binary"
+	"errors"
+	"io"
+)
+
 // CommandType defines the type of the command (using uint8 for memory alignment and performance)
 type CommandType uint8
 
@@ -72,11 +78,103 @@ type PlaceOrderCommand struct {
 	Timestamp   int64     `json:"timestamp"`
 }
 
+func (c *PlaceOrderCommand) MarshalBinary(buf []byte) (int, error) {
+	offset := 0
+	/* #nosec G115 */
+	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
+	offset += 8
+	binary.BigEndian.PutUint64(buf[offset:], c.UserID)
+	offset += 8
+	/* #nosec G115 */
+	buf[offset] = uint8(c.Side)
+	offset += 1
+	buf[offset] = c.OrderType.ToUint8()
+	offset += 1
+
+	offset += writeString(buf[offset:], c.OrderID)
+	offset += writeString(buf[offset:], c.Price)
+	offset += writeString(buf[offset:], c.Size)
+	offset += writeString(buf[offset:], c.VisibleSize)
+	offset += writeString(buf[offset:], c.QuoteSize)
+
+	return offset, nil
+}
+
+func (c *PlaceOrderCommand) BinarySize() int {
+	return 8 + 8 + 1 + 1 + 2*5 + len(c.OrderID) + len(c.Price) + len(c.Size) + len(c.VisibleSize) + len(c.QuoteSize)
+}
+
+func (c *PlaceOrderCommand) UnmarshalBinary(data []byte) (int, error) {
+	if len(data) > 0 && data[0] == '{' {
+		return 0, errors.New("looks like JSON")
+	}
+	if len(data) < 18 {
+		return 0, io.ErrUnexpectedEOF
+	}
+	offset := 0
+	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:])) //nolint:gosec
+	offset += 8
+	c.UserID = binary.BigEndian.Uint64(data[offset:])
+	offset += 8
+	c.Side = Side(data[offset])
+	offset += 1
+	c.OrderType = OrderTypeFromUint8(data[offset])
+	offset += 1
+
+	var n int
+	c.OrderID, n = readString(data[offset:])
+	offset += n
+	c.Price, n = readString(data[offset:])
+	offset += n
+	c.Size, n = readString(data[offset:])
+	offset += n
+	c.VisibleSize, n = readString(data[offset:])
+	offset += n
+	c.QuoteSize, n = readString(data[offset:])
+	_ = n // ignore last assignment
+
+	return offset + n, nil
+}
+
 // CancelOrderCommand is the payload for cancelling an existing order.
 type CancelOrderCommand struct {
 	OrderID   string `json:"order_id"`
 	UserID    uint64 `json:"user_id"`
 	Timestamp int64  `json:"timestamp"`
+}
+
+func (c *CancelOrderCommand) MarshalBinary(buf []byte) (int, error) {
+	offset := 0
+	/* #nosec G115 */
+	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
+	offset += 8
+	binary.BigEndian.PutUint64(buf[offset:], c.UserID)
+	offset += 8
+	offset += writeString(buf[offset:], c.OrderID)
+	return offset, nil
+}
+
+func (c *CancelOrderCommand) BinarySize() int {
+	return 8 + 8 + 2 + len(c.OrderID)
+}
+
+func (c *CancelOrderCommand) UnmarshalBinary(data []byte) (int, error) {
+	if len(data) > 0 && data[0] == '{' {
+		return 0, errors.New("looks like JSON")
+	}
+	if len(data) < 16 {
+		return 0, io.ErrUnexpectedEOF
+	}
+	offset := 0
+	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:])) //nolint:gosec
+	offset += 8
+	c.UserID = binary.BigEndian.Uint64(data[offset:])
+	offset += 8
+	var n int
+	c.OrderID, n = readString(data[offset:])
+	_ = n
+
+	return offset + n, nil
 }
 
 // AmendOrderCommand is the payload for modifying an existing order.
@@ -86,6 +184,65 @@ type AmendOrderCommand struct {
 	NewPrice  string `json:"new_price"`
 	NewSize   string `json:"new_size"`
 	Timestamp int64  `json:"timestamp"`
+}
+
+func (c *AmendOrderCommand) MarshalBinary(buf []byte) (int, error) {
+	offset := 0
+	/* #nosec G115 */
+	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
+	offset += 8
+	binary.BigEndian.PutUint64(buf[offset:], c.UserID)
+	offset += 8
+	offset += writeString(buf[offset:], c.OrderID)
+	offset += writeString(buf[offset:], c.NewPrice)
+	offset += writeString(buf[offset:], c.NewSize)
+	return offset, nil
+}
+
+func (c *AmendOrderCommand) BinarySize() int {
+	return 8 + 8 + 2*3 + len(c.OrderID) + len(c.NewPrice) + len(c.NewSize)
+}
+
+func (c *AmendOrderCommand) UnmarshalBinary(data []byte) (int, error) {
+	if len(data) > 0 && data[0] == '{' {
+		return 0, errors.New("looks like JSON")
+	}
+	if len(data) < 16 {
+		return 0, io.ErrUnexpectedEOF
+	}
+	offset := 0
+	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:])) //nolint:gosec
+	offset += 8
+	c.UserID = binary.BigEndian.Uint64(data[offset:])
+	offset += 8
+	var n int
+	c.OrderID, n = readString(data[offset:])
+	offset += n
+	c.NewPrice, n = readString(data[offset:])
+	offset += n
+	c.NewSize, n = readString(data[offset:])
+	_ = n
+
+	return offset + n, nil
+}
+
+func writeString(buf []byte, s string) int {
+	l := len(s)
+	/* #nosec G115 */
+	binary.BigEndian.PutUint16(buf, uint16(l))
+	copy(buf[2:], s)
+	return 2 + l
+}
+
+func readString(data []byte) (string, int) {
+	if len(data) < 2 {
+		return "", 0
+	}
+	l := int(binary.BigEndian.Uint16(data))
+	if len(data) < 2+l {
+		return "", 0
+	}
+	return string(data[2 : 2+l]), 2 + l
 }
 
 // GetDepthRequest is the payload for querying order book depth.

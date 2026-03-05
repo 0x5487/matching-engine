@@ -88,7 +88,7 @@ func newOrderBook(engineID string, marketID string, publishTrader PublishLog, op
 	}
 
 	if book.serializer == nil {
-		book.serializer = &protocol.DefaultJSONSerializer{}
+		book.serializer = &protocol.FastBinarySerializer{}
 	}
 
 	// Explicitly set initial state (Review 8.4.3)

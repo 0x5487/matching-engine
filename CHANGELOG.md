@@ -16,7 +16,8 @@
 - feature: add `UserEventCommand` to support generic user events (e.g., EndOfBlock, Audit).
 - feat: add `PlaceOrderBatch` command to place multiple orders at once.
 - refactor: add `EngineID` and `CommandID` to `MatchingEngine` and `OrderBook` to support multiple engines.
-
+- feat: optimize high-frequency commands (`PlaceOrder`, `CancelOrder`, `AmendOrder`) with manual binary serialization (BigEndian, 17x speedup, zero-allocation).
+- feat: add `FastBinarySerializer` with automatic JSON fallback for legacy compatibility and admin commands.
 ## v0.7.0 (2025-12-14)
 
 - **breaking**: replace `OrderBookID` with `SequenceID` in `BookLog`. All events now have a globally increasing `SequenceID` for ordering, deduplication, and rebuild synchronization. Use `LogType` to determine if the event affects order book state.

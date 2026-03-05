@@ -1,5 +1,69 @@
 package protocol
 
+import (
+	"github.com/bytedance/sonic"
+)
+
+// Serializer defines the contract for serializing and deserializing command payloads.
+type Serializer interface {
+	Marshal(v any) ([]byte, error)
+	Unmarshal(data []byte, v any) error
+}
+
+// DefaultJSONSerializer is a high-performance JSON serializer using the sonic library.
+type DefaultJSONSerializer struct{}
+
+func (s *DefaultJSONSerializer) Marshal(v any) ([]byte, error) {
+	return sonic.Marshal(v)
+}
+
+func (s *DefaultJSONSerializer) Unmarshal(data []byte, v any) error {
+	return sonic.Unmarshal(data, v)
+}
+
+// FastBinarySerializer implements the Serializer interface, prioritizing
+// manual binary serialization for supported types with a JSON fallback.
+type FastBinarySerializer struct {
+	json DefaultJSONSerializer
+}
+
+func (s *FastBinarySerializer) Marshal(v any) ([]byte, error) {
+	if marshaler, ok := v.(FastBinaryMarshaler); ok {
+		size := marshaler.BinarySize()
+		buf := make([]byte, size)
+		n, err := marshaler.MarshalBinary(buf)
+		if err != nil {
+			return nil, err
+		}
+		return buf[:n], nil
+	}
+	return s.json.Marshal(v)
+}
+
+func (s *FastBinarySerializer) Unmarshal(data []byte, v any) error {
+	if unmarshaler, ok := v.(FastBinaryUnmarshaler); ok {
+		_, err := unmarshaler.UnmarshalBinary(data)
+		if err == nil {
+			return nil
+		}
+	}
+	// Fallback to JSON if binary fails (e.g. for legacy JSON payloads in tests)
+	return s.json.Unmarshal(data, v)
+}
+
+// FastBinaryMarshaler is implemented by types that can serialize themselves
+// into a binary format efficiently.
+type FastBinaryMarshaler interface {
+	MarshalBinary(buf []byte) (int, error)
+	BinarySize() int
+}
+
+// FastBinaryUnmarshaler is implemented by types that can deserialize themselves
+// from a binary format efficiently.
+type FastBinaryUnmarshaler interface {
+	UnmarshalBinary(data []byte) (int, error)
+}
+
 type DepthItem struct {
 	Price string `json:"price"`
 	Size  string `json:"size"`
@@ -40,6 +104,54 @@ const (
 	OrderTypePostOnly OrderType = "post_only" // Maker only
 	OrderTypeCancel   OrderType = "cancel"    // The order has been canceled
 )
+
+const (
+	OrderTypeUnknownUint8 uint8 = 0
+	OrderTypeMarketUint8  uint8 = 1
+	OrderTypeLimitUint8   uint8 = 2
+	OrderTypeFOKUint8     uint8 = 3
+	OrderTypeIOCUint8     uint8 = 4
+	OrderTypePostUint8    uint8 = 5
+	OrderTypeCancelUint8  uint8 = 6
+)
+
+func (ot OrderType) ToUint8() uint8 {
+	switch ot {
+	case OrderTypeMarket:
+		return OrderTypeMarketUint8
+	case OrderTypeLimit:
+		return OrderTypeLimitUint8
+	case OrderTypeFOK:
+		return OrderTypeFOKUint8
+	case OrderTypeIOC:
+		return OrderTypeIOCUint8
+	case OrderTypePostOnly:
+		return OrderTypePostUint8
+	case OrderTypeCancel:
+		return OrderTypeCancelUint8
+	default:
+		return OrderTypeUnknownUint8
+	}
+}
+
+func OrderTypeFromUint8(v uint8) OrderType {
+	switch v {
+	case OrderTypeMarketUint8:
+		return OrderTypeMarket
+	case OrderTypeLimitUint8:
+		return OrderTypeLimit
+	case OrderTypeFOKUint8:
+		return OrderTypeFOK
+	case OrderTypeIOCUint8:
+		return OrderTypeIOC
+	case OrderTypePostUint8:
+		return OrderTypePostOnly
+	case OrderTypeCancelUint8:
+		return OrderTypeCancel
+	default:
+		return OrderTypeLimit // Default to limit
+	}
+}
 
 // LogType represents the type of event log.
 type LogType string
