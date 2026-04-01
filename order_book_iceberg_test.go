@@ -4,9 +4,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0x5487/matching-engine/protocol"
 	"github.com/quagmt/udecimal"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/0x5487/matching-engine/protocol"
+)
+
+const (
+	orderIDIceberg = "ice-1"
 )
 
 func TestIceberg_Placement(t *testing.T) {
@@ -15,7 +20,7 @@ func TestIceberg_Placement(t *testing.T) {
 
 	// Iceberg: Total 100, Visible 10
 	testPlace(orderBook, &protocol.PlaceOrderCommand{
-		OrderID:     "ice-1",
+		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Buy,
 		Size:        "100",
@@ -38,7 +43,7 @@ func TestIceberg_Replenishment(t *testing.T) {
 
 	// 1. Place Iceberg: Total 100, Visible 10
 	testPlace(orderBook, &protocol.PlaceOrderCommand{
-		OrderID:     "ice-1",
+		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
 		Size:        "100",
@@ -69,11 +74,11 @@ func TestIceberg_Replenishment(t *testing.T) {
 	matchFound := false
 	openFound := false
 	for _, l := range logs {
-		if l.Type == protocol.LogTypeMatch && l.MakerOrderID == "ice-1" {
+		if l.Type == protocol.LogTypeMatch && l.MakerOrderID == orderIDIceberg {
 			matchFound = true
 			assert.Equal(t, "10", l.Size.String())
 		}
-		if l.Type == protocol.LogTypeOpen && l.OrderID == "ice-1" {
+		if l.Type == protocol.LogTypeOpen && l.OrderID == orderIDIceberg {
 			openFound = true
 			assert.Equal(t, "10", l.Size.String())
 		}
@@ -90,7 +95,7 @@ func TestIceberg_ReplenishmentPriority(t *testing.T) {
 
 	// 1. Place Iceberg: Total 100, Visible 10 @ 100
 	testPlace(orderBook, &protocol.PlaceOrderCommand{
-		OrderID:     "ice-1",
+		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
 		Size:        "100",
@@ -156,7 +161,7 @@ func TestIceberg_Amend(t *testing.T) {
 
 	// 1. Iceberg: Total 100, Visible 10 @ 100
 	testPlace(orderBook, &protocol.PlaceOrderCommand{
-		OrderID:     "ice-1",
+		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
 		Size:        "100",
@@ -179,7 +184,7 @@ func TestIceberg_Amend(t *testing.T) {
 
 	// 3. Amend Iceberg: Decrease total to 50
 	testAmend(orderBook, &protocol.AmendOrderCommand{
-		OrderID:   "ice-1",
+		OrderID:   orderIDIceberg,
 		UserID:    101,
 		NewPrice:  "100",
 		NewSize:   "50",
@@ -200,7 +205,7 @@ func TestIceberg_Amend(t *testing.T) {
 	logs := publishTrader.Logs()
 	matchedWithIce := false
 	for _, l := range logs {
-		if l.Type == protocol.LogTypeMatch && l.MakerOrderID == "ice-1" && l.OrderID == "taker-1" {
+		if l.Type == protocol.LogTypeMatch && l.MakerOrderID == orderIDIceberg && l.OrderID == "taker-1" {
 			matchedWithIce = true
 		}
 	}
@@ -208,7 +213,7 @@ func TestIceberg_Amend(t *testing.T) {
 
 	// 4. Amend Iceberg: Increase total to 200
 	testAmend(orderBook, &protocol.AmendOrderCommand{
-		OrderID:   "ice-1",
+		OrderID:   orderIDIceberg,
 		UserID:    101,
 		NewPrice:  "100",
 		NewSize:   "200",
@@ -245,7 +250,7 @@ func TestIceberg_PartialFillNoReplenish(t *testing.T) {
 
 	// 1. Place Iceberg: Total 60, Visible 10, Hidden 50
 	testPlace(orderBook, &protocol.PlaceOrderCommand{
-		OrderID:     "ice-1",
+		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
 		Size:        "60",
@@ -279,7 +284,7 @@ func TestIceberg_PartialFillNoReplenish(t *testing.T) {
 	logs := publishTrader.Logs()
 	replenishCount := 0
 	for _, l := range logs {
-		if l.Type == protocol.LogTypeOpen && l.OrderID == "ice-1" {
+		if l.Type == protocol.LogTypeOpen && l.OrderID == orderIDIceberg {
 			replenishCount++
 		}
 	}
@@ -294,14 +299,14 @@ func TestIceberg_TakerAggressiveMatch(t *testing.T) {
 	ts := time.Now().UnixNano()
 
 	// 1. Place multiple Sell orders as liquidity
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		testPlace(orderBook, &protocol.PlaceOrderCommand{
 			OrderID:   "sell-" + string(rune('A'+i)),
 			OrderType: Limit,
 			Side:      Sell,
 			Size:      "20",
 			Price:     "100",
-			UserID:    uint64(100 + i),
+			UserID:    uint64(100 + i), //nolint:gosec // G115: test code
 			Timestamp: ts + int64(i),
 		})
 	}
@@ -350,7 +355,7 @@ func TestIceberg_SnapshotRestore(t *testing.T) {
 
 	// 1. Place Iceberg: Total 100, Visible 10
 	testPlace(orderBook, &protocol.PlaceOrderCommand{
-		OrderID:     "ice-1",
+		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
 		Size:        "100",
@@ -370,7 +375,7 @@ func TestIceberg_SnapshotRestore(t *testing.T) {
 	// Verify snapshot contains the iceberg order with correct fields
 	assert.Len(t, snapshot.Asks, 1)
 	iceOrder := snapshot.Asks[0]
-	assert.Equal(t, "ice-1", iceOrder.ID)
+	assert.Equal(t, orderIDIceberg, iceOrder.ID)
 	assert.Equal(t, "10", iceOrder.Size.String(), "Visible size should be 10")
 	assert.Equal(t, "90", iceOrder.HiddenSize.String(), "Hidden size should be 90")
 	assert.Equal(t, "10", iceOrder.VisibleLimit.String(), "VisibleLimit should be 10")
@@ -406,10 +411,10 @@ func TestIceberg_SnapshotRestore(t *testing.T) {
 	matchFound := false
 	replenishFound := false
 	for _, l := range logs {
-		if l.Type == protocol.LogTypeMatch && l.MakerOrderID == "ice-1" {
+		if l.Type == protocol.LogTypeMatch && l.MakerOrderID == orderIDIceberg {
 			matchFound = true
 		}
-		if l.Type == protocol.LogTypeOpen && l.OrderID == "ice-1" {
+		if l.Type == protocol.LogTypeOpen && l.OrderID == orderIDIceberg {
 			replenishFound = true
 		}
 	}

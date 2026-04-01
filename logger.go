@@ -7,7 +7,7 @@ import (
 
 var logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-// SetLogger allows setting a custom logger
+// SetLogger allows setting a custom logger.
 func SetLogger(l *slog.Logger) {
 	logger = l
 }

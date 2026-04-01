@@ -5,8 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0x5487/matching-engine/protocol"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/0x5487/matching-engine/protocol"
 )
 
 func TestUserEvent_GenericPayload(t *testing.T) {
@@ -16,7 +18,7 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 	ctx := context.Background()
 
 	err := engine.CreateMarket("admin", marketID, "1.0")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	go engine.Run()
 
@@ -29,12 +31,12 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 		Size:      "1",
 		UserID:    1,
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// 2. Send User Event (e.g. EndOfBlock)
 	eventData := []byte("block-hash-0x123456")
 	err = engine.SendUserEvent(999, "EndOfBlock", "blk-1", eventData)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// 3. Place Another Order
 	err = engine.PlaceOrder(ctx, marketID, &protocol.PlaceOrderCommand{
@@ -45,7 +47,7 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 		Size:      "1",
 		UserID:    2,
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// 4. Verify Log Order: Order-1 -> UserEvent -> Order-2
 	assert.Eventually(t, func() bool {
@@ -57,9 +59,10 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 		// Find indices
 		idx1, idxEvent, idx2 := -1, -1, -1
 		for i, l := range logs {
-			if l.OrderID == "order-1" {
+			switch {
+			case l.OrderID == "order-1":
 				idx1 = i
-			} else if l.Type == protocol.LogTypeUser && l.EventType == "EndOfBlock" {
+			case l.Type == protocol.LogTypeUser && l.EventType == "EndOfBlock":
 				idxEvent = i
 				// Verify Payload
 				if string(l.Data) != "block-hash-0x123456" {
@@ -68,8 +71,10 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 				if l.UserID != 999 {
 					return false
 				}
-			} else if l.OrderID == "order-2" {
+			case l.OrderID == "order-2":
 				idx2 = i
+			default:
+				// other logs
 			}
 		}
 

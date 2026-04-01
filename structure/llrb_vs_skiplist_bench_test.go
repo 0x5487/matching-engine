@@ -19,14 +19,13 @@ const benchSize = 1000 // Simulating 1000 price levels
 
 func BenchmarkCompare_Insert_LLRB(b *testing.B) {
 	prices := make([]udecimal.Decimal, benchSize)
-	for i := 0; i < benchSize; i++ {
+	for i := range benchSize {
 		prices[i] = udecimal.MustFromInt64(int64(i), 0)
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		tree := NewPriceLevelTree(int32(benchSize + 100))
 		for _, p := range prices {
 			tree.Insert(p)
@@ -38,16 +37,15 @@ func BenchmarkCompare_Insert_LLRB(b *testing.B) {
 
 func BenchmarkCompare_Search_LLRB(b *testing.B) {
 	tree := NewPriceLevelTree(int32(benchSize + 100))
-	for i := 0; i < benchSize; i++ {
+	for i := range benchSize {
 		tree.Insert(udecimal.MustFromInt64(int64(i), 0))
 	}
 
 	target := udecimal.MustFromInt64(500, 0)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		tree.Contains(target)
 	}
 }
@@ -56,14 +54,13 @@ func BenchmarkCompare_Search_LLRB(b *testing.B) {
 
 func BenchmarkCompare_Delete_LLRB(b *testing.B) {
 	prices := make([]udecimal.Decimal, benchSize)
-	for i := 0; i < benchSize; i++ {
+	for i := range benchSize {
 		prices[i] = udecimal.MustFromInt64(int64(i), 0)
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		b.StopTimer()
 		tree := NewPriceLevelTree(int32(benchSize + 100))
 		for _, p := range prices {
@@ -72,7 +69,7 @@ func BenchmarkCompare_Delete_LLRB(b *testing.B) {
 		b.StartTimer()
 
 		// Delete half the elements (simulating partial execution)
-		for j := 0; j < benchSize/2; j++ {
+		for j := range benchSize / 2 {
 			tree.Delete(prices[j])
 		}
 	}
@@ -82,14 +79,13 @@ func BenchmarkCompare_Delete_LLRB(b *testing.B) {
 
 func BenchmarkCompare_DeleteMin_LLRB(b *testing.B) {
 	prices := make([]udecimal.Decimal, benchSize)
-	for i := 0; i < benchSize; i++ {
+	for i := range benchSize {
 		prices[i] = udecimal.MustFromInt64(int64(i), 0)
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		b.StopTimer()
 		tree := NewPriceLevelTree(int32(benchSize + 100))
 		for _, p := range prices {
@@ -110,14 +106,13 @@ func BenchmarkCompare_DeleteMin_LLRB(b *testing.B) {
 func BenchmarkCompare_MixedWorkload_LLRB(b *testing.B) {
 	// Pre-compute prices
 	prices := make([]udecimal.Decimal, benchSize)
-	for i := 0; i < benchSize; i++ {
+	for i := range benchSize {
 		prices[i] = udecimal.MustFromInt64(int64(i), 0)
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		tree := NewPriceLevelTree(int32(benchSize + 100))
 
 		// Phase 1: Build order book (insert all)
@@ -126,7 +121,7 @@ func BenchmarkCompare_MixedWorkload_LLRB(b *testing.B) {
 		}
 
 		// Phase 2: Matching simulation (search + deleteMin cycle)
-		for j := 0; j < 100; j++ {
+		for j := range 100 {
 			tree.Contains(prices[j%benchSize])
 			if tree.Count() > 0 {
 				tree.DeleteMin()
@@ -144,14 +139,13 @@ func BenchmarkCompare_MixedWorkload_LLRB(b *testing.B) {
 
 func BenchmarkCompare_Insert_PooledSkiplist(b *testing.B) {
 	prices := make([]udecimal.Decimal, benchSize)
-	for i := 0; i < benchSize; i++ {
+	for i := range benchSize {
 		prices[i] = udecimal.MustFromInt64(int64(i), 0)
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		sl := NewPooledSkiplist(int32(benchSize+100), int64(i))
 		for _, p := range prices {
 			sl.MustInsert(p)
@@ -161,30 +155,28 @@ func BenchmarkCompare_Insert_PooledSkiplist(b *testing.B) {
 
 func BenchmarkCompare_Search_PooledSkiplist(b *testing.B) {
 	sl := NewPooledSkiplist(int32(benchSize+100), 42)
-	for i := 0; i < benchSize; i++ {
-		sl.Insert(udecimal.MustFromInt64(int64(i), 0))
+	for i := range benchSize {
+		_, _ = sl.Insert(udecimal.MustFromInt64(int64(i), 0))
 	}
 
 	target := udecimal.MustFromInt64(500, 0)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sl.Contains(target)
 	}
 }
 
 func BenchmarkCompare_Delete_PooledSkiplist(b *testing.B) {
 	prices := make([]udecimal.Decimal, benchSize)
-	for i := 0; i < benchSize; i++ {
+	for i := range benchSize {
 		prices[i] = udecimal.MustFromInt64(int64(i), 0)
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		b.StopTimer()
 		sl := NewPooledSkiplist(int32(benchSize+100), int64(i))
 		for _, p := range prices {
@@ -192,7 +184,7 @@ func BenchmarkCompare_Delete_PooledSkiplist(b *testing.B) {
 		}
 		b.StartTimer()
 
-		for j := 0; j < benchSize/2; j++ {
+		for j := range benchSize / 2 {
 			sl.Delete(prices[j])
 		}
 	}
@@ -200,13 +192,13 @@ func BenchmarkCompare_Delete_PooledSkiplist(b *testing.B) {
 
 func BenchmarkCompare_DeleteMin_PooledSkiplist(b *testing.B) {
 	prices := make([]udecimal.Decimal, benchSize)
-	for i := 0; i < benchSize; i++ {
+	for i := range benchSize {
 		prices[i] = udecimal.MustFromInt64(int64(i), 0)
 	}
 
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		b.StopTimer()
 		sl := NewPooledSkiplist(int32(benchSize+100), int64(i))
 		for _, p := range prices {
@@ -222,14 +214,13 @@ func BenchmarkCompare_DeleteMin_PooledSkiplist(b *testing.B) {
 
 func BenchmarkCompare_MixedWorkload_PooledSkiplist(b *testing.B) {
 	prices := make([]udecimal.Decimal, benchSize)
-	for i := 0; i < benchSize; i++ {
+	for i := range benchSize {
 		prices[i] = udecimal.MustFromInt64(int64(i), 0)
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		sl := NewPooledSkiplist(int32(benchSize+100), int64(i))
 
 		// Phase 1: Build order book (insert all)
@@ -238,7 +229,7 @@ func BenchmarkCompare_MixedWorkload_PooledSkiplist(b *testing.B) {
 		}
 
 		// Phase 2: Matching simulation (search + deleteMin cycle)
-		for j := 0; j < 100; j++ {
+		for j := range 100 {
 			sl.Contains(prices[j%benchSize])
 			if sl.Count() > 0 {
 				sl.DeleteMin()

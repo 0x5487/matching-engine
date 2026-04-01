@@ -8,9 +8,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/0x5487/matching-engine/protocol"
 	"github.com/quagmt/udecimal"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/0x5487/matching-engine/protocol"
+)
+
+const (
+	marketBTC = "BTC-USDT"
+	marketETH = "ETH-USDT"
+
+	testEngineID = "corr-engine"
 )
 
 func TestMatchingEngine(t *testing.T) {
@@ -21,14 +30,14 @@ func TestMatchingEngine(t *testing.T) {
 		ctx := context.Background()
 
 		// market1
-		market1 := "BTC-USDT"
+		market1 := marketBTC
 		err := engine.CreateMarket("admin", market1, "")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		// market2
-		market2 := "ETH-USDT"
+		market2 := marketETH
 		err = engine.CreateMarket("admin", market2, "")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		// Start engine event loop
 		go engine.Run()
@@ -42,10 +51,11 @@ func TestMatchingEngine(t *testing.T) {
 		}
 
 		err = engine.PlaceOrder(ctx, market1, order1)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
-			stats, err := engine.GetStats(market1)
+			var stats *protocol.GetStatsResponse
+			stats, err = engine.GetStats(market1)
 			return err == nil && stats.BidOrderCount == 1
 		}, 1*time.Second, 10*time.Millisecond)
 
@@ -58,7 +68,7 @@ func TestMatchingEngine(t *testing.T) {
 		}
 
 		err = engine.PlaceOrder(ctx, market2, order2)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
 			stats, err := engine.GetStats(market2)
@@ -74,9 +84,9 @@ func TestMatchingEngine(t *testing.T) {
 
 		ctx := context.Background()
 
-		market1 := "BTC-USDT"
+		market1 := marketBTC
 		err := engine.CreateMarket("admin", market1, "")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		// Start engine event loop
 		go engine.Run()
@@ -91,16 +101,21 @@ func TestMatchingEngine(t *testing.T) {
 		}
 
 		err = engine.PlaceOrder(ctx, market1, order1)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		// Wait for order to be in book
 		assert.Eventually(t, func() bool {
-			stats, err := engine.GetStats(market1)
+			var stats *protocol.GetStatsResponse
+			stats, err = engine.GetStats(market1)
 			return err == nil && stats.BidOrderCount == 1
 		}, 1*time.Second, 10*time.Millisecond)
 
-		err = engine.CancelOrder(ctx, market1, &protocol.CancelOrderCommand{OrderID: order1.OrderID, UserID: order1.UserID})
-		assert.NoError(t, err)
+		err = engine.CancelOrder(
+			ctx,
+			market1,
+			&protocol.CancelOrderCommand{OrderID: order1.OrderID, UserID: order1.UserID},
+		)
+		require.NoError(t, err)
 
 		// validate
 		assert.Eventually(t, func() bool {
@@ -125,7 +140,7 @@ func TestMatchingEngine(t *testing.T) {
 		// since the market doesn't exist.
 		ctx := context.Background()
 		err := engine.PlaceOrder(ctx, market, &protocol.PlaceOrderCommand{OrderID: "o1"})
-		assert.NoError(t, err) // Enqueue succeeds
+		require.NoError(t, err) // Enqueue succeeds
 
 		// Get OrderBook
 		book := engine.orderbooks[market]
@@ -138,11 +153,11 @@ func TestMatchingEngine(t *testing.T) {
 func TestCommandAndEngineIDPropagation(t *testing.T) {
 	ctx := context.Background()
 	publishTrader := NewMemoryPublishLog()
-	engine := NewMatchingEngine("corr-engine", publishTrader)
-	marketID := "BTC-USDT"
+	engine := NewMatchingEngine(testEngineID, publishTrader)
+	marketID := marketBTC
 
 	err := engine.CreateMarket("admin", marketID, "")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	go engine.Run()
 
@@ -155,12 +170,12 @@ func TestCommandAndEngineIDPropagation(t *testing.T) {
 		Size:      "1",
 		UserID:    1,
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
 		for _, log := range publishTrader.Logs() {
 			if log.OrderID == "single-oid" && log.Type == protocol.LogTypeOpen {
-				return log.CommandID == "single-oid" && log.EngineID == "corr-engine"
+				return log.CommandID == "single-oid" && log.EngineID == testEngineID
 			}
 		}
 		return false
@@ -185,17 +200,17 @@ func TestCommandAndEngineIDPropagation(t *testing.T) {
 			UserID:    3,
 		},
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
 		found1 := false
 		found2 := false
 		for _, log := range publishTrader.Logs() {
 			if log.OrderID == "batch-oid-1" && log.Type == protocol.LogTypeOpen {
-				found1 = log.CommandID == "batch-oid-1" && log.EngineID == "corr-engine"
+				found1 = log.CommandID == "batch-oid-1" && log.EngineID == testEngineID
 			}
 			if log.OrderID == "batch-oid-2" && log.Type == protocol.LogTypeOpen {
-				found2 = log.CommandID == "batch-oid-2" && log.EngineID == "corr-engine"
+				found2 = log.CommandID == "batch-oid-2" && log.EngineID == testEngineID
 			}
 		}
 		return found1 && found2
@@ -215,7 +230,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		markets := []string{"BTC-USDT", "ETH-USDT", "SOL-USDT"}
 		for _, market := range markets {
 			err := engine.CreateMarket("admin", market, "")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 
 		// Start engine event loop
@@ -230,12 +245,12 @@ func TestMatchingEngineShutdown(t *testing.T) {
 				Size:      udecimal.MustFromInt64(1, 0).String(),
 			}
 			err := engine.PlaceOrder(ctx, market, order)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 
 		// Shutdown should complete successfully
 		err := engine.Shutdown(ctx)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		// After shutdown, adding orders should return ErrShutdown
 		order := &protocol.PlaceOrderCommand{
@@ -257,7 +272,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 
 		// Create one market first
 		err := engine.CreateMarket("admin", "BTC-USDT", "")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		// Start engine event loop
 		go engine.Run()
@@ -270,11 +285,11 @@ func TestMatchingEngineShutdown(t *testing.T) {
 			Size:      udecimal.MustFromInt64(1, 0).String(),
 		}
 		err = engine.PlaceOrder(ctx, "BTC-USDT", order)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		// Shutdown
 		err = engine.Shutdown(ctx)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		// Try to create a new market after shutdown - should return ErrShutdown
 		newMarketOrder := &protocol.PlaceOrderCommand{
@@ -300,7 +315,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 
 		// Create an order to ensure at least one market exists
 		err := engine.CreateMarket("admin", "BTC-USDT", "")
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		// Start engine event loop
 		go engine.Run()
@@ -313,35 +328,33 @@ func TestMatchingEngineShutdown(t *testing.T) {
 			Size:      udecimal.MustFromInt64(1, 0).String(),
 		}
 		err = engine.PlaceOrder(ctx, "BTC-USDT", order)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		// Shutdown with a reasonable timeout should succeed
 		timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		err = engine.Shutdown(timeoutCtx)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	})
 }
 
 func TestEngineSnapshotRestore(t *testing.T) {
 	// Setup temporary directory for snapshots
-	tmpDir, err := os.MkdirTemp("", "snapshot_test")
-	assert.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	ctx := context.Background()
 	publishTrader := NewMemoryPublishLog()
 	engine := NewMatchingEngine("test-engine", publishTrader)
 
 	// 1. Setup State: Create 2 OrderBooks with Orders
-	market1 := "BTC-USDT"
+	market1 := marketBTC
 	market2 := "ETH-USDT"
 
-	err = engine.CreateMarket("admin", market1, "")
-	assert.NoError(t, err)
+	err := engine.CreateMarket("admin", market1, "")
+	require.NoError(t, err)
 	err = engine.CreateMarket("admin", market2, "")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Start engine event loop
 	go engine.Run()
@@ -355,7 +368,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 		Size:      udecimal.MustFromInt64(1, 0).String(),
 		UserID:    uint64(1),
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Add orders to Market 2
 	err = engine.PlaceOrder(ctx, market2, &protocol.PlaceOrderCommand{
@@ -366,7 +379,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 		Size:      udecimal.MustFromInt64(10, 0).String(),
 		UserID:    uint64(2),
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Wait for processing
 	assert.Eventually(t, func() bool {
@@ -378,7 +391,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 
 	// 2. Take Snapshot
 	meta, err := engine.TakeSnapshot(tmpDir)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, meta)
 	assert.NotZero(t, meta.Timestamp)
 
@@ -387,11 +400,11 @@ func TestEngineSnapshotRestore(t *testing.T) {
 	assert.FileExists(t, filepath.Join(tmpDir, "metadata.json"))
 
 	// Verify Metadata Content
-	metaContent, err := os.ReadFile(filepath.Join(tmpDir, "metadata.json"))
-	assert.NoError(t, err)
+	metaContent, err := os.ReadFile(filepath.Join(tmpDir, "metadata.json")) //nolint:gosec // G304: test code
+	require.NoError(t, err)
 	var readMeta SnapshotMetadata
 	err = json.Unmarshal(metaContent, &readMeta)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, meta.Timestamp, readMeta.Timestamp)
 
 	_ = engine.Shutdown(ctx)
@@ -401,7 +414,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 	newEngine := NewMatchingEngine("test-engine-restored", newPublishTrader)
 
 	restoredMeta, err := newEngine.RestoreFromSnapshot(tmpDir)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, restoredMeta)
 	assert.Equal(t, meta.GlobalLastCmdSeqID, restoredMeta.GlobalLastCmdSeqID)
 
@@ -426,7 +439,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 		Size:      udecimal.MustFromInt64(1, 0).String(),
 		UserID:    uint64(3),
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Should match btc-buy-1
 	assert.Eventually(t, func() bool {
@@ -448,11 +461,11 @@ func TestManagement_CreateMarket(t *testing.T) {
 	// 1. Create Market via Command
 	// MinLotSize: 0.01
 	err := engine.CreateMarket("admin", marketID, "0.01")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Verify OrderBook existence (CreateMarket is asynchronous)
 	assert.Eventually(t, func() bool {
-		_, err := engine.GetStats(marketID)
+		_, err = engine.GetStats(marketID)
 		return err == nil
 	}, 1*time.Second, 10*time.Millisecond)
 
@@ -468,7 +481,7 @@ func TestManagement_CreateMarket(t *testing.T) {
 	}
 
 	err = engine.PlaceOrder(ctx, marketID, smallOrder)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	_ = engine.Shutdown(ctx)
 }
@@ -480,7 +493,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 	ctx := context.Background()
 
 	err := engine.CreateMarket("admin", marketID, "0.0001")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Start engine event loop
 	go engine.Run()
@@ -495,17 +508,18 @@ func TestManagement_SuspendResume(t *testing.T) {
 		UserID:    uint64(1),
 	}
 	err = engine.PlaceOrder(ctx, marketID, order1)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Wait for Order-1
 	assert.Eventually(t, func() bool {
-		stats, err := engine.GetStats(marketID)
+		var stats *protocol.GetStatsResponse
+		stats, err = engine.GetStats(marketID)
 		return err == nil && stats.BidOrderCount == 1
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 2. Suspend Market
 	err = engine.SuspendMarket("admin", marketID)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Give time for suspend command to process
 	time.Sleep(50 * time.Millisecond)
@@ -520,7 +534,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 		UserID:    uint64(2),
 	}
 	err = engine.PlaceOrder(ctx, marketID, order2)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Verify Reject Log for MarketSuspended
 	assert.Eventually(t, func() bool {
@@ -541,7 +555,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 		OrderID: order1.OrderID,
 		UserID:  order1.UserID,
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Verify Cancel Log
 	assert.Eventually(t, func() bool {
@@ -556,7 +570,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 	// 5. Resume Market
 	err = engine.ResumeMarket("admin", marketID)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
 
 	// 6. Place Order (Should Succeed again)
@@ -569,7 +583,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 		UserID:    uint64(3),
 	}
 	err = engine.PlaceOrder(ctx, marketID, order3)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
 		stats, err := engine.GetStats(marketID)
@@ -581,29 +595,27 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 func TestManagement_SnapshotRestore(t *testing.T) {
 	// Setup temporary directory for snapshots
-	tmpDir, err := os.MkdirTemp("", "snapshot_mgmt_test")
-	assert.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	publish := NewMemoryPublishLog()
 	engine := NewMatchingEngine("test-engine", publish)
 	marketID := "SUSPENDED-MARKET"
 
 	// 1. Create Market with specific LotSize
-	err = engine.CreateMarket("admin", marketID, "0.1")
-	assert.NoError(t, err)
+	err := engine.CreateMarket("admin", marketID, "0.1")
+	require.NoError(t, err)
 
 	// Start engine event loop
 	go engine.Run()
 
 	// 2. Suspend Market
 	err = engine.SuspendMarket("admin", marketID)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	time.Sleep(50 * time.Millisecond) // Wait for processing
 
 	// 3. Take Snapshot
 	meta, err := engine.TakeSnapshot(tmpDir)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, meta)
 
 	_ = engine.Shutdown(context.Background())
@@ -612,7 +624,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	newPublish := NewMemoryPublishLog()
 	newEngine := NewMatchingEngine("test-engine-restored", newPublish)
 	_, err = newEngine.RestoreFromSnapshot(tmpDir)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Start new engine event loop
 	go newEngine.Run()
@@ -628,7 +640,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 		UserID:    uint64(1),
 	}
 	err = newEngine.PlaceOrder(ctx, marketID, order)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
 		logs := newPublish.Logs()
@@ -644,7 +656,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 
 	// 6. Resume
 	err = newEngine.ResumeMarket("admin", marketID)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
 
 	// 7. Test resumed functionality
@@ -657,7 +669,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 		UserID:    uint64(2),
 	}
 	err = newEngine.PlaceOrder(ctx, marketID, order2)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
 		stats, err := newEngine.GetStats(marketID)
@@ -673,14 +685,14 @@ func TestManagement_UpdateConfig(t *testing.T) {
 	marketID := "CONFIG-TEST"
 
 	err := engine.CreateMarket("admin", marketID, "1.0")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Start engine event loop
 	go engine.Run()
 
 	// 1. Update MinLotSize
 	err = engine.UpdateConfig("admin", marketID, "0.1")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Wait for async processing
 	time.Sleep(50 * time.Millisecond)
@@ -706,11 +718,11 @@ func TestManagement_UpdateConfig(t *testing.T) {
 		Size:      "10",
 		UserID:    uint64(2),
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
 
 	err = engine.PlaceOrder(ctx, marketID, order)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
 		logs := publish.Logs()

@@ -2,15 +2,15 @@ package match
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"runtime"
 	"strconv"
 	"testing"
 	"time"
 
-	"github.com/0x5487/matching-engine/protocol"
 	"github.com/quagmt/udecimal"
+
+	"github.com/0x5487/matching-engine/protocol"
 )
 
 func BenchmarkPlaceOrders(b *testing.B) {
@@ -21,21 +21,21 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	publishTrader := NewDiscardPublishLog()
 	engine := NewMatchingEngine("bench-engine", publishTrader)
 
-	marketID := "BTC-USDT"
+	marketID := marketBTC
 	_ = engine.CreateMarket("admin", marketID, "")
 
 	// Start engine event loop
 	go engine.Run()
 
 	// Use fixed seed for repeatability
-	rng := rand.New(rand.NewSource(42))
+	rng := rand.New(rand.NewSource(42)) //nolint:gosec // G404: test code
 	midPrice := int64(10000)
 
 	// Pre-compute decimal prices to reduce allocations in hot loop
 	// 1000 ticks: 500 buy-side (midPrice-1 to midPrice-500), 500 sell-side (midPrice+1 to midPrice+500)
 	priceCache := make([]udecimal.Decimal, 1001)
-	for i := int64(0); i <= 1000; i++ {
-		priceCache[i] = udecimal.MustFromInt64(midPrice-500+i, 0) // prices from 9500 to 10500
+	for i := range 1001 {
+		priceCache[i] = udecimal.MustFromInt64(midPrice-500+int64(i), 0) // prices from 9500 to 10500
 	}
 	sizeOne := udecimal.MustFromInt64(1, 0)
 
@@ -45,7 +45,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	serializer := &protocol.DefaultJSONSerializer{}
 	cmdPool := make([]*protocol.Command, poolSize)
 
-	for i := 0; i < poolSize; i++ {
+	for i := range poolSize {
 		var side Side
 		var priceIdx int
 
@@ -81,7 +81,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 			Side:      side,
 			Price:     priceCache[priceIdx].String(),
 			Size:      sizeOne.String(),
-			UserID:    uint64(rng.Intn(1000) + 1),
+			UserID:    uint64(rng.Intn(1000) + 1), //nolint:gosec // G115: test code
 			Timestamp: time.Now().UnixNano(),
 		}
 
@@ -96,7 +96,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		// Hot path: only ExecuteCommand (no serialization overhead)
 		_ = engine.EnqueueCommand(cmdPool[i%poolSize])
 	}
@@ -105,7 +105,11 @@ func BenchmarkPlaceOrders(b *testing.B) {
 
 	// Report final state of the order book
 	if stats, err := engine.GetStats(marketID); err == nil {
-		fmt.Printf("\nFinal Order Book State: Bids=%d levels, Asks=%d levels\n", stats.BidDepthCount, stats.AskDepthCount)
+		b.Logf(
+			"\nFinal Order Book State: Bids=%d levels, Asks=%d levels\n",
+			stats.BidDepthCount,
+			stats.AskDepthCount,
+		)
 	}
 
 	// Report custom metric: orders per second
@@ -126,20 +130,20 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 	publishTrader := NewDiscardPublishLog()
 	engine := NewMatchingEngine("bench-engine", publishTrader)
 
-	marketID := "BTC-USDT"
+	marketID := marketBTC
 	_ = engine.CreateMarket("admin", marketID, "")
 
 	// Start engine event loop
 	go engine.Run()
 
 	// Use fixed seed for repeatability
-	rng := rand.New(rand.NewSource(42))
+	rng := rand.New(rand.NewSource(42)) //nolint:gosec // G404: test code
 	midPrice := int64(10000)
 
 	// Pre-compute decimal prices to reduce allocations in hot loop
 	priceCache := make([]udecimal.Decimal, 1001)
-	for i := int64(0); i <= 1000; i++ {
-		priceCache[i] = udecimal.MustFromInt64(midPrice-500+i, 0)
+	for i := range 1001 {
+		priceCache[i] = udecimal.MustFromInt64(midPrice-500+int64(i), 0)
 	}
 	sizeOne := udecimal.MustFromInt64(1, 0)
 
@@ -149,7 +153,7 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 	serializer := &protocol.DefaultJSONSerializer{}
 	cmdPool := make([]*protocol.Command, poolSize)
 
-	for i := 0; i < poolSize; i++ {
+	for i := range poolSize {
 		var side Side
 		var priceIdx int
 
@@ -182,7 +186,7 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 			Side:      side,
 			Price:     priceCache[priceIdx].String(),
 			Size:      sizeOne.String(),
-			UserID:    uint64(rng.Intn(1000) + 1),
+			UserID:    uint64(rng.Intn(1000) + 1), //nolint:gosec // G115: test code
 			Timestamp: time.Now().UnixNano(),
 		}
 
@@ -196,13 +200,13 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 
 	// Create batches
 	batches := make([][]*protocol.Command, poolSize/batchSize)
-	for i := 0; i < len(batches); i++ {
+	for i := range batches {
 		batches[i] = cmdPool[i*batchSize : (i+1)*batchSize]
 	}
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		// Hot path: ExecuteCommandBatch
 		_ = engine.EnqueueCommandBatch(batches[i%len(batches)])
 	}
@@ -277,7 +281,7 @@ func BenchmarkMatching(b *testing.B) {
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		idx := (i * 2) % poolSize
 
 		// Place Sell (Resting)

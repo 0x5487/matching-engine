@@ -2,7 +2,7 @@ package structure
 
 import (
 	"math/rand"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/quagmt/udecimal"
@@ -33,14 +33,14 @@ func TestPriceLevelTree_BasicOperations(t *testing.T) {
 	assert.False(t, tree.Contains(udecimal.MustFromInt64(999, 0)))
 
 	// Min
-	min, ok := tree.Min()
+	minVal, ok := tree.Min()
 	assert.True(t, ok)
-	assert.True(t, min.Equal(udecimal.MustFromInt64(50, 0)))
+	assert.True(t, minVal.Equal(udecimal.MustFromInt64(50, 0)))
 
 	// Max
-	max, ok := tree.Max()
+	maxVal, ok := tree.Max()
 	assert.True(t, ok)
-	assert.True(t, max.Equal(udecimal.MustFromInt64(150, 0)))
+	assert.True(t, maxVal.Equal(udecimal.MustFromInt64(150, 0)))
 }
 
 func TestPriceLevelTree_Delete(t *testing.T) {
@@ -95,9 +95,9 @@ func TestPriceLevelTree_DeleteMin(t *testing.T) {
 	// Delete mins in order
 	expected := []int64{10, 25, 30, 50, 75}
 	for _, exp := range expected {
-		min, ok := tree.DeleteMin()
+		minVal, ok := tree.DeleteMin()
 		assert.True(t, ok)
-		assert.True(t, min.Equal(udecimal.MustFromInt64(exp, 0)), "Expected %d, got %s", exp, min.String())
+		assert.True(t, minVal.Equal(udecimal.MustFromInt64(exp, 0)), "Expected %d, got %s", exp, minVal.String())
 	}
 
 	assert.Equal(t, int32(0), tree.Count())
@@ -138,7 +138,7 @@ func TestPriceLevelTree_InOrderSlice(t *testing.T) {
 	}
 
 	result := tree.InOrderSlice()
-	assert.Equal(t, len(values), len(result))
+	assert.Len(t, result, len(values))
 
 	// Verify sorted order
 	for i := 1; i < len(result); i++ {
@@ -151,10 +151,10 @@ func TestPriceLevelTree_OracleTest(t *testing.T) {
 	tree := NewPriceLevelTree(10000)
 	oracle := make(map[int64]bool)
 
-	rng := rand.New(rand.NewSource(42))
+	rng := rand.New(rand.NewSource(42)) //nolint:gosec // G404: test code
 
 	// Random insert/delete operations
-	for i := 0; i < 10000; i++ {
+	for range 10000 {
 		price := rng.Int63n(1000)
 
 		if rng.Intn(2) == 0 {
@@ -168,7 +168,7 @@ func TestPriceLevelTree_OracleTest(t *testing.T) {
 		}
 
 		// Verify count
-		assert.Equal(t, int32(len(oracle)), tree.Count())
+		assert.Equal(t, int32(len(oracle)), tree.Count()) //nolint:gosec // G115: test code
 
 		// Verify min
 		if len(oracle) > 0 {
@@ -191,9 +191,9 @@ func TestPriceLevelTree_OracleTest(t *testing.T) {
 	for k := range oracle {
 		oracleSlice = append(oracleSlice, k)
 	}
-	sort.Slice(oracleSlice, func(i, j int) bool { return oracleSlice[i] < oracleSlice[j] })
+	slices.Sort(oracleSlice)
 
-	assert.Equal(t, len(oracleSlice), len(treeSlice))
+	assert.Len(t, treeSlice, len(oracleSlice))
 	for i := range oracleSlice {
 		assert.True(t, treeSlice[i].Equal(udecimal.MustFromInt64(oracleSlice[i], 0)))
 	}
@@ -226,24 +226,23 @@ func TestPriceLevelTree_DescendingInsert(t *testing.T) {
 
 	assert.Equal(t, int32(100), tree.Count())
 
-	min, _ := tree.Min()
-	assert.True(t, min.Equal(udecimal.MustFromInt64(1, 0)))
+	minVal, _ := tree.Min()
+	assert.True(t, minVal.Equal(udecimal.MustFromInt64(1, 0)))
 
-	max, _ := tree.Max()
-	assert.True(t, max.Equal(udecimal.MustFromInt64(100, 0)))
+	maxVal, _ := tree.Max()
+	assert.True(t, maxVal.Equal(udecimal.MustFromInt64(100, 0)))
 }
 
-// Benchmark against current operations
+// Benchmark against current operations.
 func BenchmarkPriceLevelTree_Insert(b *testing.B) {
 	prices := make([]udecimal.Decimal, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		prices[i] = udecimal.MustFromInt64(int64(i), 0)
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		tree := NewPriceLevelTree(1100)
 		for _, p := range prices {
 			tree.Insert(p)
@@ -253,17 +252,16 @@ func BenchmarkPriceLevelTree_Insert(b *testing.B) {
 
 func BenchmarkPriceLevelTree_Search(b *testing.B) {
 	tree := NewPriceLevelTree(10000)
-	for i := int64(0); i < 1000; i++ {
+	for i := range int64(1000) {
 		tree.Insert(udecimal.MustFromInt64(i, 0))
 	}
 	searchTarget := udecimal.MustFromInt64(500, 0)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		// Do 1000 searches per op to normalize units
-		for j := 0; j < 1000; j++ {
+		for range 1000 {
 			tree.Contains(searchTarget)
 		}
 	}
@@ -273,10 +271,10 @@ func BenchmarkPriceLevelTree_DeleteMin(b *testing.B) {
 	// Create and populate tree for each iteration
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		b.StopTimer()
 		tree := NewPriceLevelTree(1100)
-		for j := int64(0); j < 1000; j++ {
+		for j := range int64(1000) {
 			tree.Insert(udecimal.MustFromInt64(j, 0))
 		}
 		b.StartTimer()
@@ -314,7 +312,7 @@ func FuzzPriceLevelTree(f *testing.F) {
 		}
 
 		// Verify count
-		if int32(len(oracle)) != tree.Count() {
+		if int32(len(oracle)) != tree.Count() { //nolint:gosec // G115: test code
 			t.Errorf("Count mismatch: oracle=%d, tree=%d", len(oracle), tree.Count())
 		}
 

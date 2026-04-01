@@ -4,9 +4,11 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+	"path/filepath"
+
+	"github.com/quagmt/udecimal"
 
 	"github.com/0x5487/matching-engine/protocol"
-	"github.com/quagmt/udecimal"
 )
 
 // OrderBookSnapshot contains the full state of a single OrderBook.
@@ -31,7 +33,7 @@ type SnapshotMetadata struct {
 }
 
 // SnapshotFileFooter is the footer structure stored at the end of snapshot.bin.
-// Layout: [BinaryData...][FooterJSON][FooterLength(4 bytes)]
+// Layout: [BinaryData...][FooterJSON][FooterLength(4 bytes)].
 type SnapshotFileFooter struct {
 	Markets []MarketSegment `json:"markets"` // Index of market data in this file
 }
@@ -46,7 +48,7 @@ type MarketSegment struct {
 
 // calculateFileCRC32 calculates the CRC32 checksum of a file.
 func calculateFileCRC32(filePath string) (uint32, error) {
-	f, err := os.Open(filePath)
+	f, err := os.Open(filepath.Clean(filePath))
 	if err != nil {
 		return 0, err
 	}

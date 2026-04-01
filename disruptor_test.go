@@ -31,15 +31,20 @@ type CounterEventHandler[T any] struct {
 	goSize int
 }
 
-func (h *CounterEventHandler[T]) OnEvent(v *T) {
+func (h *CounterEventHandler[T]) OnEvent(_ *T) {
 	currentCount := atomic.AddInt32(&h.count, 1)
 	if currentCount == 1 {
 		h.ts = time.Now()
 	}
 
-	if currentCount == int32(h.goSize*SchPerGo) {
+	if currentCount == int32(h.goSize*SchPerGo) { //nolint:gosec // G115: test code
 		tl := time.Since(h.ts)
-		fmt.Printf("== Disruptor read time = %d ms, go_size: %d, counter: %d\n", tl.Milliseconds(), h.goSize, h.count)
+		_, _ = fmt.Printf( //nolint:forbidigo
+			"== Disruptor read time = %d ms, go_size: %d, counter: %d\n",
+			tl.Milliseconds(),
+			h.goSize,
+			h.count,
+		)
 	}
 }
 
@@ -110,7 +115,7 @@ func TestRingBuffer_ClaimCommit(t *testing.T) {
 }
 
 func TestRingBuffer_ClaimAfterShutdown(t *testing.T) {
-	handler := &simpleHandler[TestEvent]{fn: func(e *TestEvent) {}}
+	handler := &simpleHandler[TestEvent]{fn: func(_ *TestEvent) {}}
 	rb := NewRingBuffer[TestEvent](16, handler)
 	go rb.Run()
 
@@ -128,7 +133,7 @@ func TestRingBuffer_GetPendingEvents(t *testing.T) {
 	// Create a handler that blocks until signaled
 	blockCh := make(chan struct{})
 	handler := &simpleHandler[TestEvent]{
-		fn: func(e *TestEvent) {
+		fn: func(_ *TestEvent) {
 			<-blockCh // Wait until unblocked
 		},
 	}
@@ -137,7 +142,7 @@ func TestRingBuffer_GetPendingEvents(t *testing.T) {
 	go rb.Run()
 
 	// Publish 5 events (they will be pending because handler is blocked)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		rb.Publish(TestEvent{ID: int64(i)})
 	}
 
@@ -160,7 +165,7 @@ func TestRingBuffer_GetPendingEvents(t *testing.T) {
 }
 
 func TestRingBuffer_SequenceMonitoring(t *testing.T) {
-	handler := &simpleHandler[TestEvent]{fn: func(e *TestEvent) {}}
+	handler := &simpleHandler[TestEvent]{fn: func(_ *TestEvent) {}}
 	rb := NewRingBuffer[TestEvent](16, handler)
 
 	// Initial sequences should be -1
@@ -170,7 +175,7 @@ func TestRingBuffer_SequenceMonitoring(t *testing.T) {
 	go rb.Run()
 
 	// Publish some events
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		rb.Publish(TestEvent{ID: int64(i)})
 	}
 
@@ -186,7 +191,7 @@ func TestRingBuffer_SequenceMonitoring(t *testing.T) {
 func TestRingBuffer_ShutdownTimeout(t *testing.T) {
 	// Create a handler that never completes
 	handler := &simpleHandler[TestEvent]{
-		fn: func(e *TestEvent) {
+		fn: func(_ *TestEvent) {
 			time.Sleep(10 * time.Second) // Block forever (for test purposes)
 		},
 	}
@@ -209,7 +214,7 @@ func TestRingBuffer_ConcurrentPublish(t *testing.T) {
 	var count atomic.Int64
 
 	handler := &simpleHandler[TestEvent]{
-		fn: func(e *TestEvent) {
+		fn: func(_ *TestEvent) {
 			count.Add(1)
 		},
 	}
@@ -224,10 +229,10 @@ func TestRingBuffer_ConcurrentPublish(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numPublishers)
 
-	for i := 0; i < numPublishers; i++ {
+	for i := range numPublishers {
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < eventsPerPublisher; j++ {
+			for j := range eventsPerPublisher {
 				rb.Publish(TestEvent{ID: int64(id*eventsPerPublisher + j)})
 			}
 		}(i)
@@ -244,7 +249,7 @@ func TestRingBuffer_ConcurrentPublish(t *testing.T) {
 }
 
 func TestRingBuffer_PowerOf2Validation(t *testing.T) {
-	handler := &simpleHandler[TestEvent]{fn: func(e *TestEvent) {}}
+	handler := &simpleHandler[TestEvent]{fn: func(_ *TestEvent) {}}
 
 	// Should panic for non-power-of-2
 	assert.Panics(t, func() {
@@ -291,12 +296,12 @@ func BenchmarkDisruptor(b *testing.B) {
 
 	var wg sync.WaitGroup
 	wg.Add(b.N)
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < SchPerGo; j++ {
+			for range SchPerGo {
 				id := atomic.AddUint64(&counter, 1)
-				evt := TestEvent{ID: int64(id)}
+				evt := TestEvent{ID: int64(id)} //nolint:gosec // G115: test code
 				rb.Publish(evt)
 			}
 		}()
@@ -318,9 +323,7 @@ func BenchmarkChannel(b *testing.B) {
 	)
 	ch := make(chan TestEvent, length)
 
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		var ts time.Time
 		var count int32
 		for {
@@ -330,9 +333,13 @@ func BenchmarkChannel(b *testing.B) {
 				ts = time.Now()
 			}
 
-			if count == int32(b.N*numPerGo) {
+			if count == int32(b.N*numPerGo) { //nolint:gosec // G115: test code
 				tl := time.Since(ts)
-				fmt.Printf("== Channel read time = %d ms, counter = %d\n", tl.Milliseconds(), count)
+				_, _ = fmt.Printf( //nolint:forbidigo
+					"== Channel read time = %d ms, counter = %d\n",
+					tl.Milliseconds(),
+					count,
+				)
 				break
 			}
 		}
@@ -340,10 +347,10 @@ func BenchmarkChannel(b *testing.B) {
 
 	b.ResetTimer()
 	wg.Add(b.N)
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < numPerGo; j++ {
+			for range numPerGo {
 				atomic.AddUint64(&counter, 1)
 				evt := TestEvent{}
 				ch <- evt

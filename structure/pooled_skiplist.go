@@ -16,14 +16,16 @@ import (
 // - Uses random level generation for probabilistic balancing
 
 const (
-	SkiplistMaxLevel    = 16 // Maximum level height
-	SkiplistP           = 4  // 1/P probability of level increase
-	DefaultGrowthFactor = 2  // Default expansion factor
+	// SkiplistMaxLevel is the maximum height of the skiplist.
+	SkiplistMaxLevel = 16 // Maximum level height
+	// SkiplistP is the 1/P probability of level increase.
+	SkiplistP = 4 // 1/P probability of level increase
+	// DefaultGrowthFactor is the default expansion factor for the arena.
+	DefaultGrowthFactor = 2 // Default expansion factor
 )
 
-var (
-	ErrMaxCapacityReached = errors.New("skiplist: max capacity reached")
-)
+// ErrMaxCapacityReached is returned when the skiplist arena is full and cannot grow.
+var ErrMaxCapacityReached = errors.New("skiplist: max capacity reached")
 
 // SkiplistNode represents a node in the pooled skiplist.
 type SkiplistNode struct {
@@ -71,11 +73,13 @@ func NewPooledSkiplistWithOptions(capacity int32, seed int64, opts SkiplistOptio
 	// +1 for head sentinel
 	totalCap := capacity + 1
 	sl := &PooledSkiplist{
-		nodes:       make([]SkiplistNode, totalCap),
-		freeHead:    1, // 0 is reserved for head
-		count:       0,
-		level:       1,
-		rng:         rand.New(rand.NewSource(seed)), //nolint:gosec // G404: math/rand is acceptable for skiplist level generation
+		nodes:    make([]SkiplistNode, totalCap),
+		freeHead: 1, // 0 is reserved for head
+		count:    0,
+		level:    1,
+		rng: rand.New( //nolint:gosec // G404: math/rand is acceptable for skiplist level generation
+			rand.NewSource(seed),
+		),
 		maxCapacity: opts.MaxCapacity,
 		onGrow:      opts.OnGrow,
 		descending:  opts.Descending,
@@ -84,7 +88,7 @@ func NewPooledSkiplistWithOptions(capacity int32, seed int64, opts SkiplistOptio
 	// Initialize head sentinel at index 0
 	sl.head = 0
 	sl.nodes[0].Level = SkiplistMaxLevel
-	for i := 0; i < SkiplistMaxLevel; i++ {
+	for i := range SkiplistMaxLevel {
 		sl.nodes[0].Forward[i] = NullIndex
 	}
 
@@ -95,84 +99,6 @@ func NewPooledSkiplistWithOptions(capacity int32, seed int64, opts SkiplistOptio
 	sl.nodes[totalCap-1].Forward[0] = NullIndex
 
 	return sl
-}
-
-// less returns true if a should come before b in the skiplist.
-// For ascending order: a < b means a comes first
-// For descending order: a > b means a comes first
-func (sl *PooledSkiplist) less(a, b udecimal.Decimal) bool {
-	if sl.descending {
-		return a.GreaterThan(b)
-	}
-	return a.LessThan(b)
-}
-
-// grow expands the arena capacity.
-// Returns error if max capacity would be exceeded.
-func (sl *PooledSkiplist) grow() error {
-	oldCap := int32(len(sl.nodes)) //nolint:gosec // G115: safe conversion, capacity is bounded
-	newCap := oldCap * DefaultGrowthFactor
-
-	// Check max capacity limit
-	if sl.maxCapacity > 0 && newCap > sl.maxCapacity {
-		// Try to grow up to max capacity
-		if oldCap >= sl.maxCapacity {
-			return ErrMaxCapacityReached
-		}
-		newCap = sl.maxCapacity
-	}
-
-	// Notify callback
-	if sl.onGrow != nil {
-		sl.onGrow(oldCap, newCap)
-	}
-
-	// Create new slice and copy old data
-	newNodes := make([]SkiplistNode, newCap)
-	copy(newNodes, sl.nodes)
-
-	// Initialize new nodes as free list
-	for i := oldCap; i < newCap-1; i++ {
-		newNodes[i].Forward[0] = i + 1
-	}
-	// Connect end of new free list to existing free list (if any)
-	newNodes[newCap-1].Forward[0] = sl.freeHead
-	sl.freeHead = oldCap // New free list head is first new node
-
-	sl.nodes = newNodes
-	return nil
-}
-
-// alloc allocates a node from the free list, growing if necessary.
-func (sl *PooledSkiplist) alloc() (int32, error) {
-	if sl.freeHead == NullIndex {
-		if err := sl.grow(); err != nil {
-			return NullIndex, err
-		}
-	}
-	idx := sl.freeHead
-	sl.freeHead = sl.nodes[idx].Forward[0]
-
-	// Reset forward pointers
-	for i := 0; i < SkiplistMaxLevel; i++ {
-		sl.nodes[idx].Forward[i] = NullIndex
-	}
-	return idx, nil
-}
-
-// free returns a node to the free list.
-func (sl *PooledSkiplist) free(idx int32) {
-	sl.nodes[idx].Forward[0] = sl.freeHead
-	sl.freeHead = idx
-}
-
-// randomLevel generates a random level for a new node.
-func (sl *PooledSkiplist) randomLevel() int32 {
-	level := int32(1)
-	for level < SkiplistMaxLevel && sl.rng.Intn(SkiplistP) == 0 {
-		level++
-	}
-	return level
 }
 
 // Insert inserts a price into the skiplist.
@@ -215,9 +141,9 @@ func (sl *PooledSkiplist) Insert(price udecimal.Decimal) (bool, error) {
 	sl.nodes[newNode].Price = price
 	sl.nodes[newNode].Level = newLevel
 
-	for i := int32(0); i < newLevel; i++ {
-		sl.nodes[newNode].Forward[i] = sl.nodes[update[i]].Forward[i]
-		sl.nodes[update[i]].Forward[i] = newNode
+	for i := range newLevel {
+		sl.nodes[newNode].Forward[i] = sl.nodes[update[i]].Forward[i] //nolint:gosec // G602: index safety verified
+		sl.nodes[update[i]].Forward[i] = newNode                      //nolint:gosec // G602: index safety verified
 	}
 
 	sl.count++
@@ -272,8 +198,8 @@ func (sl *PooledSkiplist) Delete(price udecimal.Decimal) bool {
 	}
 
 	// Update forward pointers
-	for i := int32(0); i < sl.level; i++ {
-		if sl.nodes[update[i]].Forward[i] != x {
+	for i := range sl.level {
+		if sl.nodes[update[i]].Forward[i] != x { //nolint:gosec // G602: index safety verified
 			break
 		}
 		sl.nodes[update[i]].Forward[i] = sl.nodes[x].Forward[i]
@@ -310,7 +236,7 @@ func (sl *PooledSkiplist) DeleteMin() (udecimal.Decimal, bool) {
 	price := sl.nodes[x].Price
 
 	// Update forward pointers from head
-	for i := int32(0); i < sl.level; i++ {
+	for i := range sl.level {
 		if sl.nodes[sl.head].Forward[i] != x {
 			break
 		}
@@ -370,6 +296,84 @@ func (sl *PooledSkiplist) Iterator() *SkiplistIterator {
 		sl:      sl,
 		current: sl.nodes[sl.head].Forward[0],
 	}
+}
+
+// less returns true if a should come before b in the skiplist.
+// For ascending order: a < b means a comes first
+// For descending order: a > b means a comes first.
+func (sl *PooledSkiplist) less(a, b udecimal.Decimal) bool {
+	if sl.descending {
+		return a.GreaterThan(b)
+	}
+	return a.LessThan(b)
+}
+
+// grow expands the arena capacity.
+// Returns error if max capacity would be exceeded.
+func (sl *PooledSkiplist) grow() error {
+	oldCap := int32(len(sl.nodes)) //nolint:gosec // G115: safe conversion, capacity is bounded
+	newCap := oldCap * DefaultGrowthFactor
+
+	// Check max capacity limit
+	if sl.maxCapacity > 0 && newCap > sl.maxCapacity {
+		// Try to grow up to max capacity
+		if oldCap >= sl.maxCapacity {
+			return ErrMaxCapacityReached
+		}
+		newCap = sl.maxCapacity
+	}
+
+	// Notify callback
+	if sl.onGrow != nil {
+		sl.onGrow(oldCap, newCap)
+	}
+
+	// Create new slice and copy old data
+	newNodes := make([]SkiplistNode, newCap)
+	copy(newNodes, sl.nodes)
+
+	// Initialize new nodes as free list
+	for i := oldCap; i < newCap-1; i++ {
+		newNodes[i].Forward[0] = i + 1
+	}
+	// Connect end of new free list to existing free list (if any)
+	newNodes[newCap-1].Forward[0] = sl.freeHead
+	sl.freeHead = oldCap // New free list head is first new node
+
+	sl.nodes = newNodes
+	return nil
+}
+
+// alloc allocates a node from the free list, growing if necessary.
+func (sl *PooledSkiplist) alloc() (int32, error) {
+	if sl.freeHead == NullIndex {
+		if err := sl.grow(); err != nil {
+			return NullIndex, err
+		}
+	}
+	idx := sl.freeHead
+	sl.freeHead = sl.nodes[idx].Forward[0]
+
+	// Reset forward pointers
+	for i := range SkiplistMaxLevel {
+		sl.nodes[idx].Forward[i] = NullIndex
+	}
+	return idx, nil
+}
+
+// free returns a node to the free list.
+func (sl *PooledSkiplist) free(idx int32) {
+	sl.nodes[idx].Forward[0] = sl.freeHead
+	sl.freeHead = idx
+}
+
+// randomLevel generates a random level for a new node.
+func (sl *PooledSkiplist) randomLevel() int32 {
+	level := int32(1)
+	for level < SkiplistMaxLevel && sl.rng.Intn(SkiplistP) == 0 {
+		level++
+	}
+	return level
 }
 
 // Valid returns true if the iterator points to a valid element.

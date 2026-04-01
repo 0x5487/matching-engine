@@ -2,12 +2,13 @@ package structure
 
 import (
 	"math/rand"
-	"sort"
+	"slices"
 	"sync/atomic"
 	"testing"
 
 	"github.com/quagmt/udecimal"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPooledSkiplist_BasicOperations(t *testing.T) {
@@ -16,23 +17,24 @@ func TestPooledSkiplist_BasicOperations(t *testing.T) {
 	// Test empty
 	_, ok := sl.Min()
 	assert.False(t, ok)
+
 	assert.Equal(t, int32(0), sl.Count())
 
 	// Insert
 	inserted, err := sl.Insert(udecimal.MustFromInt64(100, 0))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.True(t, inserted)
 	inserted, err = sl.Insert(udecimal.MustFromInt64(50, 0))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.True(t, inserted)
 	inserted, err = sl.Insert(udecimal.MustFromInt64(150, 0))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.True(t, inserted)
 	assert.Equal(t, int32(3), sl.Count())
 
 	// Duplicate
 	inserted, err = sl.Insert(udecimal.MustFromInt64(100, 0))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.False(t, inserted)
 
 	// Contains
@@ -41,9 +43,9 @@ func TestPooledSkiplist_BasicOperations(t *testing.T) {
 	assert.False(t, sl.Contains(udecimal.MustFromInt64(999, 0)))
 
 	// Min
-	min, ok := sl.Min()
+	minVal, ok := sl.Min()
 	assert.True(t, ok)
-	assert.True(t, min.Equal(udecimal.MustFromInt64(50, 0)))
+	assert.True(t, minVal.Equal(udecimal.MustFromInt64(50, 0)))
 }
 
 func TestPooledSkiplist_Delete(t *testing.T) {
@@ -73,9 +75,9 @@ func TestPooledSkiplist_DeleteMin(t *testing.T) {
 
 	expected := []int64{10, 25, 30, 50, 75}
 	for _, exp := range expected {
-		min, ok := sl.DeleteMin()
+		minVal, ok := sl.DeleteMin()
 		assert.True(t, ok)
-		assert.True(t, min.Equal(udecimal.MustFromInt64(exp, 0)))
+		assert.True(t, minVal.Equal(udecimal.MustFromInt64(exp, 0)))
 	}
 
 	assert.Equal(t, int32(0), sl.Count())
@@ -85,9 +87,9 @@ func TestPooledSkiplist_OracleTest(t *testing.T) {
 	sl := NewPooledSkiplist(10000, 42)
 	oracle := make(map[int64]bool)
 
-	rng := rand.New(rand.NewSource(42))
+	rng := rand.New(rand.NewSource(42)) //nolint:gosec // G404: test code
 
-	for i := 0; i < 10000; i++ {
+	for range 10000 {
 		price := rng.Int63n(1000)
 
 		if rng.Intn(2) == 0 {
@@ -98,7 +100,7 @@ func TestPooledSkiplist_OracleTest(t *testing.T) {
 			delete(oracle, price)
 		}
 
-		assert.Equal(t, int32(len(oracle)), sl.Count())
+		assert.Equal(t, int32(len(oracle)), sl.Count()) //nolint:gosec // G115: test code
 	}
 
 	// Verify final state
@@ -107,9 +109,9 @@ func TestPooledSkiplist_OracleTest(t *testing.T) {
 	for k := range oracle {
 		oracleSlice = append(oracleSlice, k)
 	}
-	sort.Slice(oracleSlice, func(i, j int) bool { return oracleSlice[i] < oracleSlice[j] })
+	slices.Sort(oracleSlice)
 
-	assert.Equal(t, len(oracleSlice), len(slSlice))
+	assert.Len(t, slSlice, len(oracleSlice))
 	for i := range oracleSlice {
 		assert.True(t, slSlice[i].Equal(udecimal.MustFromInt64(oracleSlice[i], 0)))
 	}
@@ -126,14 +128,14 @@ func TestPooledSkiplist_DynamicGrow(t *testing.T) {
 	})
 
 	// Insert more than initial capacity
-	for i := int64(0); i < 100; i++ {
-		inserted, err := sl.Insert(udecimal.MustFromInt64(i, 0))
-		assert.NoError(t, err)
+	for i := range 100 {
+		inserted, err := sl.Insert(udecimal.MustFromInt64(int64(i), 0))
+		require.NoError(t, err)
 		assert.True(t, inserted)
 	}
 
 	assert.Equal(t, int32(100), sl.Count())
-	assert.Greater(t, atomic.LoadInt32(&growCount), int32(0), "Should have grown at least once")
+	assert.Positive(t, atomic.LoadInt32(&growCount), "Should have grown at least once")
 	t.Logf("Final capacity: %d, grow count: %d", sl.Capacity(), growCount)
 }
 
@@ -143,9 +145,9 @@ func TestPooledSkiplist_MaxCapacity(t *testing.T) {
 	})
 
 	// Insert up to capacity
-	for i := int64(0); i < 19; i++ { // 19 because head takes 1 slot
-		inserted, err := sl.Insert(udecimal.MustFromInt64(i, 0))
-		assert.NoError(t, err)
+	for i := range 19 { // 19 because head takes 1 slot
+		inserted, err := sl.Insert(udecimal.MustFromInt64(int64(i), 0))
+		require.NoError(t, err)
 		assert.True(t, inserted)
 	}
 
@@ -204,31 +206,30 @@ func TestPooledSkiplist_Descending(t *testing.T) {
 	assert.Equal(t, len(expected), i)
 
 	// Verify Min returns highest price in descending mode
-	min, ok := sl.Min()
+	minVal, ok := sl.Min()
 	assert.True(t, ok)
-	assert.True(t, min.Equal(udecimal.MustFromInt64(80, 0)))
+	assert.True(t, minVal.Equal(udecimal.MustFromInt64(80, 0)))
 
 	// Verify Delete works correctly
 	assert.True(t, sl.Delete(udecimal.MustFromInt64(80, 0)))
-	min, _ = sl.Min()
-	assert.True(t, min.Equal(udecimal.MustFromInt64(75, 0)))
+	minVal, _ = sl.Min()
+	assert.True(t, minVal.Equal(udecimal.MustFromInt64(75, 0)))
 
 	// Verify Contains works
 	assert.True(t, sl.Contains(udecimal.MustFromInt64(50, 0)))
 	assert.False(t, sl.Contains(udecimal.MustFromInt64(80, 0))) // deleted
 }
 
-// Benchmarks
+// Benchmarks.
 func BenchmarkPooledSkiplist_Insert(b *testing.B) {
 	prices := make([]udecimal.Decimal, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		prices[i] = udecimal.MustFromInt64(int64(i), 0)
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		sl := NewPooledSkiplist(1100, int64(i))
 		for _, p := range prices {
 			sl.MustInsert(p)
@@ -238,14 +239,13 @@ func BenchmarkPooledSkiplist_Insert(b *testing.B) {
 
 func BenchmarkPooledSkiplist_Delete(b *testing.B) {
 	prices := make([]udecimal.Decimal, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		prices[i] = udecimal.MustFromInt64(int64(i), 0)
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		b.StopTimer()
 		sl := NewPooledSkiplist(1100, int64(i))
 		for _, p := range prices {
@@ -253,7 +253,7 @@ func BenchmarkPooledSkiplist_Delete(b *testing.B) {
 		}
 		b.StartTimer()
 
-		for j := 0; j < 500; j++ {
+		for j := range 500 {
 			sl.Delete(prices[j])
 		}
 	}
@@ -261,13 +261,13 @@ func BenchmarkPooledSkiplist_Delete(b *testing.B) {
 
 func BenchmarkPooledSkiplist_DeleteMin(b *testing.B) {
 	prices := make([]udecimal.Decimal, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		prices[i] = udecimal.MustFromInt64(int64(i), 0)
 	}
 
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		b.StopTimer()
 		sl := NewPooledSkiplist(1100, int64(i))
 		for _, p := range prices {
@@ -283,30 +283,28 @@ func BenchmarkPooledSkiplist_DeleteMin(b *testing.B) {
 
 func BenchmarkPooledSkiplist_Search(b *testing.B) {
 	sl := NewPooledSkiplist(1100, 42)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		sl.MustInsert(udecimal.MustFromInt64(int64(i), 0))
 	}
 
 	target := udecimal.MustFromInt64(500, 0)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		sl.Contains(target)
 	}
 }
 
 func BenchmarkPooledSkiplist_DynamicGrow(b *testing.B) {
 	prices := make([]udecimal.Decimal, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		prices[i] = udecimal.MustFromInt64(int64(i), 0)
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		// Start with small capacity to force growth
 		sl := NewPooledSkiplist(100, int64(i))
 		for _, p := range prices {
@@ -342,7 +340,7 @@ func FuzzPooledSkiplist(f *testing.F) {
 		}
 
 		// Verify count
-		if int32(len(oracle)) != sl.Count() {
+		if int32(len(oracle)) != sl.Count() { //nolint:gosec // G115: test code
 			t.Errorf("Count mismatch: oracle=%d, skiplist=%d", len(oracle), sl.Count())
 		}
 
@@ -369,12 +367,12 @@ func FuzzPooledSkiplist(f *testing.F) {
 					minOracle = k
 				}
 			}
-			min, ok := sl.Min()
+			minVal, ok := sl.Min()
 			if !ok {
 				t.Errorf("Min() returned false but oracle has %d elements", len(oracle))
 			}
-			if !min.Equal(udecimal.MustFromInt64(minOracle, 0)) {
-				t.Errorf("Min mismatch: skiplist=%s, oracle=%d", min.String(), minOracle)
+			if !minVal.Equal(udecimal.MustFromInt64(minOracle, 0)) {
+				t.Errorf("Min mismatch: skiplist=%s, oracle=%d", minVal.String(), minOracle)
 			}
 		}
 	})

@@ -1,35 +1,46 @@
 package match
 
 import (
-	"github.com/0x5487/matching-engine/protocol"
 	"github.com/quagmt/udecimal"
+
+	"github.com/0x5487/matching-engine/protocol"
 )
 
 const (
-	// EngineVersion is the current version of the matching engine
+	// EngineVersion is the current version of the matching engine.
 	EngineVersion = "v1.0.0"
 
 	// SnapshotSchemaVersion is the current version of the snapshot schema
-	// Increment this when the snapshot format changes in a backward-incompatible way
+	// Increment this when the snapshot format changes in a backward-incompatible way.
 	SnapshotSchemaVersion = 1
 )
 
+// Side represents the order side (Buy or Sell).
 type Side = protocol.Side
 
 const (
-	Buy  Side = protocol.SideBuy
+	// Buy side.
+	Buy Side = protocol.SideBuy
+	// Sell side.
 	Sell Side = protocol.SideSell
 )
 
+// OrderType represents the type of order.
 type OrderType = protocol.OrderType
 
 const (
-	Market   OrderType = protocol.OrderTypeMarket
-	Limit    OrderType = protocol.OrderTypeLimit
-	FOK      OrderType = protocol.OrderTypeFOK
-	IOC      OrderType = protocol.OrderTypeIOC
+	// Market order.
+	Market OrderType = protocol.OrderTypeMarket
+	// Limit order.
+	Limit OrderType = protocol.OrderTypeLimit
+	// FOK order (Fill or Kill).
+	FOK OrderType = protocol.OrderTypeFOK
+	// IOC order (Immediate or Cancel).
+	IOC OrderType = protocol.OrderTypeIOC
+	// PostOnly order.
 	PostOnly OrderType = protocol.OrderTypePostOnly
-	Cancel   OrderType = protocol.OrderTypeCancel
+	// Cancel order.
+	Cancel OrderType = protocol.OrderTypeCancel
 )
 
 // Order represents the state of an order in the order book.
@@ -44,8 +55,8 @@ type Order struct {
 	Timestamp int64            `json:"timestamp"` // Unix nano, creation time
 
 	// Iceberg fields
-	VisibleLimit udecimal.Decimal `json:"visible_limit,omitempty"`
-	HiddenSize   udecimal.Decimal `json:"hidden_size,omitempty"`
+	VisibleLimit udecimal.Decimal `json:"visible_limit,omitzero"`
+	HiddenSize   udecimal.Decimal `json:"hidden_size,omitzero"`
 
 	// Intrusive linked list pointers (ignored by JSON)
 	next *Order

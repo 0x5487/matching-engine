@@ -3,11 +3,13 @@ package match
 import (
 	"time"
 
+	"github.com/quagmt/udecimal"
+
 	"github.com/0x5487/matching-engine/protocol"
 	"github.com/0x5487/matching-engine/structure"
-	"github.com/quagmt/udecimal"
 )
 
+// UpdateEvent represents a change in price or size at a specific price level.
 type UpdateEvent struct {
 	Price string `json:"price"`
 	Size  string `json:"size"`
@@ -31,9 +33,9 @@ type queue struct {
 
 const defaultPriceCapacity = 3000
 
-// NewBuyerQueue creates a new queue for buy orders (bids).
+// newBuyerQueue creates a new queue for buy orders (bids).
 // The orders are sorted by price in descending order (highest price first).
-func NewBuyerQueue() *queue {
+func newBuyerQueue() *queue {
 	return &queue{
 		side: Buy,
 		orderedPrices: structure.NewPooledSkiplistWithOptions(
@@ -46,9 +48,9 @@ func NewBuyerQueue() *queue {
 	}
 }
 
-// NewSellerQueue creates a new queue for sell orders (asks).
+// newSellerQueue creates a new queue for sell orders (asks).
 // The orders are sorted by price in ascending order (lowest price first).
-func NewSellerQueue() *queue {
+func newSellerQueue() *queue {
 	return &queue{
 		side: Sell,
 		orderedPrices: structure.NewPooledSkiplist(
@@ -65,9 +67,18 @@ func (q *queue) order(id string) *Order {
 	return q.orders[id]
 }
 
-// insertOrder inserts an order into the queue.
-// It updates the price list and depth list.
-func (q *queue) insertOrder(order *Order, isFront bool) {
+// insertOrder inserts an order into the end of the queue for its price level.
+func (q *queue) insertOrder(order *Order) {
+	q.doInsert(order, false)
+}
+
+// pushFront inserts an order into the front of the queue for its price level.
+func (q *queue) pushFront(order *Order) {
+	q.doInsert(order, true)
+}
+
+//nolint:revive // flag-parameter: internal method used by insertOrder and pushFront
+func (q *queue) doInsert(order *Order, isFront bool) {
 	unit, ok := q.priceList[order.Price]
 	if ok {
 		if isFront {

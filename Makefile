@@ -4,7 +4,7 @@ bench:
 	go test -v -run=none -benchmem -bench . -count 1
 
 lint:
-	golangci-lint run ./... -v
+	go tool golangci-lint run ./... -v
 
 test:
 	go test -race -coverprofile=cover.out -covermode=atomic ./...
@@ -27,3 +27,9 @@ prof-cpu:
 
 bench-structure:
 	go test -v -run=none -bench=. -benchmem -count 1 ./structure/...
+
+fmt:
+	go tool golangci-lint fmt
+
+fix:
+	go tool golangci-lint run --fix ./...

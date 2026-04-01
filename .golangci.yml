@@ -1,40 +1,143 @@
 version: "2"
+
 linters:
-  enable:
-    - errorlint
-    - exhaustive
-    - gocritic
-    - gosec
-    - misspell
+  default: all
+  disable:
+    - cyclop
     - noctx
-    - perfsprint
-    - sloglint
-    - sqlclosecheck
-    - usestdlibvars
+    - errcheck
+    - lll
+    - noinlineerr
+    - nlreturn
+    - gocyclo
+    - testpackage
+    - funlen
+    - gochecknoinits
+    - godox
+    - gocognit
+    - contextcheck
+    - paralleltest
+    - nestif
+    - maintidx
+    - depguard
+    - exhaustruct
+    - wrapcheck
+    - varnamelen
+    - gochecknoglobals
+    - err113
+    - tagliatelle
+    - wsl
+    - wsl_v5
+    - nonamedreturns
+    - ireturn
+    - dupl
+
   settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
     exhaustive:
       default-signifies-exhaustive: true
-    gosec:
-      excludes:
-        - G204
+    funlen:
+      lines: 120
+      statements: 40
+    gocognit:
+      min-complexity: 25
+    gocyclo:
+      min-complexity: 20
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    lll:
+      line-length: 120
+      tab-width: 4
+    misspell:
+      locale: US
+    mnd:
+      checks:
+        - argument
+        - assign
+        - case
+        - condition
+        - operation
+        - return
+    nakedret:
+      max-func-lines: 3
+    revive:
+      enable-all-rules: true
+      rules:
+        - name: add-constant
+          disabled: true
+        - name: argument-limit
+          arguments:
+            - 7
+          severity: warning
+        - name: banned-characters
+          disabled: true
+        - name: cognitive-complexity
+          disabled: true
+        - name: comment-spacings
+          arguments:
+            - nolint
+          severity: warning
+        - name: cyclomatic
+          disabled: true
+        - name: file-header
+          disabled: true
+        - name: function-result-limit
+          arguments:
+            - 3
+          severity: warning
+        - name: function-length
+          disabled: true
+        - name: line-length-limit
+          disabled: true
+        - name: max-public-structs
+          disabled: true
+        - name: modifies-value-receiver
+          disabled: true
+        - name: package-comments
+          disabled: true
+        - name: unused-receiver
+          disabled: true
   exclusions:
     generated: lax
-    presets:
-      - comments
-      - common-false-positives
-      - legacy
-      - std-error-handling
     rules:
-      - path: _test.go
-        text: .*
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
+      - linters:
+          - lll
+        source: '^//go:generate '
+      - linters:
+          - funlen
+          - maintidx
+          - gocognit
+          - gocyclo
+        path: _test\.go$
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
 formatters:
-  exclusions:
-    generated: lax
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
+  enable:
+    - goimports
+    - gofmt
+    - golines
+    - gci
+    - gofumpt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - localmodule
+      custom-order: true
+    gofmt:
+      simplify: true
+      rewrite-rules:
+        - pattern: "interface{}"
+          replacement: "any"
+        - pattern: "a[b:len(a)]"
+          replacement: "a[b:]"
+    golines:
+      max-len: 120

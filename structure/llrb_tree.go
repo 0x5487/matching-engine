@@ -17,6 +17,7 @@ import (
 // https://sedgewick.io/wp-content/themes/flavor/uploads/2016/02/LLRB.pdf
 
 const (
+	// NullIndex represents a null pointer in the arena.
 	NullIndex  int32 = -1
 	colorRed         = true
 	colorBlack       = false
@@ -53,103 +54,18 @@ func NewPriceLevelTree(capacity int32) *PriceLevelTree {
 		minCache: NullIndex,
 	}
 	// Initialize free list using Left pointer
-	for i := int32(0); i < capacity-1; i++ {
+	for i := range capacity - 1 {
 		tree.nodes[i].Left = i + 1
 	}
 	tree.nodes[capacity-1].Left = NullIndex
 	return tree
 }
 
-// alloc allocates a node from the free list.
-func (t *PriceLevelTree) alloc() int32 {
-	if t.freeHead == NullIndex {
-		// Arena exhausted - in production, this should trigger an alert
-		panic("PriceLevelTree: arena exhausted")
-	}
-	idx := t.freeHead
-	t.freeHead = t.nodes[idx].Left
-	// Reset node
-	t.nodes[idx] = PriceLevel{
-		Left:   NullIndex,
-		Right:  NullIndex,
-		Parent: NullIndex,
-		Color:  colorRed, // New nodes are always red in LLRB
-	}
-	return idx
-}
-
-// free returns a node to the free list.
-func (t *PriceLevelTree) free(idx int32) {
-	t.nodes[idx].Left = t.freeHead
-	t.freeHead = idx
-}
-
-// isRed checks if a node is red (nil nodes are black).
-func (t *PriceLevelTree) isRed(idx int32) bool {
-	if idx == NullIndex {
-		return false
-	}
-	return t.nodes[idx].Color
-}
-
-// rotateLeft performs a left rotation.
-//
-//	  |              |
-//	  h              x
-//	 / \    =>      / \
-//	a   x          h   c
-//	   / \        / \
-//	  b   c      a   b
-func (t *PriceLevelTree) rotateLeft(h int32) int32 {
-	x := t.nodes[h].Right
-	t.nodes[h].Right = t.nodes[x].Left
-	if t.nodes[x].Left != NullIndex {
-		t.nodes[t.nodes[x].Left].Parent = h
-	}
-	t.nodes[x].Left = h
-	t.nodes[x].Color = t.nodes[h].Color
-	t.nodes[h].Color = colorRed
-	// Update parent pointers
-	t.nodes[x].Parent = t.nodes[h].Parent
-	t.nodes[h].Parent = x
-	return x
-}
-
-// rotateRight performs a right rotation.
-//
-//	    |          |
-//	    h          x
-//	   / \   =>   / \
-//	  x   c      a   h
-//	 / \            / \
-//	a   b          b   c
-func (t *PriceLevelTree) rotateRight(h int32) int32 {
-	x := t.nodes[h].Left
-	t.nodes[h].Left = t.nodes[x].Right
-	if t.nodes[x].Right != NullIndex {
-		t.nodes[t.nodes[x].Right].Parent = h
-	}
-	t.nodes[x].Right = h
-	t.nodes[x].Color = t.nodes[h].Color
-	t.nodes[h].Color = colorRed
-	// Update parent pointers
-	t.nodes[x].Parent = t.nodes[h].Parent
-	t.nodes[h].Parent = x
-	return x
-}
-
-// flipColors flips the colors of a node and its children.
-func (t *PriceLevelTree) flipColors(h int32) {
-	t.nodes[h].Color = !t.nodes[h].Color
-	t.nodes[t.nodes[h].Left].Color = !t.nodes[t.nodes[h].Left].Color
-	t.nodes[t.nodes[h].Right].Color = !t.nodes[t.nodes[h].Right].Color
-}
-
 // Insert inserts a price into the tree.
 // Returns true if the price was newly inserted, false if it already existed.
 func (t *PriceLevelTree) Insert(price udecimal.Decimal) bool {
 	var inserted bool
-	t.root, inserted = t.insert(t.root, NullIndex, price)
+	t.root, inserted = t.doInsert(t.root, NullIndex, price)
 	t.nodes[t.root].Color = colorBlack // Root is always black
 	if inserted {
 		t.count++
@@ -161,56 +77,9 @@ func (t *PriceLevelTree) Insert(price udecimal.Decimal) bool {
 	return inserted
 }
 
-func (t *PriceLevelTree) insert(h int32, parent int32, price udecimal.Decimal) (int32, bool) {
-	if h == NullIndex {
-		idx := t.alloc()
-		t.nodes[idx].Price = price
-		t.nodes[idx].Parent = parent
-		return idx, true
-	}
-
-	var inserted bool
-	switch cmp := price.Cmp(t.nodes[h].Price); {
-	case cmp < 0:
-		t.nodes[h].Left, inserted = t.insert(t.nodes[h].Left, h, price)
-	case cmp > 0:
-		t.nodes[h].Right, inserted = t.insert(t.nodes[h].Right, h, price)
-	default:
-		// Key already exists
-		return h, false
-	}
-
-	// Fix up LLRB invariants
-	if t.isRed(t.nodes[h].Right) && !t.isRed(t.nodes[h].Left) {
-		h = t.rotateLeft(h)
-	}
-	if t.isRed(t.nodes[h].Left) && t.isRed(t.nodes[t.nodes[h].Left].Left) {
-		h = t.rotateRight(h)
-	}
-	if t.isRed(t.nodes[h].Left) && t.isRed(t.nodes[h].Right) {
-		t.flipColors(h)
-	}
-
-	return h, inserted
-}
-
 // Contains checks if a price exists in the tree.
 func (t *PriceLevelTree) Contains(price udecimal.Decimal) bool {
 	return t.search(t.root, price) != NullIndex
-}
-
-func (t *PriceLevelTree) search(h int32, price udecimal.Decimal) int32 {
-	for h != NullIndex {
-		switch cmp := price.Cmp(t.nodes[h].Price); {
-		case cmp < 0:
-			h = t.nodes[h].Left
-		case cmp > 0:
-			h = t.nodes[h].Right
-		default:
-			return h
-		}
-	}
-	return NullIndex
 }
 
 // Min returns the minimum price in the tree.
@@ -220,16 +89,6 @@ func (t *PriceLevelTree) Min() (udecimal.Decimal, bool) {
 		return udecimal.Zero, false
 	}
 	return t.nodes[t.minCache].Price, true
-}
-
-func (t *PriceLevelTree) findMin(h int32) int32 {
-	if h == NullIndex {
-		return NullIndex
-	}
-	for t.nodes[h].Left != NullIndex {
-		h = t.nodes[h].Left
-	}
-	return h
 }
 
 // Max returns the maximum price in the tree.
@@ -255,24 +114,11 @@ func (t *PriceLevelTree) Successor(price udecimal.Decimal) (udecimal.Decimal, bo
 	if idx == NullIndex {
 		return udecimal.Zero, false
 	}
-	succIdx := t.successor(idx)
+	succIdx := t.doSuccessor(idx)
 	if succIdx == NullIndex {
 		return udecimal.Zero, false
 	}
 	return t.nodes[succIdx].Price, true
-}
-
-func (t *PriceLevelTree) successor(idx int32) int32 {
-	node := &t.nodes[idx]
-	if node.Right != NullIndex {
-		return t.findMin(node.Right)
-	}
-	parent := node.Parent
-	for parent != NullIndex && idx == t.nodes[parent].Right {
-		idx = parent
-		parent = t.nodes[parent].Parent
-	}
-	return parent
 }
 
 // Delete removes a price from the tree.
@@ -313,6 +159,175 @@ func (t *PriceLevelTree) Delete(price udecimal.Decimal) bool {
 	return true
 }
 
+// DeleteMin removes and returns the minimum price.
+func (t *PriceLevelTree) DeleteMin() (udecimal.Decimal, bool) {
+	if t.root == NullIndex {
+		return udecimal.Zero, false
+	}
+	minPrice := t.nodes[t.minCache].Price
+
+	if !t.isRed(t.nodes[t.root].Left) && !t.isRed(t.nodes[t.root].Right) {
+		t.nodes[t.root].Color = colorRed
+	}
+	t.root = t.doDeleteMin(t.root)
+	if t.root != NullIndex {
+		t.nodes[t.root].Color = colorBlack
+		t.nodes[t.root].Parent = NullIndex
+	}
+	t.count--
+	t.minCache = t.findMin(t.root)
+
+	return minPrice, true
+}
+
+// InOrderSlice returns all prices in sorted order (for testing/debugging).
+func (t *PriceLevelTree) InOrderSlice() []udecimal.Decimal {
+	result := make([]udecimal.Decimal, 0, t.count)
+	t.inOrder(t.root, &result)
+	return result
+}
+
+// alloc allocates a node from the free list.
+func (t *PriceLevelTree) alloc() int32 {
+	if t.freeHead == NullIndex {
+		// Arena exhausted - in production, this should trigger an alert
+		panic("PriceLevelTree: arena exhausted")
+	}
+	idx := t.freeHead
+	t.freeHead = t.nodes[idx].Left
+	// Reset node
+	t.nodes[idx] = PriceLevel{
+		Left:   NullIndex,
+		Right:  NullIndex,
+		Parent: NullIndex,
+		Color:  colorRed, // New nodes are always red in LLRB
+	}
+	return idx
+}
+
+// free returns a node to the free list.
+func (t *PriceLevelTree) free(idx int32) {
+	t.nodes[idx].Left = t.freeHead
+	t.freeHead = idx
+}
+
+// isRed checks if a node is red (nil nodes are black).
+func (t *PriceLevelTree) isRed(idx int32) bool {
+	if idx == NullIndex {
+		return false
+	}
+	return t.nodes[idx].Color
+}
+
+// rotateLeft performs a left rotation.
+func (t *PriceLevelTree) rotateLeft(h int32) int32 {
+	x := t.nodes[h].Right
+	t.nodes[h].Right = t.nodes[x].Left
+	if t.nodes[x].Left != NullIndex {
+		t.nodes[t.nodes[x].Left].Parent = h
+	}
+	t.nodes[x].Left = h
+	t.nodes[x].Color = t.nodes[h].Color
+	t.nodes[h].Color = colorRed
+	// Update parent pointers
+	t.nodes[x].Parent = t.nodes[h].Parent
+	t.nodes[h].Parent = x
+	return x
+}
+
+// rotateRight performs a right rotation.
+func (t *PriceLevelTree) rotateRight(h int32) int32 {
+	x := t.nodes[h].Left
+	t.nodes[h].Left = t.nodes[x].Right
+	if t.nodes[x].Right != NullIndex {
+		t.nodes[t.nodes[x].Right].Parent = h
+	}
+	t.nodes[x].Right = h
+	t.nodes[x].Color = t.nodes[h].Color
+	t.nodes[h].Color = colorRed
+	// Update parent pointers
+	t.nodes[x].Parent = t.nodes[h].Parent
+	t.nodes[h].Parent = x
+	return x
+}
+
+// flipColors flips the colors of a node and its children.
+func (t *PriceLevelTree) flipColors(h int32) {
+	t.nodes[h].Color = !t.nodes[h].Color
+	t.nodes[t.nodes[h].Left].Color = !t.nodes[t.nodes[h].Left].Color
+	t.nodes[t.nodes[h].Right].Color = !t.nodes[t.nodes[h].Right].Color
+}
+
+func (t *PriceLevelTree) doInsert(h int32, parent int32, price udecimal.Decimal) (int32, bool) {
+	if h == NullIndex {
+		idx := t.alloc()
+		t.nodes[idx].Price = price
+		t.nodes[idx].Parent = parent
+		return idx, true
+	}
+
+	var inserted bool
+	switch cmp := price.Cmp(t.nodes[h].Price); {
+	case cmp < 0:
+		t.nodes[h].Left, inserted = t.doInsert(t.nodes[h].Left, h, price)
+	case cmp > 0:
+		t.nodes[h].Right, inserted = t.doInsert(t.nodes[h].Right, h, price)
+	default:
+		// Key already exists
+		return h, false
+	}
+
+	// Fix up LLRB invariants
+	if t.isRed(t.nodes[h].Right) && !t.isRed(t.nodes[h].Left) {
+		h = t.rotateLeft(h)
+	}
+	if t.isRed(t.nodes[h].Left) && t.isRed(t.nodes[t.nodes[h].Left].Left) {
+		h = t.rotateRight(h)
+	}
+	if t.isRed(t.nodes[h].Left) && t.isRed(t.nodes[h].Right) {
+		t.flipColors(h)
+	}
+
+	return h, inserted
+}
+
+func (t *PriceLevelTree) search(h int32, price udecimal.Decimal) int32 {
+	for h != NullIndex {
+		switch cmp := price.Cmp(t.nodes[h].Price); {
+		case cmp < 0:
+			h = t.nodes[h].Left
+		case cmp > 0:
+			h = t.nodes[h].Right
+		default:
+			return h
+		}
+	}
+	return NullIndex
+}
+
+func (t *PriceLevelTree) findMin(h int32) int32 {
+	if h == NullIndex {
+		return NullIndex
+	}
+	for t.nodes[h].Left != NullIndex {
+		h = t.nodes[h].Left
+	}
+	return h
+}
+
+func (t *PriceLevelTree) doSuccessor(idx int32) int32 {
+	node := &t.nodes[idx]
+	if node.Right != NullIndex {
+		return t.findMin(node.Right)
+	}
+	parent := node.Parent
+	for parent != NullIndex && idx == t.nodes[parent].Right {
+		idx = parent
+		parent = t.nodes[parent].Parent
+	}
+	return parent
+}
+
 func (t *PriceLevelTree) deleteWithFlag(h int32, price udecimal.Decimal) (int32, bool) {
 	if h == NullIndex {
 		return NullIndex, false
@@ -345,7 +360,7 @@ func (t *PriceLevelTree) deleteWithFlag(h int32, price udecimal.Decimal) (int32,
 			// Find minimum in right subtree
 			minIdx := t.findMin(t.nodes[h].Right)
 			t.nodes[h].Price = t.nodes[minIdx].Price
-			t.nodes[h].Right = t.deleteMin(t.nodes[h].Right)
+			t.nodes[h].Right = t.doDeleteMin(t.nodes[h].Right)
 			found = true
 		} else {
 			t.nodes[h].Right, found = t.deleteWithFlag(t.nodes[h].Right, price)
@@ -353,7 +368,6 @@ func (t *PriceLevelTree) deleteWithFlag(h int32, price udecimal.Decimal) (int32,
 	}
 	return t.balance(h), found
 }
-
 
 func (t *PriceLevelTree) moveRedLeft(h int32) int32 {
 	t.flipColors(h)
@@ -374,7 +388,7 @@ func (t *PriceLevelTree) moveRedRight(h int32) int32 {
 	return h
 }
 
-func (t *PriceLevelTree) deleteMin(h int32) int32 {
+func (t *PriceLevelTree) doDeleteMin(h int32) int32 {
 	if t.nodes[h].Left == NullIndex {
 		t.free(h)
 		return NullIndex
@@ -382,7 +396,7 @@ func (t *PriceLevelTree) deleteMin(h int32) int32 {
 	if !t.isRed(t.nodes[h].Left) && !t.isRed(t.nodes[t.nodes[h].Left].Left) {
 		h = t.moveRedLeft(h)
 	}
-	t.nodes[h].Left = t.deleteMin(t.nodes[h].Left)
+	t.nodes[h].Left = t.doDeleteMin(t.nodes[h].Left)
 	return t.balance(h)
 }
 
@@ -397,34 +411,6 @@ func (t *PriceLevelTree) balance(h int32) int32 {
 		t.flipColors(h)
 	}
 	return h
-}
-
-// DeleteMin removes and returns the minimum price.
-func (t *PriceLevelTree) DeleteMin() (udecimal.Decimal, bool) {
-	if t.root == NullIndex {
-		return udecimal.Zero, false
-	}
-	minPrice := t.nodes[t.minCache].Price
-
-	if !t.isRed(t.nodes[t.root].Left) && !t.isRed(t.nodes[t.root].Right) {
-		t.nodes[t.root].Color = colorRed
-	}
-	t.root = t.deleteMin(t.root)
-	if t.root != NullIndex {
-		t.nodes[t.root].Color = colorBlack
-		t.nodes[t.root].Parent = NullIndex
-	}
-	t.count--
-	t.minCache = t.findMin(t.root)
-
-	return minPrice, true
-}
-
-// InOrderSlice returns all prices in sorted order (for testing/debugging).
-func (t *PriceLevelTree) InOrderSlice() []udecimal.Decimal {
-	result := make([]udecimal.Decimal, 0, t.count)
-	t.inOrder(t.root, &result)
-	return result
 }
 
 func (t *PriceLevelTree) inOrder(h int32, result *[]udecimal.Decimal) {

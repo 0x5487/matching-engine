@@ -8,31 +8,31 @@ import (
 )
 
 func TestBuyerQueue(t *testing.T) {
-	q := NewBuyerQueue()
+	q := newBuyerQueue()
 
 	q.insertOrder(&Order{
 		ID:    "101",
 		Price: udecimal.MustFromInt64(10, 0),
 		Size:  udecimal.MustFromInt64(10, 0),
-	}, false)
+	})
 
 	q.insertOrder(&Order{
 		ID:    "201",
 		Price: udecimal.MustFromInt64(20, 0),
 		Size:  udecimal.MustFromInt64(10, 0),
-	}, false)
+	})
 
 	q.insertOrder(&Order{
 		ID:    "301",
 		Price: udecimal.MustFromInt64(30, 0),
 		Size:  udecimal.MustFromInt64(10, 0),
-	}, false)
+	})
 
 	q.insertOrder(&Order{
 		ID:    "202",
 		Price: udecimal.MustFromInt64(20, 0),
 		Size:  udecimal.MustFromInt64(100, 0),
-	}, false)
+	})
 
 	assert.Equal(t, int64(4), q.orderCount())
 
@@ -51,7 +51,7 @@ func TestBuyerQueue(t *testing.T) {
 	assert.Equal(t, "20", ord.Price.String())
 	assert.Equal(t, "10", ord.Size.String())
 	ord.Size = udecimal.MustFromInt64(2, 0)
-	q.insertOrder(ord, true)
+	q.pushFront(ord)
 
 	ord = q.popHeadOrder()
 	assert.Equal(t, "201", ord.ID)
@@ -70,31 +70,31 @@ func TestBuyerQueue(t *testing.T) {
 }
 
 func TestSellerQueue(t *testing.T) {
-	q := NewSellerQueue()
+	q := newSellerQueue()
 
 	q.insertOrder(&Order{
 		ID:    "101",
 		Price: udecimal.MustFromInt64(10, 0),
 		Size:  udecimal.MustFromInt64(10, 0),
-	}, false)
+	})
 
 	q.insertOrder(&Order{
 		ID:    "201",
 		Price: udecimal.MustFromInt64(20, 0),
 		Size:  udecimal.MustFromInt64(10, 0),
-	}, false)
+	})
 
 	q.insertOrder(&Order{
 		ID:    "301",
 		Price: udecimal.MustFromInt64(30, 0),
 		Size:  udecimal.MustFromInt64(10, 0),
-	}, false)
+	})
 
 	q.insertOrder(&Order{
 		ID:    "202",
 		Price: udecimal.MustFromInt64(20, 0),
 		Size:  udecimal.MustFromInt64(100, 0),
-	}, false)
+	})
 
 	assert.Equal(t, int64(4), q.orderCount())
 	depths := q.depth(25)
@@ -111,7 +111,7 @@ func TestSellerQueue(t *testing.T) {
 	assert.Equal(t, "20", ord.Price.String())
 	assert.Equal(t, "10", ord.Size.String())
 	ord.Size = udecimal.MustFromInt64(2, 0)
-	q.insertOrder(ord, true)
+	q.pushFront(ord)
 
 	ord = q.popHeadOrder()
 	assert.Equal(t, "201", ord.ID)
@@ -127,5 +127,4 @@ func TestSellerQueue(t *testing.T) {
 	assert.Equal(t, "30", ord.Price.String())
 
 	assert.Equal(t, int64(0), q.orderCount())
-
 }

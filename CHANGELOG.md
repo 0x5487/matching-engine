@@ -18,6 +18,9 @@
 - refactor: add `EngineID` and `CommandID` to `MatchingEngine` and `OrderBook` to support multiple engines.
 - feat: optimize high-frequency commands (`PlaceOrder`, `CancelOrder`, `AmendOrder`) with manual binary serialization (BigEndian, 17x speedup, zero-allocation).
 - feat: add `FastBinarySerializer` with automatic JSON fallback for legacy compatibility and admin commands.
+- fix: fix `make lint` issue.
+
+
 ## v0.7.0 (2025-12-14)
 
 - **breaking**: replace `OrderBookID` with `SequenceID` in `BookLog`. All events now have a globally increasing `SequenceID` for ordering, deduplication, and rebuild synchronization. Use `LogType` to determine if the event affects order book state.

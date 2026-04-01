@@ -91,7 +91,7 @@ func (rb *RingBuffer[T]) Claim() (int64, *T) {
 // ClaimN atomically claims n sequences and returns the start and end sequence numbers.
 // Returns (-1, -1) if the RingBuffer is shut down.
 // The caller should write to the slots from startSeq to endSeq and then call CommitN(startSeq, endSeq).
-func (rb *RingBuffer[T]) ClaimN(n int64) (int64, int64) {
+func (rb *RingBuffer[T]) ClaimN(n int64) (start int64, end int64) {
 	// Check if shutdown
 	if rb.isShutdown.Load() {
 		return -1, -1
@@ -150,7 +150,7 @@ func (rb *RingBuffer[T]) Run() {
 }
 
 // Shutdown gracefully stops the disruptor, ensuring all pending events are processed.
-// It blocks until all events are processed or the context is cancelled.
+// It blocks until all events are processed or the context is canceled.
 func (rb *RingBuffer[T]) Shutdown(ctx context.Context) error {
 	// Set shutdown flag to block new publishes
 	rb.isShutdown.Store(true)

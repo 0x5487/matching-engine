@@ -13,8 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/0x5487/matching-engine/protocol"
 	"github.com/quagmt/udecimal"
+
+	"github.com/0x5487/matching-engine/protocol"
 )
 
 // MatchingEngine manages multiple order books for different markets.
@@ -31,6 +32,15 @@ type MatchingEngine struct {
 	responsePool  *sync.Pool
 }
 
+const (
+	defaultRingBufferSize = 32768
+	snapshotTimeout       = 10 * time.Second
+	tmpDirPerm            = 0o750
+	metaFilePerm          = 0o600
+	footerSizeLimit       = 4294967295
+	footerLenSize         = 4
+)
+
 // NewMatchingEngine creates a new matching engine instance.
 func NewMatchingEngine(engineID string, publishTrader PublishLog) *MatchingEngine {
 	engine := &MatchingEngine{
@@ -45,7 +55,7 @@ func NewMatchingEngine(engineID string, publishTrader PublishLog) *MatchingEngin
 		},
 	}
 
-	engine.ring = NewRingBuffer(32768, engine)
+	engine.ring = NewRingBuffer(defaultRingBufferSize, engine)
 
 	return engine
 }
@@ -77,68 +87,6 @@ func (engine *MatchingEngine) OnEvent(ev *InputEvent) {
 	if ev.Query != nil {
 		engine.processQuery(ev)
 		return
-	}
-}
-
-func (engine *MatchingEngine) processCommand(cmd *protocol.Command) {
-	if cmd.Type == protocol.CmdCreateMarket {
-		engine.handleCreateMarket(cmd)
-		return
-	}
-
-	if cmd.Type == protocol.CmdUserEvent {
-		engine.handleUserEvent(cmd)
-		return
-	}
-
-	book := engine.orderBook(cmd.MarketID)
-	if book == nil {
-		return
-	}
-	book.processCommand(cmd)
-
-	if cmd.SeqID > 0 {
-		book.lastCmdSeqID.Store(cmd.SeqID)
-	}
-}
-
-func (engine *MatchingEngine) processQuery(ev *InputEvent) {
-	switch q := ev.Query.(type) {
-	case *protocol.GetDepthRequest:
-		book := engine.orderBook(q.MarketID)
-		if book != nil {
-			book.processQuery(ev)
-		}
-	case *protocol.GetStatsRequest:
-		book := engine.orderBook(q.MarketID)
-		if book != nil {
-			book.processQuery(ev)
-		}
-	case *OrderBookSnapshot:
-		book := engine.orderBook(q.MarketID)
-		if book != nil {
-			book.processQuery(ev)
-		}
-	case *engineSnapshotQuery:
-		engine.handleSnapshotQuery(ev)
-	}
-}
-
-// handleSnapshotQuery creates snapshots for all OrderBooks synchronously
-// (on the same goroutine as the event loop, ensuring consistency).
-func (engine *MatchingEngine) handleSnapshotQuery(ev *InputEvent) {
-	var results []snapshotResult
-
-	for _, book := range engine.orderbooks {
-		snap := book.createSnapshot()
-		results = append(results, snapshotResult{snap: snap})
-	}
-
-	if ev.Resp != nil {
-		select {
-		case ev.Resp <- results:
-		default:
-		}
 	}
 }
 
@@ -215,7 +163,7 @@ func defaultCommandID(cmdType protocol.CommandType, marketID, key string) string
 
 // PlaceOrder adds an order to the appropriate order book based on the market ID.
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
-func (engine *MatchingEngine) PlaceOrder(ctx context.Context, marketID string, cmd *protocol.PlaceOrderCommand) error {
+func (engine *MatchingEngine) PlaceOrder(_ context.Context, marketID string, cmd *protocol.PlaceOrderCommand) error {
 	bytes, err := engine.serializer.Marshal(cmd)
 	if err != nil {
 		return err
@@ -236,7 +184,11 @@ func (engine *MatchingEngine) PlaceOrder(ctx context.Context, marketID string, c
 // PlaceOrderBatch adds multiple orders to the appropriate order book(s).
 // This method performs serialization before acquiring RingBuffer slots,
 // ensuring that serialization errors do not block or waste RingBuffer sequences.
-func (engine *MatchingEngine) PlaceOrderBatch(ctx context.Context, marketID string, cmds []*protocol.PlaceOrderCommand) error {
+func (engine *MatchingEngine) PlaceOrderBatch(
+	_ context.Context,
+	marketID string,
+	cmds []*protocol.PlaceOrderCommand,
+) error {
 	if len(cmds) == 0 {
 		return nil
 	}
@@ -269,7 +221,7 @@ func (engine *MatchingEngine) PlaceOrderBatch(ctx context.Context, marketID stri
 
 // AmendOrder modifies an existing order in the appropriate order book.
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
-func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, cmd *protocol.AmendOrderCommand) error {
+func (engine *MatchingEngine) AmendOrder(_ context.Context, marketID string, cmd *protocol.AmendOrderCommand) error {
 	bytes, err := engine.serializer.Marshal(cmd)
 	if err != nil {
 		return err
@@ -289,7 +241,11 @@ func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, c
 
 // CancelOrder cancels an order in the appropriate order book.
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
-func (engine *MatchingEngine) CancelOrder(ctx context.Context, marketID string, cmd *protocol.CancelOrderCommand) error {
+func (engine *MatchingEngine) CancelOrder(
+	_ context.Context,
+	marketID string,
+	cmd *protocol.CancelOrderCommand,
+) error {
 	bytes, err := engine.serializer.Marshal(cmd)
 	if err != nil {
 		return err
@@ -422,7 +378,11 @@ func (engine *MatchingEngine) SendUserEvent(userID uint64, eventType string, key
 
 // GetStats returns usage statistics for the specified market.
 func (engine *MatchingEngine) GetStats(marketID string) (*protocol.GetStatsResponse, error) {
-	respChan := engine.responsePool.Get().(chan any)
+	val := engine.responsePool.Get()
+	respChan, ok := val.(chan any)
+	if !ok {
+		return nil, errors.New("failed to get response channel from pool")
+	}
 	defer func() {
 		// Ensure channel is drained before putting back
 		select {
@@ -456,7 +416,11 @@ func (engine *MatchingEngine) Depth(marketID string, limit uint32) (*protocol.Ge
 		return nil, ErrInvalidParam
 	}
 
-	respChan := engine.responsePool.Get().(chan any)
+	val := engine.responsePool.Get()
+	respChan, ok := val.(chan any)
+	if !ok {
+		return nil, errors.New("failed to get response channel from pool")
+	}
 	defer func() {
 		select {
 		case <-respChan:
@@ -485,13 +449,13 @@ func (engine *MatchingEngine) Depth(marketID string, limit uint32) (*protocol.Ge
 
 // Shutdown gracefully shuts down the engine.
 // It blocks until all pending commands in the RingBuffer are processed
-// or the context is cancelled.
+// or the context is canceled.
 func (engine *MatchingEngine) Shutdown(ctx context.Context) error {
 	engine.isShutdown.Store(true)
 	return engine.ring.Shutdown(ctx)
 }
 
-// snapshotResult wraps a snapshot result with potential error
+// snapshotResult wraps a snapshot result with potential error.
 type snapshotResult struct {
 	snap *OrderBookSnapshot
 	err  error
@@ -500,18 +464,22 @@ type snapshotResult struct {
 // TakeSnapshot captures a consistent snapshot of all order books and writes them to the specified directory.
 // It generates two files: `snapshot.bin` (binary data) and `metadata.json` (metadata).
 // Returns the metadata object or an error.
-func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, error) {
+func (engine *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, error) {
 	// Request snapshots from all OrderBooks through the RingBuffer
 	// This ensures snapshots are taken on the consumer goroutine (no race conditions)
-	respChan := e.responsePool.Get().(chan any)
+	val := engine.responsePool.Get()
+	respChan, ok := val.(chan any)
+	if !ok {
+		return nil, errors.New("failed to get response channel from pool")
+	}
 	defer func() {
 		select {
 		case <-respChan:
 		default:
 		}
-		e.responsePool.Put(respChan)
+		engine.responsePool.Put(respChan)
 	}()
-	e.ring.Publish(InputEvent{
+	engine.ring.Publish(InputEvent{
 		Query: &engineSnapshotQuery{},
 		Resp:  respChan,
 	})
@@ -519,8 +487,11 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 	var results []snapshotResult
 	select {
 	case res := <-respChan:
-		results = res.([]snapshotResult)
-	case <-time.After(10 * time.Second):
+		results, ok = res.([]snapshotResult)
+		if !ok {
+			return nil, errors.New("unexpected response type for snapshot")
+		}
+	case <-time.After(snapshotTimeout):
 		return nil, ErrTimeout
 	}
 
@@ -529,7 +500,8 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 	if err := os.RemoveAll(tmpDir); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+	// G301: permissions 0750
+	if err := os.MkdirAll(tmpDir, tmpDirPerm); err != nil {
 		return nil, err
 	}
 
@@ -537,8 +509,9 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 	var globalSeqID uint64
 
 	// Open snapshot.bin
+
 	binPath := filepath.Join(tmpDir, "snapshot.bin")
-	binFile, err := os.Create(binPath)
+	binFile, err := os.Create(filepath.Clean(binPath))
 	if err != nil {
 		return nil, err
 	}
@@ -558,15 +531,17 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 		snap := result.snap
 
 		// Serialize Market Data
-		data, err := json.Marshal(snap)
+		var data []byte
+		data, err = json.Marshal(snap)
 		if err != nil {
-			binFile.Close()
+			_ = binFile.Close()
 			return nil, err
 		}
 
-		n, err := binFile.Write(data)
+		var n int
+		n, err = binFile.Write(data)
 		if err != nil {
-			binFile.Close()
+			_ = binFile.Close()
 			return nil, err
 		}
 
@@ -592,44 +567,45 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 
 	// If any snapshots failed, return error
 	if len(snapshotErrors) > 0 {
-		binFile.Close()
+		_ = binFile.Close()
 		return nil, errors.Join(snapshotErrors...)
 	}
 
 	// Write Footer
 	footer := SnapshotFileFooter{Markets: markets}
-	footerData, err := json.Marshal(footer)
+	var footerData []byte
+	footerData, err = json.Marshal(footer)
 	if err != nil {
-		binFile.Close()
+		_ = binFile.Close()
 		return nil, err
 	}
 
 	// Write Footer JSON
-	if _, err := binFile.Write(footerData); err != nil {
-		binFile.Close()
+	if _, err = binFile.Write(footerData); err != nil {
+		_ = binFile.Close()
 		return nil, err
 	}
 
 	// Write Footer Length (4 bytes, Big Endian)
-	if len(footerData) > 4294967295 {
-		binFile.Close()
+	if len(footerData) > footerSizeLimit {
+		_ = binFile.Close()
 		return nil, errors.New("footer too large")
 	}
 	//nolint:gosec // Verified length above
 	footerLen := uint32(len(footerData))
-	if err := binary.Write(binFile, binary.BigEndian, footerLen); err != nil {
-		binFile.Close()
+	if err = binary.Write(binFile, binary.BigEndian, footerLen); err != nil {
+		_ = binFile.Close()
 		return nil, err
 	}
 
 	// Sync to ensure data is flushed to disk before checksum calculation
-	if err := binFile.Sync(); err != nil {
-		binFile.Close()
+	if err = binFile.Sync(); err != nil {
+		_ = binFile.Close()
 		return nil, err
 	}
 
 	// Close file before calculating checksum
-	if err := binFile.Close(); err != nil {
+	if err = binFile.Close(); err != nil {
 		return nil, err
 	}
 
@@ -654,7 +630,7 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 	}
 
 	metaPath := filepath.Join(tmpDir, "metadata.json")
-	if err := os.WriteFile(metaPath, metaBytes, 0600); err != nil {
+	if err = os.WriteFile(metaPath, metaBytes, metaFilePerm); err != nil {
 		return nil, err
 	}
 
@@ -671,22 +647,22 @@ func (e *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, erro
 
 // RestoreFromSnapshot restores the entire matching engine state from a snapshot in the specified directory.
 // Returns the metadata from the snapshot for MQ replay positioning.
-func (e *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMetadata, error) {
+func (engine *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMetadata, error) {
 	// 1. Read metadata.json
 	metaPath := filepath.Join(inputDir, "metadata.json")
-	metaBytes, err := os.ReadFile(metaPath)
+	metaBytes, err := os.ReadFile(filepath.Clean(metaPath))
 	if err != nil {
 		return nil, err
 	}
 
 	var meta SnapshotMetadata
-	if err := json.Unmarshal(metaBytes, &meta); err != nil {
+	if err = json.Unmarshal(metaBytes, &meta); err != nil {
 		return nil, err
 	}
 
 	// 2. Open snapshot.bin
 	binPath := filepath.Join(inputDir, "snapshot.bin")
-	binFile, err := os.Open(binPath)
+	binFile, err := os.Open(filepath.Clean(binPath))
 	if err != nil {
 		return nil, err
 	}
@@ -702,21 +678,22 @@ func (e *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMetadata
 	}
 
 	// 3. Read Footer Length (last 4 bytes)
-	footerLenBytes := make([]byte, 4)
+	footerLenBytes := make([]byte, footerLenSize)
 	stat, err := binFile.Stat()
 	if err != nil {
 		return nil, err
 	}
 	fileSize := stat.Size()
 
-	if _, err := binFile.ReadAt(footerLenBytes, fileSize-4); err != nil {
+	if _, err = binFile.ReadAt(footerLenBytes, fileSize-int64(footerLenSize)); err != nil {
 		return nil, err
 	}
 	footerLen := binary.BigEndian.Uint32(footerLenBytes)
 
 	// 4. Read Footer JSON
-	footerOffset := fileSize - 4 - int64(footerLen)
+	footerOffset := fileSize - int64(footerLenSize) - int64(footerLen)
 	footerBytes := make([]byte, footerLen)
+
 	if _, err := binFile.ReadAt(footerBytes, footerOffset); err != nil {
 		return nil, err
 	}
@@ -746,14 +723,76 @@ func (e *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMetadata
 		}
 
 		// Create managed OrderBook (no individual RingBuffer) and restore
-		book := newOrderBook(e.engineID, segment.MarketID, e.publishTrader)
+		book := newOrderBook(engine.engineID, segment.MarketID, engine.publishTrader)
 		book.Restore(&snap)
 
 		// Add to engine map (no goroutine needed)
-		e.orderbooks[segment.MarketID] = book
+		engine.orderbooks[segment.MarketID] = book
 	}
 
 	return &meta, nil
+}
+
+func (engine *MatchingEngine) processCommand(cmd *protocol.Command) {
+	if cmd.Type == protocol.CmdCreateMarket {
+		engine.handleCreateMarket(cmd)
+		return
+	}
+
+	if cmd.Type == protocol.CmdUserEvent {
+		engine.handleUserEvent(cmd)
+		return
+	}
+
+	book := engine.orderBook(cmd.MarketID)
+	if book == nil {
+		return
+	}
+	book.processCommand(cmd)
+
+	if cmd.SeqID > 0 {
+		book.lastCmdSeqID.Store(cmd.SeqID)
+	}
+}
+
+func (engine *MatchingEngine) processQuery(ev *InputEvent) {
+	switch q := ev.Query.(type) {
+	case *protocol.GetDepthRequest:
+		book := engine.orderBook(q.MarketID)
+		if book != nil {
+			book.processQuery(ev)
+		}
+	case *protocol.GetStatsRequest:
+		book := engine.orderBook(q.MarketID)
+		if book != nil {
+			book.processQuery(ev)
+		}
+	case *OrderBookSnapshot:
+		book := engine.orderBook(q.MarketID)
+		if book != nil {
+			book.processQuery(ev)
+		}
+	case *engineSnapshotQuery:
+		engine.handleSnapshotQuery(ev)
+	}
+}
+
+// handleSnapshotQuery creates snapshots for all OrderBooks synchronously
+// (on the same goroutine as the event loop, ensuring consistency).
+func (engine *MatchingEngine) handleSnapshotQuery(ev *InputEvent) {
+	results := make([]snapshotResult, 0, len(engine.orderbooks))
+
+	for _, book := range engine.orderbooks {
+		snap := book.createSnapshot()
+		results = append(results, snapshotResult{snap: snap})
+	}
+
+	if ev.Resp != nil {
+		select {
+		case ev.Resp <- results:
+		default:
+		}
+	}
 }
 
 // handleCreateMarket handles the creation of a new market.

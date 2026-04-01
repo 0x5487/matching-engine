@@ -4,8 +4,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/0x5487/matching-engine/protocol"
 	"github.com/quagmt/udecimal"
+
+	"github.com/0x5487/matching-engine/protocol"
 )
 
 // PublishLog is an interface for publishing order book logs (trades, opens, cancels).
@@ -18,7 +19,7 @@ import (
 // so any asynchronous processing must work with cloned data.
 type PublishLog interface {
 	// Publish publishes order book logs. The slice comes from logSlicePool.
-	Publish([]*OrderBookLog)
+	Publish(logs []*OrderBookLog)
 }
 
 // MemoryPublishLog stores logs in memory, useful for testing.
@@ -71,8 +72,7 @@ func (m *MemoryPublishLog) Logs() []*OrderBookLog {
 }
 
 // DiscardPublishLog discards all logs, useful for benchmarking.
-type DiscardPublishLog struct {
-}
+type DiscardPublishLog struct{}
 
 // NewDiscardPublishLog creates a new DiscardPublishLog.
 func NewDiscardPublishLog() *DiscardPublishLog {
@@ -80,7 +80,7 @@ func NewDiscardPublishLog() *DiscardPublishLog {
 }
 
 // Publish does nothing.
-func (p *DiscardPublishLog) Publish(trades []*OrderBookLog) {
+func (p *DiscardPublishLog) Publish(_ []*OrderBookLog) {
 }
 
 // OrderBookLog represents an event in the order book.
@@ -88,7 +88,7 @@ func (p *DiscardPublishLog) Publish(trades []*OrderBookLog) {
 // deduplication, and rebuild synchronization in downstream systems.
 // Use LogType to determine if the event affects order book state:
 // - Open, Match, Cancel, Amend: affect order book state
-// - Reject: does not affect order book state
+// - Reject: does not affect order book state.
 type OrderBookLog struct {
 	SeqID        uint64                `json:"seq_id"`
 	CommandID    string                `json:"command_id,omitempty"`
@@ -99,9 +99,9 @@ type OrderBookLog struct {
 	Side         Side                  `json:"side"`
 	Price        udecimal.Decimal      `json:"price"`
 	Size         udecimal.Decimal      `json:"size"`
-	Amount       udecimal.Decimal      `json:"amount,omitempty"` // Price * Size, only set for Match events
-	OldPrice     udecimal.Decimal      `json:"old_price,omitempty"`
-	OldSize      udecimal.Decimal      `json:"old_size,omitempty"`
+	Amount       udecimal.Decimal      `json:"amount,omitzero"` // Price * Size, only set for Match events
+	OldPrice     udecimal.Decimal      `json:"old_price,omitzero"`
+	OldSize      udecimal.Decimal      `json:"old_size,omitzero"`
 	OrderID      string                `json:"order_id"`
 	UserID       uint64                `json:"user_id"`
 	OrderType    OrderType             `json:"order_type,omitempty"` // Order type: limit, market, ioc, fok
@@ -121,7 +121,12 @@ var bookLogPool = sync.Pool{
 }
 
 func acquireBookLog() *OrderBookLog {
-	return bookLogPool.Get().(*OrderBookLog)
+	val := bookLogPool.Get()
+	log, ok := val.(*OrderBookLog)
+	if !ok {
+		return new(OrderBookLog)
+	}
+	return log
 }
 
 func releaseBookLog(log *OrderBookLog) {
@@ -133,16 +138,24 @@ func releaseBookLog(log *OrderBookLog) {
 	bookLogPool.Put(log)
 }
 
+const defaultLogSliceCap = 8
+
 // logSlicePool pools the *[]*OrderBookLog pointers to reduce allocations.
 var logSlicePool = sync.Pool{
 	New: func() any {
-		s := make([]*OrderBookLog, 0, 8)
+		s := make([]*OrderBookLog, 0, defaultLogSliceCap)
 		return &s
 	},
 }
 
 func acquireLogSlice() *[]*OrderBookLog {
-	return logSlicePool.Get().(*[]*OrderBookLog)
+	val := logSlicePool.Get()
+	ps, ok := val.(*[]*OrderBookLog)
+	if !ok {
+		s := make([]*OrderBookLog, 0, defaultLogSliceCap)
+		return &s
+	}
+	return ps
 }
 
 func releaseLogSlice(ps *[]*OrderBookLog) {
@@ -152,7 +165,19 @@ func releaseLogSlice(ps *[]*OrderBookLog) {
 	logSlicePool.Put(ps)
 }
 
-func NewOpenLog(seqID uint64, commandID, engineID, marketID string, orderID string, userID uint64, side Side, price, size udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
+// NewOpenLog creates a new OrderBookLog for an open order event.
+//
+//nolint:revive // argument-limit: many parameters needed for log creation
+func NewOpenLog(
+	seqID uint64,
+	commandID, engineID, marketID string,
+	orderID string,
+	userID uint64,
+	side Side,
+	price, size udecimal.Decimal,
+	orderType OrderType,
+	timestamp int64,
+) *OrderBookLog {
 	log := acquireBookLog()
 	log.SeqID = seqID
 	log.CommandID = commandID
@@ -170,7 +195,24 @@ func NewOpenLog(seqID uint64, commandID, engineID, marketID string, orderID stri
 	return log
 }
 
-func NewMatchLog(seqID uint64, commandID, engineID string, tradeID uint64, marketID string, takerID string, takerUserID uint64, takerSide Side, takerType OrderType, makerID string, makerUserID uint64, price udecimal.Decimal, size udecimal.Decimal, timestamp int64) *OrderBookLog {
+// NewMatchLog creates a new OrderBookLog for a trade match event.
+//
+//nolint:revive // argument-limit: many parameters needed for log creation
+func NewMatchLog(
+	seqID uint64,
+	commandID, engineID string,
+	tradeID uint64,
+	marketID string,
+	takerID string,
+	takerUserID uint64,
+	takerSide Side,
+	takerType OrderType,
+	makerID string,
+	makerUserID uint64,
+	price udecimal.Decimal,
+	size udecimal.Decimal,
+	timestamp int64,
+) *OrderBookLog {
 	log := acquireBookLog()
 	log.SeqID = seqID
 	log.CommandID = commandID
@@ -192,7 +234,19 @@ func NewMatchLog(seqID uint64, commandID, engineID string, tradeID uint64, marke
 	return log
 }
 
-func NewCancelLog(seqID uint64, commandID, engineID, marketID string, orderID string, userID uint64, side Side, price, size udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
+// NewCancelLog creates a new OrderBookLog for an order cancellation event.
+//
+//nolint:revive // argument-limit: many parameters needed for log creation
+func NewCancelLog(
+	seqID uint64,
+	commandID, engineID, marketID string,
+	orderID string,
+	userID uint64,
+	side Side,
+	price, size udecimal.Decimal,
+	orderType OrderType,
+	timestamp int64,
+) *OrderBookLog {
 	log := acquireBookLog()
 	log.SeqID = seqID
 	log.CommandID = commandID
@@ -210,7 +264,21 @@ func NewCancelLog(seqID uint64, commandID, engineID, marketID string, orderID st
 	return log
 }
 
-func NewAmendLog(seqID uint64, commandID, engineID, marketID string, orderID string, userID uint64, side Side, price, size udecimal.Decimal, oldPrice udecimal.Decimal, oldSize udecimal.Decimal, orderType OrderType, timestamp int64) *OrderBookLog {
+// NewAmendLog creates a new OrderBookLog for an order amendment event.
+//
+//nolint:revive // argument-limit: many parameters needed for log creation
+func NewAmendLog(
+	seqID uint64,
+	commandID, engineID, marketID string,
+	orderID string,
+	userID uint64,
+	side Side,
+	price, size udecimal.Decimal,
+	oldPrice udecimal.Decimal,
+	oldSize udecimal.Decimal,
+	orderType OrderType,
+	timestamp int64,
+) *OrderBookLog {
 	log := acquireBookLog()
 	log.SeqID = seqID
 	log.CommandID = commandID
@@ -230,7 +298,17 @@ func NewAmendLog(seqID uint64, commandID, engineID, marketID string, orderID str
 	return log
 }
 
-func NewRejectLog(seqID uint64, commandID, engineID, marketID string, orderID string, userID uint64, reason protocol.RejectReason, timestamp int64) *OrderBookLog {
+// NewRejectLog creates a new OrderBookLog for an order rejection event.
+//
+//nolint:revive // argument-limit: many parameters needed for log creation
+func NewRejectLog(
+	seqID uint64,
+	commandID, engineID, marketID string,
+	orderID string,
+	userID uint64,
+	reason protocol.RejectReason,
+	timestamp int64,
+) *OrderBookLog {
 	log := acquireBookLog()
 	log.SeqID = seqID
 	log.CommandID = commandID
@@ -245,7 +323,18 @@ func NewRejectLog(seqID uint64, commandID, engineID, marketID string, orderID st
 	return log
 }
 
-func NewUserEventLog(seqID uint64, commandID, engineID string, userID uint64, eventType string, key string, data []byte, timestamp int64) *OrderBookLog {
+// NewUserEventLog creates a new OrderBookLog for a generic user event.
+//
+//nolint:revive // argument-limit: many parameters needed for log creation
+func NewUserEventLog(
+	seqID uint64,
+	commandID, engineID string,
+	userID uint64,
+	eventType string,
+	key string,
+	data []byte,
+	timestamp int64,
+) *OrderBookLog {
 	log := acquireBookLog()
 	log.SeqID = seqID
 	log.CommandID = commandID
