@@ -7,7 +7,7 @@ A high-performance, in-memory order matching engine written in Go. Designed for 
 - **High Performance**: Pure in-memory matching using efficient SkipList data structures ($O(\log N)$) and **Disruptor** pattern (RingBuffer) for **microsecond latency**.
 - **Single Thread Actor**: Adopts a **Lock-Free** architecture where a single pinned goroutine processes all state mutations. This eliminates context switching and mutex contention, maximizing CPU cache locality.
 - **Concurrency Safe**: All state mutations are serialized through the RingBuffer, eliminating race conditions without heavy lock contention.
-- **Zero-Allocation**: Uses `udecimal` (uint64-based) and extensive object pooling to minimize GC pressure on hot paths.
+- **Low Allocation Hot Paths**: Uses `udecimal` (uint64-based), intrusive lists, and object pooling to minimize GC pressure on performance-critical paths.
 - **Multi-Market Support**: Manages multiple trading pairs (e.g., BTC-USDT, ETH-USDT) within a single `MatchingEngine` instance.
 - **Management Commands**: Dynamic market management (Create, Suspend, Resume, UpdateConfig) via Event Sourcing.
 - **Comprehensive Order Types**:
@@ -30,6 +30,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -56,9 +57,20 @@ func main() {
 	}()
 
 	// 4. Create a Market
-	// This cmd is now async and thread-safe via RingBuffer
+	// Management commands are processed asynchronously by the engine event loop.
 	if err := engine.CreateMarket("admin", "BTC-USDT", "0.00000001"); err != nil {
 		panic(err)
+	}
+
+	// Wait until the market is visible on the read path before submitting orders.
+	for {
+		if _, err := engine.GetStats("BTC-USDT"); err == nil {
+			break
+		}
+		if !errors.Is(err, match.ErrNotFound) {
+			panic(err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	// 5. Place a Sell Limit Order
@@ -69,6 +81,7 @@ func main() {
 		Price:     udecimal.MustFromInt64(50000, 0).String(), // 50000
 		Size:      udecimal.MustFromInt64(1, 0).String(),     // 1.0
 		UserID:    1001,
+		Timestamp: time.Now().UnixNano(),
 	}
 	if err := engine.PlaceOrder(ctx, "BTC-USDT", sellCmd); err != nil {
 		fmt.Printf("Error placing sell order: %v\n", err)
@@ -82,6 +95,7 @@ func main() {
 		Price:     udecimal.MustFromInt64(50000, 0).String(), // 50000
 		Size:      udecimal.MustFromInt64(1, 0).String(),     // 1.0
 		UserID:    1002,
+		Timestamp: time.Now().UnixNano(),
 	}
 	if err := engine.PlaceOrder(ctx, "BTC-USDT", buyCmd); err != nil {
 		fmt.Printf("Error placing buy order: %v\n", err)
@@ -105,21 +119,33 @@ func main() {
 }
 ```
 
+### Command Semantics
+
+- `PlaceOrder`, `CancelOrder`, `AmendOrder`, and management commands enqueue work into the engine event loop. A returned `error` means enqueue/serialization failure, not business rejection.
+- Business-level failures are emitted as `OrderBookLog` entries with `Type == protocol.LogTypeReject`.
+- Commands sent to a missing market generate a reject event with `RejectReasonMarketNotFound`.
+- `GetStats()` and `Depth()` return `ErrNotFound` immediately when the market does not exist.
+
 ### Management Commands
 
 The engine supports dynamic market management:
 
 ```go
 // Suspend a market (rejects new Place/Amend orders)
-engine.SuspendMarket("BTC-USDT")
+engine.SuspendMarket("admin", "BTC-USDT")
 
 // Resume a market
-engine.ResumeMarket("BTC-USDT")
+engine.ResumeMarket("admin", "BTC-USDT")
 
 // Update market configuration (e.g. MinLotSize)
 newLotSize := "0.01"
-engine.UpdateConfig("BTC-USDT", &newLotSize)
+engine.UpdateConfig("admin", "BTC-USDT", newLotSize)
 ```
+
+Invalid management commands are reported through the same event stream as trading rejects. For example:
+
+- duplicate market creation emits `RejectReasonMarketAlreadyExists`
+- invalid `MinLotSize` emits `RejectReasonInvalidPayload`
 
 ### Supported Order Types
 
@@ -163,6 +189,24 @@ err := engine.SendUserEvent(999, "EndOfBlock", "block-100", blockHash)
 
 The event will appear in the `PublishLog` stream as `LogTypeUser` with your custom data payload.
 
+### Snapshot and Restore
+
+Use snapshots to persist engine state and restore it after restart:
+
+```go
+meta, err := engine.TakeSnapshot("./snapshot")
+if err != nil {
+	panic(err)
+}
+
+restored := match.NewMatchingEngine("engine-1-restored", publish)
+meta, err = restored.RestoreFromSnapshot("./snapshot")
+if err != nil {
+	panic(err)
+}
+_ = meta // contains GlobalLastCmdSeqID for replay positioning
+```
+
 ## Benchmark
 
-Please refer to [doc](./doc/benchmark.md) for detailed benchmarks.
+Please refer to [docs](./docs/benchmark.md) for detailed benchmarks.

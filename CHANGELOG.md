@@ -2,6 +2,9 @@
 
 ## [unreleased]
 
+
+## v0.8.0 (2026-04-02)
+
 - feature: add **Iceberg Orders** support with `VisibleSize` parameter, automatic replenishment, priority reset, and deterministic timestamps. See [doc/features/iceberg.md](doc/features/iceberg.md).
 - feature: add **Management Commands** (Create/Suspend/Resume/UpdateConfig) with centralized event sourcing routing, strict state management, and snapshot persistence.
 - feature: add **LotSize configuration** via `WithLotSize()` option for `NewOrderBook()`. Prevents infinite loops in Market orders using `quoteSize` by checking minimum trade unit. Default: `1e-8`. See [doc/features/precision.md](doc/features/precision.md).
@@ -19,6 +22,14 @@
 - feat: optimize high-frequency commands (`PlaceOrder`, `CancelOrder`, `AmendOrder`) with manual binary serialization (BigEndian, 17x speedup, zero-allocation).
 - feat: add `FastBinarySerializer` with automatic JSON fallback for legacy compatibility and admin commands.
 - fix: fix `make lint` issue.
+- fix: return `ErrNotFound` immediately for `GetStats()` and `Depth()` on missing markets instead of timing out.
+- fix: emit standardized `RejectLog` with `RejectReasonMarketNotFound` when write commands target a missing market.
+- fix: reject invalid amend payloads instead of silently coercing malformed `NewPrice` or `NewSize` to zero values.
+- fix: preserve command timestamps in reject logs and `UserEvent` logs for deterministic replay behavior.
+- fix: reject invalid `CreateMarket` requests with standard reject events for duplicate markets and malformed `MinLotSize`.
+- fix: harden binary command decoding to reject truncated payloads instead of accepting partial string fields.
+- fix: validate snapshot footer and segment bounds during restore to prevent malformed snapshot files from causing invalid reads or excessive allocations.
+- docs: update `README.md` to document asynchronous market creation, `ErrNotFound` read semantics, reject-log behavior, and snapshot usage.
 
 
 ## v0.7.0 (2025-12-14)

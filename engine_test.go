@@ -2,7 +2,9 @@ package match
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"hash/crc32"
 	"os"
 	"path/filepath"
 	"testing"
@@ -145,6 +147,57 @@ func TestMatchingEngine(t *testing.T) {
 		// Get OrderBook
 		book := engine.orderbooks[market]
 		assert.Nil(t, book)
+
+		_ = engine.Shutdown(ctx)
+	})
+
+	t.Run("MarketNotFoundReturnsRejectLog", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		engine := NewMatchingEngine("test-engine", publishTrader)
+		ctx := context.Background()
+
+		go engine.Run()
+
+		err := engine.PlaceOrder(ctx, "NON-EXISTENT", &protocol.PlaceOrderCommand{
+			OrderID:   "missing-market-order",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "100",
+			Size:      "1",
+			UserID:    7,
+			Timestamp: 123456789,
+		})
+		require.NoError(t, err)
+
+		assert.Eventually(t, func() bool {
+			for _, log := range publishTrader.Logs() {
+				if log.OrderID == "missing-market-order" {
+					return log.Type == protocol.LogTypeReject &&
+						log.RejectReason == protocol.RejectReasonMarketNotFound &&
+						log.Timestamp == 123456789
+				}
+			}
+			return false
+		}, time.Second, 10*time.Millisecond)
+
+		_ = engine.Shutdown(ctx)
+	})
+
+	t.Run("QueryMissingMarketReturnsNotFound", func(t *testing.T) {
+		engine := NewMatchingEngine("test-engine", NewMemoryPublishLog())
+		ctx := context.Background()
+
+		go engine.Run()
+
+		start := time.Now()
+		stats, err := engine.GetStats("NON-EXISTENT")
+		assert.Nil(t, stats)
+		require.ErrorIs(t, err, ErrNotFound)
+		assert.Less(t, time.Since(start), 200*time.Millisecond)
+
+		depth, err := engine.Depth("NON-EXISTENT", 10)
+		assert.Nil(t, depth)
+		require.ErrorIs(t, err, ErrNotFound)
 
 		_ = engine.Shutdown(ctx)
 	})
@@ -450,6 +503,50 @@ func TestEngineSnapshotRestore(t *testing.T) {
 	_ = newEngine.Shutdown(ctx)
 }
 
+func TestEngineRestoreFromSnapshotRejectsInvalidBounds(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	footer := SnapshotFileFooter{
+		Markets: []MarketSegment{
+			{
+				MarketID: "BTC-USDT",
+				Offset:   0,
+				Length:   1 << 20,
+				Checksum: 0,
+			},
+		},
+	}
+	footerBytes, err := json.Marshal(footer)
+	require.NoError(t, err)
+
+	snapshotBytes := make([]byte, 0, len(footerBytes)+footerLenSize)
+	snapshotBytes = append(snapshotBytes, footerBytes...)
+	footerLenBytes := make([]byte, footerLenSize)
+	require.LessOrEqual(t, len(footerBytes), int(footerSizeLimit))
+	//nolint:gosec // Length checked above in test setup.
+	binary.BigEndian.PutUint32(footerLenBytes, uint32(len(footerBytes)))
+	snapshotBytes = append(snapshotBytes, footerLenBytes...)
+
+	meta := SnapshotMetadata{
+		SchemaVersion:    SnapshotSchemaVersion,
+		Timestamp:        1,
+		EngineVersion:    EngineVersion,
+		SnapshotChecksum: crc32.ChecksumIEEE(snapshotBytes),
+	}
+	metaBytes, err := json.Marshal(meta)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "snapshot.bin"), snapshotBytes, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "metadata.json"), metaBytes, 0o600))
+
+	engine := NewMatchingEngine("test-engine", NewMemoryPublishLog())
+
+	require.NotPanics(t, func() {
+		_, restoreErr := engine.RestoreFromSnapshot(tmpDir)
+		require.Error(t, restoreErr)
+	})
+}
+
 func TestManagement_CreateMarket(t *testing.T) {
 	publish := NewMemoryPublishLog()
 	engine := NewMatchingEngine("test-engine", publish)
@@ -482,6 +579,61 @@ func TestManagement_CreateMarket(t *testing.T) {
 
 	err = engine.PlaceOrder(ctx, marketID, smallOrder)
 	require.NoError(t, err)
+
+	_ = engine.Shutdown(ctx)
+}
+
+func TestManagement_CreateMarketRejectsInvalidConfig(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("test-engine", publish)
+	ctx := context.Background()
+
+	go engine.Run()
+
+	err := engine.CreateMarket("admin", "BAD-MARKET", "not-a-decimal")
+	require.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		for _, log := range publish.Logs() {
+			if log.CommandID != "" && log.RejectReason == protocol.RejectReasonInvalidPayload {
+				return true
+			}
+		}
+		return false
+	}, time.Second, 10*time.Millisecond)
+
+	stats, err := engine.GetStats("BAD-MARKET")
+	assert.Nil(t, stats)
+	require.ErrorIs(t, err, ErrNotFound)
+
+	_ = engine.Shutdown(ctx)
+}
+
+func TestManagement_CreateMarketRejectsDuplicateMarket(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("test-engine", publish)
+	ctx := context.Background()
+
+	go engine.Run()
+
+	err := engine.CreateMarket("admin", "DUP-MARKET", "0.1")
+	require.NoError(t, err)
+	assert.Eventually(t, func() bool {
+		_, getErr := engine.GetStats("DUP-MARKET")
+		return getErr == nil
+	}, time.Second, 10*time.Millisecond)
+
+	err = engine.CreateMarket("admin", "DUP-MARKET", "0.1")
+	require.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		for _, log := range publish.Logs() {
+			if log.RejectReason == protocol.RejectReasonMarketAlreadyExists {
+				return true
+			}
+		}
+		return false
+	}, time.Second, 10*time.Millisecond)
 
 	_ = engine.Shutdown(ctx)
 }

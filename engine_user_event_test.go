@@ -71,6 +71,9 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 				if l.UserID != 999 {
 					return false
 				}
+				if l.Timestamp == 0 {
+					return false
+				}
 			case l.OrderID == "order-2":
 				idx2 = i
 			default:

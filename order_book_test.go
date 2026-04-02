@@ -1097,6 +1097,105 @@ func TestOrderValidation(t *testing.T) {
 		}
 		assert.True(t, cancelRejected && amendRejected)
 	})
+
+	t.Run("RejectAmendInvalidPricePayload", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		book := newOrderBook("test-engine", "BTC-USDT", publishTrader)
+
+		testPlace(book, &protocol.PlaceOrderCommand{
+			OrderID:   "amend-invalid-price",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "100",
+			Size:      "2",
+			UserID:    9,
+		})
+
+		testAmend(book, &protocol.AmendOrderCommand{
+			OrderID:   "amend-invalid-price",
+			UserID:    9,
+			NewPrice:  "bad-price",
+			NewSize:   "2",
+			Timestamp: 777,
+		})
+
+		order := book.bidQueue.order("amend-invalid-price")
+		require.NotNil(t, order)
+		assert.Equal(t, "100", order.Price.String())
+
+		found := false
+		for _, log := range publishTrader.Logs() {
+			if log.Type == protocol.LogTypeReject && log.OrderID == "amend-invalid-price" {
+				found = log.RejectReason == protocol.RejectReasonInvalidPayload && log.Timestamp == 777
+			}
+		}
+		assert.True(t, found)
+	})
+
+	t.Run("RejectAmendInvalidSizePayload", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		book := newOrderBook("test-engine", "BTC-USDT", publishTrader)
+
+		testPlace(book, &protocol.PlaceOrderCommand{
+			OrderID:   "amend-invalid-size",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "100",
+			Size:      "2",
+			UserID:    9,
+		})
+
+		testAmend(book, &protocol.AmendOrderCommand{
+			OrderID:   "amend-invalid-size",
+			UserID:    9,
+			NewPrice:  "100",
+			NewSize:   "bad-size",
+			Timestamp: 778,
+		})
+
+		order := book.bidQueue.order("amend-invalid-size")
+		require.NotNil(t, order)
+		assert.Equal(t, "2", order.Size.String())
+
+		found := false
+		for _, log := range publishTrader.Logs() {
+			if log.Type == protocol.LogTypeReject && log.OrderID == "amend-invalid-size" {
+				found = log.RejectReason == protocol.RejectReasonInvalidPayload && log.Timestamp == 778
+			}
+		}
+		assert.True(t, found)
+	})
+
+	t.Run("RejectInvalidPlacePayloadUsesCommandTimestamp", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		book := newOrderBook("test-engine", "BTC-USDT", publishTrader)
+
+		payload := &protocol.PlaceOrderCommand{
+			OrderID:   "bad-place",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "not-a-decimal",
+			Size:      "1",
+			UserID:    5,
+			Timestamp: 999,
+		}
+		bytes, err := testSerializer.Marshal(payload)
+		require.NoError(t, err)
+
+		book.processCommand(&protocol.Command{
+			MarketID: "BTC-USDT",
+			Type:     protocol.CmdPlaceOrder,
+			Payload:  bytes,
+		})
+
+		found := false
+		for _, log := range publishTrader.Logs() {
+			if log.Type == protocol.LogTypeReject && log.OrderID == "bad-place" {
+				found = log.RejectReason == protocol.RejectReasonInvalidPayload && log.Timestamp == 999
+			}
+		}
+		assert.True(t, found)
+	})
 }
 
 func TestOrderBook_LotSize(t *testing.T) {

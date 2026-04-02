@@ -139,16 +139,31 @@ func (c *PlaceOrderCommand) UnmarshalBinary(data []byte) (int, error) {
 	offset++
 
 	var n int
-	c.OrderID, n = readString(data[offset:])
+	var err error
+	c.OrderID, n, err = readString(data[offset:])
+	if err != nil {
+		return 0, err
+	}
 	offset += n
-	c.Price, n = readString(data[offset:])
+	c.Price, n, err = readString(data[offset:])
+	if err != nil {
+		return 0, err
+	}
 	offset += n
-	c.Size, n = readString(data[offset:])
+	c.Size, n, err = readString(data[offset:])
+	if err != nil {
+		return 0, err
+	}
 	offset += n
-	c.VisibleSize, n = readString(data[offset:])
+	c.VisibleSize, n, err = readString(data[offset:])
+	if err != nil {
+		return 0, err
+	}
 	offset += n
-	c.QuoteSize, n = readString(data[offset:])
-	_ = n // ignore last assignment
+	c.QuoteSize, n, err = readString(data[offset:])
+	if err != nil {
+		return 0, err
+	}
 
 	return offset + n, nil
 }
@@ -190,9 +205,11 @@ func (c *CancelOrderCommand) UnmarshalBinary(data []byte) (int, error) {
 	offset += 8
 	c.UserID = binary.BigEndian.Uint64(data[offset:])
 	offset += 8
-	var n int
-	c.OrderID, n = readString(data[offset:])
-	_ = n
+	orderID, n, err := readString(data[offset:])
+	if err != nil {
+		return 0, err
+	}
+	c.OrderID = orderID
 
 	return offset + n, nil
 }
@@ -239,12 +256,21 @@ func (c *AmendOrderCommand) UnmarshalBinary(data []byte) (int, error) {
 	c.UserID = binary.BigEndian.Uint64(data[offset:])
 	offset += 8
 	var n int
-	c.OrderID, n = readString(data[offset:])
+	var err error
+	c.OrderID, n, err = readString(data[offset:])
+	if err != nil {
+		return 0, err
+	}
 	offset += n
-	c.NewPrice, n = readString(data[offset:])
+	c.NewPrice, n, err = readString(data[offset:])
+	if err != nil {
+		return 0, err
+	}
 	offset += n
-	c.NewSize, n = readString(data[offset:])
-	_ = n
+	c.NewSize, n, err = readString(data[offset:])
+	if err != nil {
+		return 0, err
+	}
 
 	return offset + n, nil
 }
@@ -257,15 +283,15 @@ func writeString(buf []byte, s string) int {
 	return stringLenSize + l
 }
 
-func readString(data []byte) (string, int) {
+func readString(data []byte) (string, int, error) {
 	if len(data) < stringLenSize {
-		return "", 0
+		return "", 0, io.ErrUnexpectedEOF
 	}
 	l := int(binary.BigEndian.Uint16(data))
 	if len(data) < stringLenSize+l {
-		return "", 0
+		return "", 0, io.ErrUnexpectedEOF
 	}
-	return string(data[stringLenSize : stringLenSize+l]), stringLenSize + l
+	return string(data[stringLenSize : stringLenSize+l]), stringLenSize + l, nil
 }
 
 // GetDepthRequest is the payload for querying order book depth.
@@ -313,4 +339,5 @@ type UserEventCommand struct {
 	EventType string `json:"event_type"` // e.g. "EndOfBlock", "AdminMarker"
 	Key       string `json:"key,omitempty"`
 	Data      []byte `json:"data,omitempty"`
+	Timestamp int64  `json:"timestamp"`
 }

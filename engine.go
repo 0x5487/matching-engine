@@ -362,6 +362,7 @@ func (engine *MatchingEngine) SendUserEvent(userID uint64, eventType string, key
 		EventType: eventType,
 		Key:       key,
 		Data:      data,
+		Timestamp: time.Now().UnixNano(),
 	}
 	bytes, err := engine.serializer.Marshal(cmd)
 	if err != nil {
@@ -401,6 +402,9 @@ func (engine *MatchingEngine) GetStats(marketID string) (*protocol.GetStatsRespo
 
 	select {
 	case res := <-respChan:
+		if err, ok := res.(error); ok {
+			return nil, err
+		}
 		if result, ok := res.(*protocol.GetStatsResponse); ok {
 			return result, nil
 		}
@@ -438,6 +442,9 @@ func (engine *MatchingEngine) Depth(marketID string, limit uint32) (*protocol.Ge
 
 	select {
 	case res := <-respChan:
+		if err, ok := res.(error); ok {
+			return nil, err
+		}
 		if result, ok := res.(*protocol.GetDepthResponse); ok {
 			return result, nil
 		}
@@ -689,9 +696,15 @@ func (engine *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMet
 		return nil, err
 	}
 	footerLen := binary.BigEndian.Uint32(footerLenBytes)
+	if fileSize < int64(footerLenSize) || int64(footerLen) > fileSize-int64(footerLenSize) {
+		return nil, errors.New("invalid snapshot footer length")
+	}
 
 	// 4. Read Footer JSON
 	footerOffset := fileSize - int64(footerLenSize) - int64(footerLen)
+	if footerOffset < 0 {
+		return nil, errors.New("invalid snapshot footer offset")
+	}
 	footerBytes := make([]byte, footerLen)
 
 	if _, err := binFile.ReadAt(footerBytes, footerOffset); err != nil {
@@ -705,6 +718,13 @@ func (engine *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMet
 
 	// 5. Restore OrderBooks (as managed books, no individual RingBuffers)
 	for _, segment := range footer.Markets {
+		if segment.Offset < 0 || segment.Length < 0 {
+			return nil, errors.New("invalid snapshot segment bounds")
+		}
+		if segment.Offset > footerOffset || segment.Length > footerOffset-segment.Offset {
+			return nil, errors.New("invalid snapshot segment bounds")
+		}
+
 		// Read segment data
 		segmentData := make([]byte, segment.Length)
 		if _, err := binFile.ReadAt(segmentData, segment.Offset); err != nil {
@@ -746,6 +766,7 @@ func (engine *MatchingEngine) processCommand(cmd *protocol.Command) {
 
 	book := engine.orderBook(cmd.MarketID)
 	if book == nil {
+		engine.rejectCommand(cmd, protocol.RejectReasonMarketNotFound)
 		return
 	}
 	book.processCommand(cmd)
@@ -761,16 +782,22 @@ func (engine *MatchingEngine) processQuery(ev *InputEvent) {
 		book := engine.orderBook(q.MarketID)
 		if book != nil {
 			book.processQuery(ev)
+		} else {
+			engine.respondQueryError(ev, ErrNotFound)
 		}
 	case *protocol.GetStatsRequest:
 		book := engine.orderBook(q.MarketID)
 		if book != nil {
 			book.processQuery(ev)
+		} else {
+			engine.respondQueryError(ev, ErrNotFound)
 		}
 	case *OrderBookSnapshot:
 		book := engine.orderBook(q.MarketID)
 		if book != nil {
 			book.processQuery(ev)
+		} else {
+			engine.respondQueryError(ev, ErrNotFound)
 		}
 	case *engineSnapshotQuery:
 		engine.handleSnapshotQuery(ev)
@@ -800,12 +827,12 @@ func (engine *MatchingEngine) handleSnapshotQuery(ev *InputEvent) {
 func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) {
 	payload := &protocol.CreateMarketCommand{}
 	if err := engine.serializer.Unmarshal(cmd.Payload, payload); err != nil {
-		logger.Error("failed to unmarshal CreateMarket command", "error", err)
+		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
 		return
 	}
 
 	if _, exists := engine.orderbooks[payload.MarketID]; exists {
-		logger.Warn("market already exists", "market_id", payload.MarketID)
+		engine.rejectCommandWithMarket(cmd, payload.MarketID, protocol.RejectReasonMarketAlreadyExists, 0)
 		return
 	}
 
@@ -813,9 +840,11 @@ func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) {
 	opts := []OrderBookOption{}
 	if payload.MinLotSize != "" {
 		size, err := udecimal.Parse(payload.MinLotSize)
-		if err == nil {
-			opts = append(opts, WithLotSize(size))
+		if err != nil {
+			engine.rejectCommandWithMarket(cmd, payload.MarketID, protocol.RejectReasonInvalidPayload, 0)
+			return
 		}
+		opts = append(opts, WithLotSize(size))
 	}
 
 	newbook := newOrderBook(engine.engineID, payload.MarketID, engine.publishTrader, opts...)
@@ -839,7 +868,7 @@ func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
 		payload.EventType,
 		payload.Key,
 		payload.Data,
-		time.Now().UnixNano(),
+		payload.Timestamp,
 	)
 
 	// Publish via the shared publishTrader
@@ -847,10 +876,138 @@ func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
 	logs := acquireLogSlice()
 	*logs = append(*logs, log)
 	engine.publishTrader.Publish(*logs)
+	releaseBookLog(log)
 	releaseLogSlice(logs)
 }
 
 // orderBook is an internal helper to look up an OrderBook by marketID.
 func (engine *MatchingEngine) orderBook(marketID string) *OrderBook {
 	return engine.orderbooks[marketID]
+}
+
+// respondQueryError returns a query-side error without waiting for timeout.
+func (engine *MatchingEngine) respondQueryError(ev *InputEvent, err error) {
+	if ev.Resp == nil {
+		return
+	}
+	select {
+	case ev.Resp <- err:
+	default:
+	}
+}
+
+// rejectCommand emits a standardized reject log for engine-level command failures.
+func (engine *MatchingEngine) rejectCommand(cmd *protocol.Command, reason protocol.RejectReason) {
+	engine.rejectCommandWithMarket(cmd, cmd.MarketID, reason, engine.commandTimestamp(cmd))
+}
+
+// rejectCommandWithMarket emits a standardized reject log for engine-level command failures.
+func (engine *MatchingEngine) rejectCommandWithMarket(
+	cmd *protocol.Command,
+	marketID string,
+	reason protocol.RejectReason,
+	timestamp int64,
+) {
+	log := NewRejectLog(
+		0,
+		cmd.CommandID,
+		engine.engineID,
+		marketID,
+		engine.commandOrderID(cmd),
+		engine.commandUserID(cmd),
+		reason,
+		timestamp,
+	)
+	logs := acquireLogSlice()
+	*logs = append(*logs, log)
+	engine.publishTrader.Publish(*logs)
+	releaseBookLog(log)
+	releaseLogSlice(logs)
+}
+
+// commandTimestamp extracts the command timestamp when available.
+func (engine *MatchingEngine) commandTimestamp(cmd *protocol.Command) int64 {
+	switch cmd.Type {
+	case protocol.CmdPlaceOrder:
+		payload := &protocol.PlaceOrderCommand{}
+		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+			return payload.Timestamp
+		}
+	case protocol.CmdCancelOrder:
+		payload := &protocol.CancelOrderCommand{}
+		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+			return payload.Timestamp
+		}
+	case protocol.CmdAmendOrder:
+		payload := &protocol.AmendOrderCommand{}
+		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+			return payload.Timestamp
+		}
+	case protocol.CmdUserEvent:
+		payload := &protocol.UserEventCommand{}
+		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+			return payload.Timestamp
+		}
+	default:
+		return 0
+	}
+	return 0
+}
+
+// commandOrderID extracts the identifier used for reject logs.
+func (engine *MatchingEngine) commandOrderID(cmd *protocol.Command) string {
+	switch cmd.Type {
+	case protocol.CmdPlaceOrder:
+		payload := &protocol.PlaceOrderCommand{}
+		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+			return payload.OrderID
+		}
+	case protocol.CmdCancelOrder:
+		payload := &protocol.CancelOrderCommand{}
+		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+			return payload.OrderID
+		}
+	case protocol.CmdAmendOrder:
+		payload := &protocol.AmendOrderCommand{}
+		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+			return payload.OrderID
+		}
+	case protocol.CmdUserEvent:
+		payload := &protocol.UserEventCommand{}
+		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+			return payload.Key
+		}
+	default:
+		return "unknown"
+	}
+	return "unknown"
+}
+
+// commandUserID extracts the actor identifier used for reject logs.
+func (engine *MatchingEngine) commandUserID(cmd *protocol.Command) uint64 {
+	switch cmd.Type {
+	case protocol.CmdPlaceOrder:
+		payload := &protocol.PlaceOrderCommand{}
+		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+			return payload.UserID
+		}
+	case protocol.CmdCancelOrder:
+		payload := &protocol.CancelOrderCommand{}
+		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+			return payload.UserID
+		}
+	case protocol.CmdAmendOrder:
+		payload := &protocol.AmendOrderCommand{}
+		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+			return payload.UserID
+		}
+	case protocol.CmdUserEvent:
+		payload := &protocol.UserEventCommand{}
+		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+			return payload.UserID
+		}
+	default:
+		return 0
+	}
+	return 0
 }
