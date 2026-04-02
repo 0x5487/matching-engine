@@ -1,6 +1,9 @@
 package match
 
 import (
+	"context"
+	"errors"
+
 	"github.com/quagmt/udecimal"
 
 	"github.com/0x5487/matching-engine/protocol"
@@ -82,3 +85,41 @@ type InputEvent struct {
 
 // engineSnapshotQuery is an internal query type for Engine-level snapshot requests.
 type engineSnapshotQuery struct{}
+
+// Future represents a placeholder for an asynchronous operation result.
+type Future[T any] struct {
+	engine   *MatchingEngine
+	respChan chan any
+	err      error // Error during the submission phase
+}
+
+// Wait blocks until the operation completes or the context is cancelled.
+func (f *Future[T]) Wait(ctx context.Context) (T, error) {
+	if f.err != nil {
+		var zero T
+		return zero, f.err
+	}
+
+	// Helper to ensure channel is returned to pool
+	defer func() {
+		if f.engine != nil && f.respChan != nil {
+			f.engine.releaseResponseChannel(f.respChan)
+		}
+	}()
+
+	select {
+	case res := <-f.respChan:
+		if err, ok := res.(error); ok {
+			var zero T
+			return zero, err
+		}
+		if val, ok := res.(T); ok {
+			return val, nil
+		}
+		var zero T
+		return zero, errors.New("unexpected response type")
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	}
+}
