@@ -2,6 +2,7 @@
 
 ## [unreleased]
 
+- feature: add **Future Pattern** for synchronous-like waiting on management commands. See [doc/features/future-pattern.md](doc/features/future-pattern.md).
 
 ## v0.8.0 (2026-04-02)
 
