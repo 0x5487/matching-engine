@@ -81,6 +81,7 @@ type Command struct {
 
 // PlaceOrderCommand is the payload for placing a new order.
 type PlaceOrderCommand struct {
+	CommandID   string    `json:"-"`
 	OrderID     string    `json:"order_id"`
 	Side        Side      `json:"side"`
 	OrderType   OrderType `json:"order_type"`
@@ -170,6 +171,7 @@ func (c *PlaceOrderCommand) UnmarshalBinary(data []byte) (int, error) {
 
 // CancelOrderCommand is the payload for canceling an existing order.
 type CancelOrderCommand struct {
+	CommandID string `json:"-"`
 	OrderID   string `json:"order_id"`
 	UserID    uint64 `json:"user_id"`
 	Timestamp int64  `json:"timestamp"`
@@ -216,6 +218,7 @@ func (c *CancelOrderCommand) UnmarshalBinary(data []byte) (int, error) {
 
 // AmendOrderCommand is the payload for modifying an existing order.
 type AmendOrderCommand struct {
+	CommandID string `json:"-"`
 	OrderID   string `json:"order_id"`
 	UserID    uint64 `json:"user_id"`
 	NewPrice  string `json:"new_price"`
@@ -308,33 +311,38 @@ type GetStatsRequest struct {
 
 // CreateMarketCommand is the payload for creating a new market/order book.
 type CreateMarketCommand struct {
-	UserID     string `json:"user_id"`      // Operator ID for audit trail
+	UserID     uint64 `json:"user_id"`      // Operator ID for audit trail
 	MarketID   string `json:"market_id"`    // Unique market identifier
 	MinLotSize string `json:"min_lot_size"` // Minimum trade unit (e.g., "0.00000001")
+	Timestamp  int64  `json:"timestamp"`
 }
 
 // SuspendMarketCommand is the payload for suspending a market.
 type SuspendMarketCommand struct {
-	UserID   string `json:"user_id"`   // Operator ID for audit trail
-	MarketID string `json:"market_id"` // Target market to suspend
-	Reason   string `json:"reason"`    // Reason for suspension (for audit)
+	UserID    uint64 `json:"user_id"`   // Operator ID for audit trail
+	MarketID  string `json:"market_id"` // Target market to suspend
+	Reason    string `json:"reason"`    // Reason for suspension (for audit)
+	Timestamp int64  `json:"timestamp"`
 }
 
 // ResumeMarketCommand is the payload for resuming a suspended market.
 type ResumeMarketCommand struct {
-	UserID   string `json:"user_id"`   // Operator ID for audit trail
-	MarketID string `json:"market_id"` // Target market to resume
+	UserID    uint64 `json:"user_id"`   // Operator ID for audit trail
+	MarketID  string `json:"market_id"` // Target market to resume
+	Timestamp int64  `json:"timestamp"`
 }
 
 // UpdateConfigCommand is the payload for updating market configuration.
 type UpdateConfigCommand struct {
-	UserID     string `json:"user_id"`                // Operator ID for audit trail
+	UserID     uint64 `json:"user_id"`                // Operator ID for audit trail
 	MarketID   string `json:"market_id"`              // Target market
 	MinLotSize string `json:"min_lot_size,omitempty"` // New minimum lot size (optional)
+	Timestamp  int64  `json:"timestamp"`
 }
 
 // UserEventCommand is the payload for generic user events.
 type UserEventCommand struct {
+	CommandID string `json:"-"`
 	UserID    uint64 `json:"user_id"`    // Operator ID for audit trail
 	EventType string `json:"event_type"` // e.g. "EndOfBlock", "AdminMarker"
 	Key       string `json:"key,omitempty"`

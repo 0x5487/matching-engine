@@ -2,7 +2,6 @@ package match
 
 import (
 	"sync"
-	"time"
 
 	"github.com/quagmt/udecimal"
 
@@ -87,7 +86,7 @@ func (p *DiscardPublishLog) Publish(_ []*OrderBookLog) {
 // SequenceID is a globally increasing ID for every event, used for ordering,
 // deduplication, and rebuild synchronization in downstream systems.
 // Use LogType to determine if the event affects order book state:
-// - Open, Match, Cancel, Amend: affect order book state
+// - Open, Match, Cancel, Amend, Admin: affect order book state or lifecycle metadata
 // - Reject: does not affect order book state.
 type OrderBookLog struct {
 	SeqID        uint64                `json:"seq_id"`
@@ -111,7 +110,6 @@ type OrderBookLog struct {
 	EventType    string                `json:"event_type,omitempty"`    // User defined event type
 	Data         []byte                `json:"data,omitempty"`          // Arbitrary data for user events
 	Timestamp    int64                 `json:"timestamp"`               // Command timestamp for determinism
-	CreatedAt    time.Time             `json:"created_at"`
 }
 
 var bookLogPool = sync.Pool{
@@ -191,7 +189,6 @@ func NewOpenLog(
 	log.UserID = userID
 	log.OrderType = orderType
 	log.Timestamp = timestamp
-	log.CreatedAt = time.Now().UTC()
 	return log
 }
 
@@ -230,7 +227,6 @@ func NewMatchLog(
 	log.MakerOrderID = makerID
 	log.MakerUserID = makerUserID
 	log.Timestamp = timestamp
-	log.CreatedAt = time.Now().UTC()
 	return log
 }
 
@@ -260,7 +256,6 @@ func NewCancelLog(
 	log.UserID = userID
 	log.OrderType = orderType
 	log.Timestamp = timestamp
-	log.CreatedAt = time.Now().UTC()
 	return log
 }
 
@@ -294,7 +289,6 @@ func NewAmendLog(
 	log.UserID = userID
 	log.OrderType = orderType
 	log.Timestamp = timestamp
-	log.CreatedAt = time.Now().UTC()
 	return log
 }
 
@@ -319,7 +313,6 @@ func NewRejectLog(
 	log.UserID = userID
 	log.RejectReason = reason
 	log.Timestamp = timestamp
-	log.CreatedAt = time.Now().UTC()
 	return log
 }
 
@@ -345,6 +338,25 @@ func NewUserEventLog(
 	log.OrderID = key // We use OrderID field to store the Key for simpler indexing/lookup if needed
 	log.Data = data
 	log.Timestamp = timestamp
-	log.CreatedAt = time.Now().UTC()
+	return log
+}
+
+// NewAdminLog creates a new OrderBookLog for a successful management event.
+func NewAdminLog(
+	seqID uint64,
+	commandID, engineID, marketID string,
+	userID uint64,
+	eventType string,
+	timestamp int64,
+) *OrderBookLog {
+	log := acquireBookLog()
+	log.SeqID = seqID
+	log.CommandID = commandID
+	log.EngineID = engineID
+	log.Type = protocol.LogTypeAdmin
+	log.MarketID = marketID
+	log.UserID = userID
+	log.EventType = eventType
+	log.Timestamp = timestamp
 	return log
 }

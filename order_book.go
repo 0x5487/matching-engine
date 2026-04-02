@@ -142,6 +142,17 @@ func (book *OrderBook) processCommand(cmd *protocol.Command) {
 			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
 			return
 		}
+		if payload.Timestamp <= 0 {
+			book.rejectInvalidPayload(
+				cmd.CommandID,
+				payload.MarketID,
+				payload.UserID,
+				protocol.RejectReasonInvalidPayload,
+				cmd.Metadata,
+				payload.Timestamp,
+			)
+			return
+		}
 		book.handleSuspendMarket(cmd.CommandID, payload)
 
 	case protocol.CmdResumeMarket:
@@ -150,12 +161,34 @@ func (book *OrderBook) processCommand(cmd *protocol.Command) {
 			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
 			return
 		}
+		if payload.Timestamp <= 0 {
+			book.rejectInvalidPayload(
+				cmd.CommandID,
+				payload.MarketID,
+				payload.UserID,
+				protocol.RejectReasonInvalidPayload,
+				cmd.Metadata,
+				payload.Timestamp,
+			)
+			return
+		}
 		book.handleResumeMarket(cmd.CommandID, payload)
 
 	case protocol.CmdUpdateConfig:
 		payload := &protocol.UpdateConfigCommand{}
 		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
 			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
+			return
+		}
+		if payload.Timestamp <= 0 {
+			book.rejectInvalidPayload(
+				cmd.CommandID,
+				payload.MarketID,
+				payload.UserID,
+				protocol.RejectReasonInvalidPayload,
+				cmd.Metadata,
+				payload.Timestamp,
+			)
 			return
 		}
 		book.handleUpdateConfig(cmd.CommandID, payload)
@@ -171,6 +204,18 @@ func (book *OrderBook) processCommand(cmd *protocol.Command) {
 		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
 			placeOrderCmdPool.Put(payload)
 			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
+			return
+		}
+		if payload.Timestamp <= 0 {
+			placeOrderCmdPool.Put(payload)
+			book.rejectInvalidPayload(
+				cmd.CommandID,
+				payload.OrderID,
+				payload.UserID,
+				protocol.RejectReasonInvalidPayload,
+				cmd.Metadata,
+				payload.Timestamp,
+			)
 			return
 		}
 
@@ -214,6 +259,18 @@ func (book *OrderBook) processCommand(cmd *protocol.Command) {
 			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
 			return
 		}
+		if payload.Timestamp <= 0 {
+			cancelOrderCmdPool.Put(payload)
+			book.rejectInvalidPayload(
+				cmd.CommandID,
+				payload.OrderID,
+				payload.UserID,
+				protocol.RejectReasonInvalidPayload,
+				cmd.Metadata,
+				payload.Timestamp,
+			)
+			return
+		}
 
 		// Cancel is allowed in Suspended state, but not Halted
 		if book.state == protocol.OrderBookStateHalted {
@@ -235,6 +292,17 @@ func (book *OrderBook) processCommand(cmd *protocol.Command) {
 		var payload protocol.AmendOrderCommand
 		if err := book.serializer.Unmarshal(cmd.Payload, &payload); err != nil {
 			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
+			return
+		}
+		if payload.Timestamp <= 0 {
+			book.rejectInvalidPayload(
+				cmd.CommandID,
+				payload.OrderID,
+				payload.UserID,
+				protocol.RejectReasonInvalidPayload,
+				cmd.Metadata,
+				payload.Timestamp,
+			)
 			return
 		}
 
@@ -1188,24 +1256,64 @@ func (book *OrderBook) checkReplenish(
 }
 
 // handleSuspendMarket updates the order book state to Suspended.
-func (book *OrderBook) handleSuspendMarket(commandID string, _ *protocol.SuspendMarketCommand) {
+func (book *OrderBook) handleSuspendMarket(commandID string, payload *protocol.SuspendMarketCommand) {
 	// If already Halted, cannot Suspend (Halted is terminal state for now)
 	if book.state == protocol.OrderBookStateHalted {
-		book.rejectInvalidPayload(commandID, "unknown", 0, protocol.RejectReasonMarketHalted, nil, 0)
+		book.rejectInvalidPayload(
+			commandID,
+			payload.MarketID,
+			payload.UserID,
+			protocol.RejectReasonMarketHalted,
+			nil,
+			payload.Timestamp,
+		)
 		return
 	}
 	book.state = protocol.OrderBookStateSuspended
-	// Note: We don't generate a specific log for state change yet,
-	// relying on the upstream Command Log for audit.
+	logsPtr := acquireLogSlice()
+	log := NewAdminLog(
+		book.seqID.Add(1),
+		commandID,
+		book.engineID,
+		book.marketID,
+		payload.UserID,
+		"market_suspended",
+		payload.Timestamp,
+	)
+	*logsPtr = append(*logsPtr, log)
+	book.publishTrader.Publish(*logsPtr)
+	releaseBookLog(log)
+	releaseLogSlice(logsPtr)
 }
 
 // handleResumeMarket updates the order book state to Running.
-func (book *OrderBook) handleResumeMarket(commandID string, _ *protocol.ResumeMarketCommand) {
+func (book *OrderBook) handleResumeMarket(commandID string, payload *protocol.ResumeMarketCommand) {
 	if book.state == protocol.OrderBookStateHalted {
-		book.rejectInvalidPayload(commandID, "unknown", 0, protocol.RejectReasonMarketHalted, nil, 0)
+		book.rejectInvalidPayload(
+			commandID,
+			payload.MarketID,
+			payload.UserID,
+			protocol.RejectReasonMarketHalted,
+			nil,
+			payload.Timestamp,
+		)
 		return
 	}
 	book.state = protocol.OrderBookStateRunning
+	logsPtr := acquireLogSlice()
+	log := NewAdminLog(
+		book.seqID.Add(1),
+		commandID,
+		book.engineID,
+		book.marketID,
+		payload.UserID,
+		"market_resumed",
+		payload.Timestamp,
+	)
+	*logsPtr = append(*logsPtr, log)
+	book.publishTrader.Publish(*logsPtr)
+	releaseBookLog(log)
+	releaseLogSlice(logsPtr)
 }
 
 // handleUpdateConfig updates order book configuration.
@@ -1214,8 +1322,29 @@ func (book *OrderBook) handleUpdateConfig(commandID string, payload *protocol.Up
 		size, err := udecimal.Parse(payload.MinLotSize)
 		if err == nil {
 			book.lotSize = size
+			logsPtr := acquireLogSlice()
+			log := NewAdminLog(
+				book.seqID.Add(1),
+				commandID,
+				book.engineID,
+				book.marketID,
+				payload.UserID,
+				"market_config_updated",
+				payload.Timestamp,
+			)
+			*logsPtr = append(*logsPtr, log)
+			book.publishTrader.Publish(*logsPtr)
+			releaseBookLog(log)
+			releaseLogSlice(logsPtr)
 		} else {
-			book.rejectInvalidPayload(commandID, "unknown", 0, protocol.RejectReasonInvalidPayload, nil, 0)
+			book.rejectInvalidPayload(
+				commandID,
+				payload.MarketID,
+				payload.UserID,
+				protocol.RejectReasonInvalidPayload,
+				nil,
+				payload.Timestamp,
+			)
 		}
 	}
 }

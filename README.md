@@ -58,7 +58,7 @@ func main() {
 
 	// 4. Create a Market
 	// Management commands are processed asynchronously by the engine event loop.
-	if err := engine.CreateMarket("admin", "BTC-USDT", "0.00000001"); err != nil {
+	if err := engine.CreateMarket("create-btc-usdt", 9001, "BTC-USDT", "0.00000001", time.Now().UnixNano()); err != nil {
 		panic(err)
 	}
 
@@ -75,6 +75,7 @@ func main() {
 
 	// 5. Place a Sell Limit Order
 	sellCmd := &protocol.PlaceOrderCommand{
+		CommandID: "sell-1-cmd",
 		OrderID:   "sell-1",
 		OrderType: protocol.OrderTypeLimit,
 		Side:      protocol.SideSell,
@@ -89,6 +90,7 @@ func main() {
 
 	// 6. Place a Buy Limit Order (Matches immediately)
 	buyCmd := &protocol.PlaceOrderCommand{
+		CommandID: "buy-1-cmd",
 		OrderID:   "buy-1",
 		OrderType: protocol.OrderTypeLimit,
 		Side:      protocol.SideBuy,
@@ -122,6 +124,8 @@ func main() {
 ### Command Semantics
 
 - `PlaceOrder`, `CancelOrder`, `AmendOrder`, and management commands enqueue work into the engine event loop. A returned `error` means enqueue/serialization failure, not business rejection.
+- Every command must carry an upstream-assigned non-empty `CommandID`. Engine helpers reject empty command IDs before enqueue.
+- Every state-changing command must carry an upstream-assigned logical `Timestamp`. `Timestamp <= 0` is rejected as `invalid_payload`. For engine helper methods such as `CreateMarket`, `SuspendMarket`, `ResumeMarket`, `UpdateConfig`, and `SendUserEvent`, pass the timestamp explicitly from your Gateway / Sequencer / OMS.
 - Business-level failures are emitted as `OrderBookLog` entries with `Type == protocol.LogTypeReject`.
 - Commands sent to a missing market generate a reject event with `RejectReasonMarketNotFound`.
 - `GetStats()` and `Depth()` return `ErrNotFound` immediately when the market does not exist.
@@ -132,20 +136,21 @@ The engine supports dynamic market management:
 
 ```go
 // Suspend a market (rejects new Place/Amend orders)
-engine.SuspendMarket("admin", "BTC-USDT")
+engine.SuspendMarket("suspend-btc-usdt", 9001, "BTC-USDT", time.Now().UnixNano())
 
 // Resume a market
-engine.ResumeMarket("admin", "BTC-USDT")
+engine.ResumeMarket("resume-btc-usdt", 9001, "BTC-USDT", time.Now().UnixNano())
 
 // Update market configuration (e.g. MinLotSize)
 newLotSize := "0.01"
-engine.UpdateConfig("admin", "BTC-USDT", newLotSize)
+engine.UpdateConfig("update-btc-usdt-lot", 9001, "BTC-USDT", newLotSize, time.Now().UnixNano())
 ```
 
-Invalid management commands are reported through the same event stream as trading rejects. For example:
+Successful management commands are emitted as `LogTypeAdmin`. Invalid management commands are reported through the same event stream as trading rejects. For example:
 
 - duplicate market creation emits `RejectReasonMarketAlreadyExists`
 - invalid `MinLotSize` emits `RejectReasonInvalidPayload`
+- management reject logs preserve the operator `UserID`
 
 ### Supported Order Types
 
@@ -166,9 +171,11 @@ type MyHandler struct{}
 
 func (h *MyHandler) Publish(logs []*match.OrderBookLog) {
 	for _, log := range logs {
-		// Send to WebSocket, save to DB, publish to MQ, etc.
+		// If you need local ingest / publish time, add it here instead of relying on engine-generated fields.
 		if log.Type == protocol.LogTypeUser {
 			fmt.Printf("User Event: %s, Data: %s\n", log.EventType, string(log.Data))
+		} else if log.Type == protocol.LogTypeAdmin {
+			fmt.Printf("Admin Event: %s | Market: %s\n", log.EventType, log.MarketID)
 		} else {
 			fmt.Printf("Event: %s | OrderID: %s\n", log.Type, log.OrderID)
 		}
@@ -183,11 +190,11 @@ Inject custom events into the matching engine's log stream. These events are pro
 ```go
 // Example: Sending an End-Of-Block signal from an L1 Blockchain
 blockHash := []byte("0x123abc...")
-// SendUserEvent(userID, eventType, key, data)
-err := engine.SendUserEvent(999, "EndOfBlock", "block-100", blockHash)
+// SendUserEvent(commandID, userID, eventType, key, data, timestamp)
+err := engine.SendUserEvent("block-100-event", 999, "EndOfBlock", "block-100", blockHash, time.Now().UnixNano())
 ```
 
-The event will appear in the `PublishLog` stream as `LogTypeUser` with your custom data payload.
+The event will appear in the `PublishLog` stream as `LogTypeUser` with your custom data payload. Malformed user-event payloads are emitted as `LogTypeReject` with `RejectReasonInvalidPayload`.
 
 ### Snapshot and Restore
 

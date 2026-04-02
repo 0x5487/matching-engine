@@ -25,6 +25,26 @@ const (
 )
 
 func TestMatchingEngine(t *testing.T) {
+	t.Run("PlaceOrderRequiresCommandID", func(t *testing.T) {
+		engine := NewMatchingEngine("test-engine", NewMemoryPublishLog())
+		err := engine.PlaceOrder(context.Background(), marketBTC, &protocol.PlaceOrderCommand{
+			OrderID:   "missing-cmd-id",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "100",
+			Size:      "1",
+			UserID:    1,
+			Timestamp: 1,
+		})
+		require.ErrorIs(t, err, ErrInvalidParam)
+	})
+
+	t.Run("CreateMarketRequiresCommandID", func(t *testing.T) {
+		engine := NewMatchingEngine("test-engine", NewMemoryPublishLog())
+		err := engine.CreateMarket("", 1, marketBTC, "0.01", 1)
+		require.ErrorIs(t, err, ErrInvalidParam)
+	})
+
 	t.Run("PlaceOrders", func(t *testing.T) {
 		publishTrader := NewMemoryPublishLog()
 		engine := NewMatchingEngine("test-engine", publishTrader)
@@ -33,23 +53,25 @@ func TestMatchingEngine(t *testing.T) {
 
 		// market1
 		market1 := marketBTC
-		err := engine.CreateMarket("admin", market1, "")
+		err := engine.CreateMarket("place-orders-market-1", 1, market1, "", time.Now().UnixNano())
 		require.NoError(t, err)
 
 		// market2
 		market2 := marketETH
-		err = engine.CreateMarket("admin", market2, "")
+		err = engine.CreateMarket("place-orders-market-2", 1, market2, "", time.Now().UnixNano())
 		require.NoError(t, err)
 
 		// Start engine event loop
 		go engine.Run()
 
 		order1 := &protocol.PlaceOrderCommand{
+			CommandID: "place-orders-order-1",
 			OrderID:   "order1",
 			OrderType: Limit,
 			Side:      Buy,
 			Price:     udecimal.MustFromInt64(100, 0).String(),
 			Size:      udecimal.MustFromInt64(2, 0).String(),
+			Timestamp: 1,
 		}
 
 		err = engine.PlaceOrder(ctx, market1, order1)
@@ -62,11 +84,13 @@ func TestMatchingEngine(t *testing.T) {
 		}, 1*time.Second, 10*time.Millisecond)
 
 		order2 := &protocol.PlaceOrderCommand{
+			CommandID: "place-orders-order-2",
 			OrderID:   "order2",
 			OrderType: Limit,
 			Side:      Sell,
 			Price:     udecimal.MustFromInt64(110, 0).String(),
 			Size:      udecimal.MustFromInt64(2, 0).String(),
+			Timestamp: 2,
 		}
 
 		err = engine.PlaceOrder(ctx, market2, order2)
@@ -87,19 +111,21 @@ func TestMatchingEngine(t *testing.T) {
 		ctx := context.Background()
 
 		market1 := marketBTC
-		err := engine.CreateMarket("admin", market1, "")
+		err := engine.CreateMarket("cancel-order-market-1", 1, market1, "", time.Now().UnixNano())
 		require.NoError(t, err)
 
 		// Start engine event loop
 		go engine.Run()
 
 		order1 := &protocol.PlaceOrderCommand{
+			CommandID: "cancel-order-1",
 			OrderID:   "order1",
 			OrderType: Limit,
 			Side:      Buy,
 			Price:     udecimal.MustFromInt64(100, 0).String(),
 			Size:      udecimal.MustFromInt64(2, 0).String(),
 			UserID:    uint64(1),
+			Timestamp: 1,
 		}
 
 		err = engine.PlaceOrder(ctx, market1, order1)
@@ -115,7 +141,12 @@ func TestMatchingEngine(t *testing.T) {
 		err = engine.CancelOrder(
 			ctx,
 			market1,
-			&protocol.CancelOrderCommand{OrderID: order1.OrderID, UserID: order1.UserID},
+			&protocol.CancelOrderCommand{
+				CommandID: "cancel-order-1-cancel",
+				OrderID:   order1.OrderID,
+				UserID:    order1.UserID,
+				Timestamp: 2,
+			},
 		)
 		require.NoError(t, err)
 
@@ -141,7 +172,11 @@ func TestMatchingEngine(t *testing.T) {
 		// The command goes to the RingBuffer but gets dropped silently by processCommand
 		// since the market doesn't exist.
 		ctx := context.Background()
-		err := engine.PlaceOrder(ctx, market, &protocol.PlaceOrderCommand{OrderID: "o1"})
+		err := engine.PlaceOrder(ctx, market, &protocol.PlaceOrderCommand{
+			CommandID: "missing-market-o1",
+			OrderID:   "o1",
+			Timestamp: 1,
+		})
 		require.NoError(t, err) // Enqueue succeeds
 
 		// Get OrderBook
@@ -159,6 +194,7 @@ func TestMatchingEngine(t *testing.T) {
 		go engine.Run()
 
 		err := engine.PlaceOrder(ctx, "NON-EXISTENT", &protocol.PlaceOrderCommand{
+			CommandID: "missing-market-order-cmd",
 			OrderID:   "missing-market-order",
 			OrderType: Limit,
 			Side:      Buy,
@@ -201,6 +237,61 @@ func TestMatchingEngine(t *testing.T) {
 
 		_ = engine.Shutdown(ctx)
 	})
+
+	t.Run("CreateMarketRejectIncludesManagementUserID", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		engine := NewMatchingEngine("test-engine", publishTrader)
+		ctx := context.Background()
+
+		go engine.Run()
+
+		err := engine.CreateMarket("create-market-existing-1", 42, "BTC-USDT", "0.01", 1001)
+		require.NoError(t, err)
+		err = engine.CreateMarket("create-market-existing-2", 42, "BTC-USDT", "0.01", 1002)
+		require.NoError(t, err)
+
+		assert.Eventually(t, func() bool {
+			for _, log := range publishTrader.Logs() {
+				if log.Type == protocol.LogTypeReject &&
+					log.MarketID == marketBTC &&
+					log.RejectReason == protocol.RejectReasonMarketAlreadyExists {
+					return log.UserID == 42 && log.Timestamp == 1002
+				}
+			}
+			return false
+		}, time.Second, 10*time.Millisecond)
+
+		_ = engine.Shutdown(ctx)
+	})
+
+	t.Run("CreateMarketRequiresPositiveTimestamp", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		engine := NewMatchingEngine("test-engine", publishTrader)
+		ctx := context.Background()
+
+		go engine.Run()
+
+		err := engine.CreateMarket("create-market-zero-ts", 77, "BTC-USDT", "0.01", 0)
+		require.NoError(t, err)
+
+		assert.Eventually(t, func() bool {
+			logs := publishTrader.Logs()
+			if len(logs) != 1 {
+				return false
+			}
+			log := logs[0]
+			return log.Type == protocol.LogTypeReject &&
+				log.MarketID == "BTC-USDT" &&
+				log.UserID == 77 &&
+				log.RejectReason == protocol.RejectReasonInvalidPayload &&
+				log.Timestamp == 0
+		}, time.Second, 10*time.Millisecond)
+
+		_, statsErr := engine.GetStats("BTC-USDT")
+		require.ErrorIs(t, statsErr, ErrNotFound)
+
+		_ = engine.Shutdown(ctx)
+	})
 }
 
 func TestCommandAndEngineIDPropagation(t *testing.T) {
@@ -209,48 +300,54 @@ func TestCommandAndEngineIDPropagation(t *testing.T) {
 	engine := NewMatchingEngine(testEngineID, publishTrader)
 	marketID := marketBTC
 
-	err := engine.CreateMarket("admin", marketID, "")
+	err := engine.CreateMarket("prop-market-create", 1, marketID, "", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	go engine.Run()
 
-	// Single submit: fallback CommandID should be OrderID.
+	// Single submit: explicit CommandID should be propagated to emitted logs.
 	err = engine.PlaceOrder(ctx, marketID, &protocol.PlaceOrderCommand{
+		CommandID: "single-oid-cmd",
 		OrderID:   "single-oid",
 		OrderType: Limit,
 		Side:      Buy,
 		Price:     "100",
 		Size:      "1",
 		UserID:    1,
+		Timestamp: 1,
 	})
 	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
 		for _, log := range publishTrader.Logs() {
 			if log.OrderID == "single-oid" && log.Type == protocol.LogTypeOpen {
-				return log.CommandID == "single-oid" && log.EngineID == testEngineID
+				return log.CommandID == "single-oid-cmd" && log.EngineID == testEngineID
 			}
 		}
 		return false
 	}, time.Second, 10*time.Millisecond)
 
-	// Batch submit: each command should keep per-order fallback CommandID.
+	// Batch submit: each command should keep its explicit CommandID.
 	err = engine.PlaceOrderBatch(ctx, marketID, []*protocol.PlaceOrderCommand{
 		{
+			CommandID: "batch-oid-cmd-1",
 			OrderID:   "batch-oid-1",
 			OrderType: Limit,
 			Side:      Buy,
 			Price:     "99",
 			Size:      "1",
 			UserID:    2,
+			Timestamp: 2,
 		},
 		{
+			CommandID: "batch-oid-cmd-2",
 			OrderID:   "batch-oid-2",
 			OrderType: Limit,
 			Side:      Sell,
 			Price:     "101",
 			Size:      "1",
 			UserID:    3,
+			Timestamp: 3,
 		},
 	})
 	require.NoError(t, err)
@@ -260,10 +357,10 @@ func TestCommandAndEngineIDPropagation(t *testing.T) {
 		found2 := false
 		for _, log := range publishTrader.Logs() {
 			if log.OrderID == "batch-oid-1" && log.Type == protocol.LogTypeOpen {
-				found1 = log.CommandID == "batch-oid-1" && log.EngineID == testEngineID
+				found1 = log.CommandID == "batch-oid-cmd-1" && log.EngineID == testEngineID
 			}
 			if log.OrderID == "batch-oid-2" && log.Type == protocol.LogTypeOpen {
-				found2 = log.CommandID == "batch-oid-2" && log.EngineID == testEngineID
+				found2 = log.CommandID == "batch-oid-cmd-2" && log.EngineID == testEngineID
 			}
 		}
 		return found1 && found2
@@ -282,7 +379,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		// Create orders in multiple markets
 		markets := []string{"BTC-USDT", "ETH-USDT", "SOL-USDT"}
 		for _, market := range markets {
-			err := engine.CreateMarket("admin", market, "")
+			err := engine.CreateMarket("shutdown-market-"+market, 1, market, "", time.Now().UnixNano())
 			require.NoError(t, err)
 		}
 
@@ -291,11 +388,13 @@ func TestMatchingEngineShutdown(t *testing.T) {
 
 		for i, market := range markets {
 			order := &protocol.PlaceOrderCommand{
+				CommandID: "shutdown-order-" + market,
 				OrderID:   "order-" + market,
 				OrderType: Limit,
 				Side:      Buy,
 				Price:     udecimal.MustFromInt64(int64(100+i*10), 0).String(),
 				Size:      udecimal.MustFromInt64(1, 0).String(),
+				Timestamp: int64(i + 1),
 			}
 			err := engine.PlaceOrder(ctx, market, order)
 			require.NoError(t, err)
@@ -307,11 +406,13 @@ func TestMatchingEngineShutdown(t *testing.T) {
 
 		// After shutdown, adding orders should return ErrShutdown
 		order := &protocol.PlaceOrderCommand{
+			CommandID: "after-shutdown-order",
 			OrderID:   "after-shutdown",
 			OrderType: Limit,
 			Side:      Buy,
 			Price:     udecimal.MustFromInt64(100, 0).String(),
 			Size:      udecimal.MustFromInt64(1, 0).String(),
+			Timestamp: 1,
 		}
 		err = engine.PlaceOrder(ctx, "BTC-USDT", order)
 		assert.Equal(t, ErrShutdown, err)
@@ -324,18 +425,20 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		ctx := context.Background()
 
 		// Create one market first
-		err := engine.CreateMarket("admin", "BTC-USDT", "")
+		err := engine.CreateMarket("reject-new-market-create", 1, "BTC-USDT", "", time.Now().UnixNano())
 		require.NoError(t, err)
 
 		// Start engine event loop
 		go engine.Run()
 
 		order := &protocol.PlaceOrderCommand{
+			CommandID: "reject-new-market-order-1",
 			OrderID:   "order1",
 			OrderType: Limit,
 			Side:      Buy,
 			Price:     udecimal.MustFromInt64(100, 0).String(),
 			Size:      udecimal.MustFromInt64(1, 0).String(),
+			Timestamp: 1,
 		}
 		err = engine.PlaceOrder(ctx, "BTC-USDT", order)
 		require.NoError(t, err)
@@ -346,11 +449,13 @@ func TestMatchingEngineShutdown(t *testing.T) {
 
 		// Try to create a new market after shutdown - should return ErrShutdown
 		newMarketOrder := &protocol.PlaceOrderCommand{
+			CommandID: "reject-new-market-order-2",
 			OrderID:   "new-market-order",
 			OrderType: Limit,
 			Side:      Buy,
 			Price:     udecimal.MustFromInt64(100, 0).String(),
 			Size:      udecimal.MustFromInt64(1, 0).String(),
+			Timestamp: 2,
 		}
 		err = engine.PlaceOrder(ctx, "NEW-MARKET", newMarketOrder)
 		assert.Equal(t, ErrShutdown, err)
@@ -367,18 +472,20 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		ctx := context.Background()
 
 		// Create an order to ensure at least one market exists
-		err := engine.CreateMarket("admin", "BTC-USDT", "")
+		err := engine.CreateMarket("timeout-market-create", 1, "BTC-USDT", "", time.Now().UnixNano())
 		require.NoError(t, err)
 
 		// Start engine event loop
 		go engine.Run()
 
 		order := &protocol.PlaceOrderCommand{
+			CommandID: "timeout-order-1",
 			OrderID:   "order1",
 			OrderType: Limit,
 			Side:      Buy,
 			Price:     udecimal.MustFromInt64(100, 0).String(),
 			Size:      udecimal.MustFromInt64(1, 0).String(),
+			Timestamp: 1,
 		}
 		err = engine.PlaceOrder(ctx, "BTC-USDT", order)
 		require.NoError(t, err)
@@ -404,9 +511,9 @@ func TestEngineSnapshotRestore(t *testing.T) {
 	market1 := marketBTC
 	market2 := "ETH-USDT"
 
-	err := engine.CreateMarket("admin", market1, "")
+	err := engine.CreateMarket("snapshot-market-1-create", 1, market1, "", time.Now().UnixNano())
 	require.NoError(t, err)
-	err = engine.CreateMarket("admin", market2, "")
+	err = engine.CreateMarket("snapshot-market-2-create", 1, market2, "", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	// Start engine event loop
@@ -414,23 +521,27 @@ func TestEngineSnapshotRestore(t *testing.T) {
 
 	// Add orders to Market 1
 	err = engine.PlaceOrder(ctx, market1, &protocol.PlaceOrderCommand{
+		CommandID: "snapshot-btc-buy-1",
 		OrderID:   "btc-buy-1",
 		Side:      Buy,
 		OrderType: Limit,
 		Price:     udecimal.MustFromInt64(50000, 0).String(),
 		Size:      udecimal.MustFromInt64(1, 0).String(),
 		UserID:    uint64(1),
+		Timestamp: 1,
 	})
 	require.NoError(t, err)
 
 	// Add orders to Market 2
 	err = engine.PlaceOrder(ctx, market2, &protocol.PlaceOrderCommand{
+		CommandID: "snapshot-eth-sell-1",
 		OrderID:   "eth-sell-1",
 		Side:      Sell,
 		OrderType: Limit,
 		Price:     udecimal.MustFromInt64(3000, 0).String(),
 		Size:      udecimal.MustFromInt64(10, 0).String(),
 		UserID:    uint64(2),
+		Timestamp: 2,
 	})
 	require.NoError(t, err)
 
@@ -485,12 +596,14 @@ func TestEngineSnapshotRestore(t *testing.T) {
 
 	// 5. Verify Continuity (Add new orders to restored engine)
 	err = newEngine.PlaceOrder(ctx, market1, &protocol.PlaceOrderCommand{
+		CommandID: "snapshot-btc-sell-match",
 		OrderID:   "btc-sell-match",
 		Side:      Sell,
 		OrderType: Limit,
 		Price:     udecimal.MustFromInt64(50000, 0).String(),
 		Size:      udecimal.MustFromInt64(1, 0).String(),
 		UserID:    uint64(3),
+		Timestamp: 3,
 	})
 	require.NoError(t, err)
 
@@ -557,7 +670,7 @@ func TestManagement_CreateMarket(t *testing.T) {
 
 	// 1. Create Market via Command
 	// MinLotSize: 0.01
-	err := engine.CreateMarket("admin", marketID, "0.01")
+	err := engine.CreateMarket("create-market-1", 1, marketID, "0.01", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	// Verify OrderBook existence (CreateMarket is asynchronous)
@@ -566,15 +679,30 @@ func TestManagement_CreateMarket(t *testing.T) {
 		return err == nil
 	}, 1*time.Second, 10*time.Millisecond)
 
+	assert.Eventually(t, func() bool {
+		for _, log := range publish.Logs() {
+			if log.Type == protocol.LogTypeAdmin &&
+				log.CommandID == "create-market-1" &&
+				log.MarketID == marketID &&
+				log.UserID == 1 &&
+				log.EventType == "market_created" {
+				return true
+			}
+		}
+		return false
+	}, 1*time.Second, 10*time.Millisecond)
+
 	// Verify MinLotSize configuration by placing a small order
 	ctx := context.Background()
 	smallOrder := &protocol.PlaceOrderCommand{
+		CommandID: "small-order-1",
 		OrderID:   "small-1",
 		Side:      Buy,
 		OrderType: Limit,
 		Price:     udecimal.MustFromInt64(50000, 0).String(),
 		Size:      "0.001", // Below 0.01
 		UserID:    uint64(1),
+		Timestamp: 1,
 	}
 
 	err = engine.PlaceOrder(ctx, marketID, smallOrder)
@@ -590,7 +718,7 @@ func TestManagement_CreateMarketRejectsInvalidConfig(t *testing.T) {
 
 	go engine.Run()
 
-	err := engine.CreateMarket("admin", "BAD-MARKET", "not-a-decimal")
+	err := engine.CreateMarket("bad-market-create", 1, "BAD-MARKET", "not-a-decimal", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
@@ -616,14 +744,14 @@ func TestManagement_CreateMarketRejectsDuplicateMarket(t *testing.T) {
 
 	go engine.Run()
 
-	err := engine.CreateMarket("admin", "DUP-MARKET", "0.1")
+	err := engine.CreateMarket("dup-market-1", 1, "DUP-MARKET", "0.1", time.Now().UnixNano())
 	require.NoError(t, err)
 	assert.Eventually(t, func() bool {
 		_, getErr := engine.GetStats("DUP-MARKET")
 		return getErr == nil
 	}, time.Second, 10*time.Millisecond)
 
-	err = engine.CreateMarket("admin", "DUP-MARKET", "0.1")
+	err = engine.CreateMarket("dup-market-2", 1, "DUP-MARKET", "0.1", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
@@ -644,7 +772,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 	marketID := "ETH-USDT"
 	ctx := context.Background()
 
-	err := engine.CreateMarket("admin", marketID, "0.0001")
+	err := engine.CreateMarket("suspend-market-create", 1, marketID, "0.0001", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	// Start engine event loop
@@ -652,12 +780,14 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 	// 1. Place Order (Should Succeed)
 	order1 := &protocol.PlaceOrderCommand{
+		CommandID: "suspend-order-1",
 		OrderID:   "order-1",
 		Side:      Buy,
 		OrderType: Limit,
 		Price:     "3000",
 		Size:      "1",
 		UserID:    uint64(1),
+		Timestamp: 1,
 	}
 	err = engine.PlaceOrder(ctx, marketID, order1)
 	require.NoError(t, err)
@@ -670,7 +800,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 2. Suspend Market
-	err = engine.SuspendMarket("admin", marketID)
+	err = engine.SuspendMarket("suspend-market-1", 1, marketID, time.Now().UnixNano())
 	require.NoError(t, err)
 
 	// Give time for suspend command to process
@@ -678,12 +808,14 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 	// 3. Place Order (Should be Rejected)
 	order2 := &protocol.PlaceOrderCommand{
+		CommandID: "suspend-order-2",
 		OrderID:   "order-2",
 		Side:      Buy,
 		OrderType: Limit,
 		Price:     "3000",
 		Size:      "1",
 		UserID:    uint64(2),
+		Timestamp: 2,
 	}
 	err = engine.PlaceOrder(ctx, marketID, order2)
 	require.NoError(t, err)
@@ -704,8 +836,10 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 	// 4. Cancel Order (Should Succeed in Suspended State)
 	err = engine.CancelOrder(ctx, marketID, &protocol.CancelOrderCommand{
-		OrderID: order1.OrderID,
-		UserID:  order1.UserID,
+		CommandID: "suspend-order-1-cancel",
+		OrderID:   order1.OrderID,
+		UserID:    order1.UserID,
+		Timestamp: 3,
 	})
 	require.NoError(t, err)
 
@@ -721,18 +855,46 @@ func TestManagement_SuspendResume(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 5. Resume Market
-	err = engine.ResumeMarket("admin", marketID)
+	err = engine.ResumeMarket("resume-market-1", 1, marketID, time.Now().UnixNano())
 	require.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
 
+	assert.Eventually(t, func() bool {
+		for _, l := range publish.Logs() {
+			if l.Type == protocol.LogTypeAdmin &&
+				l.CommandID == "suspend-market-1" &&
+				l.MarketID == marketID &&
+				l.UserID == 1 &&
+				l.EventType == "market_suspended" {
+				return true
+			}
+		}
+		return false
+	}, 1*time.Second, 10*time.Millisecond)
+
+	assert.Eventually(t, func() bool {
+		for _, l := range publish.Logs() {
+			if l.Type == protocol.LogTypeAdmin &&
+				l.CommandID == "resume-market-1" &&
+				l.MarketID == marketID &&
+				l.UserID == 1 &&
+				l.EventType == "market_resumed" {
+				return true
+			}
+		}
+		return false
+	}, 1*time.Second, 10*time.Millisecond)
+
 	// 6. Place Order (Should Succeed again)
 	order3 := &protocol.PlaceOrderCommand{
+		CommandID: "suspend-order-3",
 		OrderID:   "order-3",
 		Side:      Buy,
 		OrderType: Limit,
 		Price:     "3000",
 		Size:      "1",
 		UserID:    uint64(3),
+		Timestamp: 4,
 	}
 	err = engine.PlaceOrder(ctx, marketID, order3)
 	require.NoError(t, err)
@@ -754,14 +916,14 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	marketID := "SUSPENDED-MARKET"
 
 	// 1. Create Market with specific LotSize
-	err := engine.CreateMarket("admin", marketID, "0.1")
+	err := engine.CreateMarket("snapshot-market-create", 1, marketID, "0.1", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	// Start engine event loop
 	go engine.Run()
 
 	// 2. Suspend Market
-	err = engine.SuspendMarket("admin", marketID)
+	err = engine.SuspendMarket("snapshot-market-suspend", 1, marketID, time.Now().UnixNano())
 	require.NoError(t, err)
 	time.Sleep(50 * time.Millisecond) // Wait for processing
 
@@ -784,12 +946,14 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	// 5. Verify State (Should be Suspended)
 	ctx := context.Background()
 	order := &protocol.PlaceOrderCommand{
+		CommandID: "snapshot-test-order",
 		OrderID:   "test-order",
 		Side:      Buy,
 		OrderType: Limit,
 		Price:     "100",
 		Size:      "1",
 		UserID:    uint64(1),
+		Timestamp: 1,
 	}
 	err = newEngine.PlaceOrder(ctx, marketID, order)
 	require.NoError(t, err)
@@ -807,18 +971,20 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 6. Resume
-	err = newEngine.ResumeMarket("admin", marketID)
+	err = newEngine.ResumeMarket("snapshot-market-resume", 1, marketID, time.Now().UnixNano())
 	require.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
 
 	// 7. Test resumed functionality
 	order2 := &protocol.PlaceOrderCommand{
+		CommandID: "snapshot-test-order-2",
 		OrderID:   "test-order-2",
 		Side:      Buy,
 		OrderType: Limit,
 		Price:     "100",
 		Size:      "1",
 		UserID:    uint64(2),
+		Timestamp: 2,
 	}
 	err = newEngine.PlaceOrder(ctx, marketID, order2)
 	require.NoError(t, err)
@@ -836,14 +1002,14 @@ func TestManagement_UpdateConfig(t *testing.T) {
 	engine := NewMatchingEngine("test-engine", publish)
 	marketID := "CONFIG-TEST"
 
-	err := engine.CreateMarket("admin", marketID, "1.0")
+	err := engine.CreateMarket("config-market-create", 1, marketID, "1.0", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	// Start engine event loop
 	go engine.Run()
 
 	// 1. Update MinLotSize
-	err = engine.UpdateConfig("admin", marketID, "0.1")
+	err = engine.UpdateConfig("config-market-update", 1, marketID, "0.1", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	// Wait for async processing
@@ -852,6 +1018,7 @@ func TestManagement_UpdateConfig(t *testing.T) {
 	// 2. Verify new LotSize by placing an order
 	ctx := context.Background()
 	order := &protocol.PlaceOrderCommand{
+		CommandID: "config-order",
 		OrderID:   "cfg-order",
 		Side:      Buy,
 		OrderType: Market,
@@ -859,22 +1026,38 @@ func TestManagement_UpdateConfig(t *testing.T) {
 		Price:     "0",
 		Size:      "0",
 		UserID:    1,
+		Timestamp: 2,
 	}
 
 	// We'll need some liquidity to test Market order matching
 	err = engine.PlaceOrder(ctx, marketID, &protocol.PlaceOrderCommand{
+		CommandID: "config-maker-order",
 		OrderID:   "maker",
 		Side:      Sell,
 		OrderType: Limit,
 		Price:     "10",
 		Size:      "10",
 		UserID:    uint64(2),
+		Timestamp: 1,
 	})
 	require.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
 
 	err = engine.PlaceOrder(ctx, marketID, order)
 	require.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		for _, l := range publish.Logs() {
+			if l.Type == protocol.LogTypeAdmin &&
+				l.CommandID == "config-market-update" &&
+				l.MarketID == marketID &&
+				l.UserID == 1 &&
+				l.EventType == "market_config_updated" {
+				return true
+			}
+		}
+		return false
+	}, 1*time.Second, 10*time.Millisecond)
 
 	assert.Eventually(t, func() bool {
 		logs := publish.Logs()

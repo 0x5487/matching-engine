@@ -29,7 +29,12 @@
 - fix: reject invalid `CreateMarket` requests with standard reject events for duplicate markets and malformed `MinLotSize`.
 - fix: harden binary command decoding to reject truncated payloads instead of accepting partial string fields.
 - fix: validate snapshot footer and segment bounds during restore to prevent malformed snapshot files from causing invalid reads or excessive allocations.
+- breaking: require non-empty upstream `CommandID` for all commands; remove engine-side fallback generation in helper APIs.
+- breaking: update management helper signatures to require explicit `commandID` arguments; trading helpers now require payload-level `CommandID`.
+- feature: emit successful management lifecycle events through `PublishLog` as `LogTypeAdmin` with `market_created`, `market_suspended`, `market_resumed`, and `market_config_updated`.
+- refactor: preserve management actor identity in canonical event logs and align management command `UserID` to `uint64`.
 - docs: update `README.md` to document asynchronous market creation, `ErrNotFound` read semantics, reject-log behavior, and snapshot usage.
+- docs: align design documents and README with required `CommandID`, strict timestamp validation, and management success-event semantics.
 
 
 ## v0.7.0 (2025-12-14)

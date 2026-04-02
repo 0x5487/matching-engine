@@ -24,22 +24,25 @@ func newPlaceCmd(id string, ot OrderType, s Side, price, size float64, userID ui
 		Price:     udecimal.MustFromFloat64(price).String(),
 		Size:      udecimal.MustFromFloat64(size).String(),
 		UserID:    userID,
+		Timestamp: 1,
 	}
 }
 
 func newAmendCmd(id string, price, size float64, userID uint64) *protocol.AmendOrderCommand { //nolint:unparam
 	return &protocol.AmendOrderCommand{
-		OrderID:  id,
-		NewPrice: udecimal.MustFromFloat64(price).String(),
-		NewSize:  udecimal.MustFromFloat64(size).String(),
-		UserID:   userID,
+		OrderID:   id,
+		NewPrice:  udecimal.MustFromFloat64(price).String(),
+		NewSize:   udecimal.MustFromFloat64(size).String(),
+		UserID:    userID,
+		Timestamp: 1,
 	}
 }
 
 func newCancelCmd(id string, userID uint64) *protocol.CancelOrderCommand {
 	return &protocol.CancelOrderCommand{
-		OrderID: id,
-		UserID:  userID,
+		OrderID:   id,
+		UserID:    userID,
+		Timestamp: 1,
 	}
 }
 
@@ -106,6 +109,7 @@ func TestLimitOrders(t *testing.T) {
 			Price:     "1000",
 			Size:      "10",
 			UserID:    300,
+			Timestamp: 1,
 		}
 		bytes, _ := testSerializer.Marshal(payload)
 		testOrderBook.processCommand(&protocol.Command{
@@ -162,6 +166,7 @@ func TestLimitOrders(t *testing.T) {
 			Price:     "100",
 			Size:      "1",
 			UserID:    104,
+			Timestamp: 1,
 		})
 
 		memoryPublishTrader, ok := orderBook.publishTrader.(*MemoryPublishLog)
@@ -223,6 +228,7 @@ func TestMarketOrder(t *testing.T) {
 			Size:      "0",
 			QuoteSize: "360",
 			UserID:    2,
+			Timestamp: 1,
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -241,6 +247,7 @@ func TestMarketOrder(t *testing.T) {
 			Price:     "0",
 			Size:      "0",
 			QuoteSize: "90",
+			Timestamp: 1,
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -259,6 +266,7 @@ func TestMarketOrder(t *testing.T) {
 			Price:     "0",
 			Size:      "0",
 			QuoteSize: "230",
+			Timestamp: 1,
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -287,6 +295,7 @@ func TestMarketOrder(t *testing.T) {
 			Price:     "0",
 			Size:      "0",
 			QuoteSize: "55",
+			Timestamp: 1,
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -311,6 +320,7 @@ func TestMarketOrder(t *testing.T) {
 			Price:     "0",
 			Size:      "0",
 			QuoteSize: "100",
+			Timestamp: 1,
 		})
 
 		assert.Equal(t, 1, publishTrader.Count())
@@ -328,6 +338,7 @@ func TestMarketOrder(t *testing.T) {
 			Side:      Buy,
 			Price:     "0",
 			Size:      "2",
+			Timestamp: 1,
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -355,6 +366,7 @@ func TestMarketOrder(t *testing.T) {
 			Side:      Buy,
 			Price:     "0",
 			Size:      udecimal.MustFromFloat64(0.5).String(),
+			Timestamp: 1,
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -377,6 +389,7 @@ func TestMarketOrder(t *testing.T) {
 			Side:      Buy,
 			Price:     "0",
 			Size:      "3",
+			Timestamp: 1,
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -396,6 +409,7 @@ func TestPostOnlyOrder(t *testing.T) {
 			Side:      Buy,
 			Price:     "100",
 			Size:      "1",
+			Timestamp: 1,
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -668,7 +682,7 @@ func TestAmendOrder(t *testing.T) {
 
 		testAmend(
 			testOrderBook,
-			&protocol.AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: "95", NewSize: "5"},
+			&protocol.AmendOrderCommand{OrderID: "buy-1", UserID: 101, NewPrice: "95", NewSize: "5", Timestamp: 1},
 		)
 
 		depth := testOrderBook.depth(10)
@@ -736,6 +750,7 @@ func TestRejectReason(t *testing.T) {
 			Side:      Buy,
 			Price:     "100",
 			Size:      "1",
+			Timestamp: 1,
 		})
 
 		assert.Equal(t, 1, publishTrader.Count())
@@ -859,6 +874,7 @@ func TestMatchAmount(t *testing.T) {
 			Price:     "1000",
 			Size:      "3",
 			UserID:    300,
+			Timestamp: 1,
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -897,6 +913,7 @@ func TestTradeID(t *testing.T) {
 			Side:      Buy,
 			Price:     "115",
 			Size:      "1",
+			Timestamp: 1,
 		})
 
 		assert.Equal(t, 7, memoryPublishTrader.Count())
@@ -913,6 +930,7 @@ func TestTradeID(t *testing.T) {
 			Side:      Buy,
 			Price:     "1000",
 			Size:      "3",
+			Timestamp: 1,
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -939,6 +957,7 @@ func TestTradeID(t *testing.T) {
 			Side:      Buy,
 			Price:     "100",
 			Size:      "1",
+			Timestamp: 1,
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
@@ -962,6 +981,7 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 			Price:     "100",
 			Size:      "10",
 			UserID:    1,
+			Timestamp: 1,
 		})
 		testPlace(book, &protocol.PlaceOrderCommand{
 			OrderID:   "ask-1",
@@ -970,6 +990,7 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 			Price:     "110",
 			Size:      "5",
 			UserID:    2,
+			Timestamp: 2,
 		})
 
 		assert.Equal(t, int64(1), book.bidQueue.orderCount())
@@ -1007,6 +1028,7 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 			Side:      Buy,
 			Price:     "115",
 			Size:      "1",
+			Timestamp: 1,
 		})
 
 		assert.Equal(t, int64(1), restoredBook.askQueue.orderCount())
@@ -1037,7 +1059,7 @@ func TestOrderValidation(t *testing.T) {
 	})
 
 	t.Run("RejectCancelNonExistentOrder", func(t *testing.T) {
-		testCancel(orderBook, &protocol.CancelOrderCommand{OrderID: "non-existent", UserID: 1})
+		testCancel(orderBook, &protocol.CancelOrderCommand{OrderID: "non-existent", UserID: 1, Timestamp: 1})
 
 		logs := publishTrader.Logs()
 		found := false
@@ -1053,7 +1075,13 @@ func TestOrderValidation(t *testing.T) {
 	t.Run("RejectAmendNonExistentOrder", func(t *testing.T) {
 		testAmend(
 			orderBook,
-			&protocol.AmendOrderCommand{OrderID: "non-existent", UserID: 1, NewPrice: "100", NewSize: "2"},
+			&protocol.AmendOrderCommand{
+				OrderID:   "non-existent",
+				UserID:    1,
+				NewPrice:  "100",
+				NewSize:   "2",
+				Timestamp: 1,
+			},
 		)
 
 		logs := publishTrader.Logs()
@@ -1075,12 +1103,23 @@ func TestOrderValidation(t *testing.T) {
 			Size:      "1",
 			Price:     "100",
 			UserID:    1,
+			Timestamp: 1,
 		})
 
 		assert.NotNil(t, orderBook.bidQueue.order("owner-1"))
 
-		testCancel(orderBook, &protocol.CancelOrderCommand{OrderID: "owner-1", UserID: 2})
-		testAmend(orderBook, &protocol.AmendOrderCommand{OrderID: "owner-1", UserID: 2, NewPrice: "110", NewSize: "1"})
+		testCancel(orderBook, &protocol.CancelOrderCommand{
+			OrderID:   "owner-1",
+			UserID:    2,
+			Timestamp: 1,
+		})
+		testAmend(orderBook, &protocol.AmendOrderCommand{
+			OrderID:   "owner-1",
+			UserID:    2,
+			NewPrice:  "110",
+			NewSize:   "1",
+			Timestamp: 1,
+		})
 
 		logs := publishTrader.Logs()
 		cancelRejected := false
@@ -1109,6 +1148,7 @@ func TestOrderValidation(t *testing.T) {
 			Price:     "100",
 			Size:      "2",
 			UserID:    9,
+			Timestamp: 1,
 		})
 
 		testAmend(book, &protocol.AmendOrderCommand{
@@ -1143,6 +1183,7 @@ func TestOrderValidation(t *testing.T) {
 			Price:     "100",
 			Size:      "2",
 			UserID:    9,
+			Timestamp: 1,
 		})
 
 		testAmend(book, &protocol.AmendOrderCommand{
@@ -1196,6 +1237,96 @@ func TestOrderValidation(t *testing.T) {
 		}
 		assert.True(t, found)
 	})
+
+	t.Run("RejectPlaceWithoutTimestamp", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		book := newOrderBook("test-engine", "BTC-USDT", publishTrader)
+
+		testPlace(book, &protocol.PlaceOrderCommand{
+			OrderID:   "missing-place-timestamp",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "100",
+			Size:      "1",
+			UserID:    55,
+			Timestamp: 0,
+		})
+
+		logs := publishTrader.Logs()
+		require.Len(t, logs, 1)
+		assert.Equal(t, protocol.LogTypeReject, logs[0].Type)
+		assert.Equal(t, "missing-place-timestamp", logs[0].OrderID)
+		assert.Equal(t, uint64(55), logs[0].UserID)
+		assert.Equal(t, protocol.RejectReasonInvalidPayload, logs[0].RejectReason)
+		assert.Nil(t, book.bidQueue.order("missing-place-timestamp"))
+	})
+
+	t.Run("RejectCancelWithoutTimestamp", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		book := newOrderBook("test-engine", "BTC-USDT", publishTrader)
+
+		testPlace(book, &protocol.PlaceOrderCommand{
+			OrderID:   "cancel-without-timestamp",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "100",
+			Size:      "1",
+			UserID:    56,
+			Timestamp: 1,
+		})
+
+		testCancel(book, &protocol.CancelOrderCommand{
+			OrderID:   "cancel-without-timestamp",
+			UserID:    56,
+			Timestamp: 0,
+		})
+
+		order := book.bidQueue.order("cancel-without-timestamp")
+		require.NotNil(t, order)
+
+		found := false
+		for _, log := range publishTrader.Logs() {
+			if log.Type == protocol.LogTypeReject && log.OrderID == "cancel-without-timestamp" {
+				found = log.UserID == 56 && log.RejectReason == protocol.RejectReasonInvalidPayload
+			}
+		}
+		assert.True(t, found)
+	})
+
+	t.Run("RejectAmendWithoutTimestamp", func(t *testing.T) {
+		publishTrader := NewMemoryPublishLog()
+		book := newOrderBook("test-engine", "BTC-USDT", publishTrader)
+
+		testPlace(book, &protocol.PlaceOrderCommand{
+			OrderID:   "amend-without-timestamp",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "100",
+			Size:      "2",
+			UserID:    57,
+			Timestamp: 1,
+		})
+
+		testAmend(book, &protocol.AmendOrderCommand{
+			OrderID:   "amend-without-timestamp",
+			UserID:    57,
+			NewPrice:  "100",
+			NewSize:   "1",
+			Timestamp: 0,
+		})
+
+		order := book.bidQueue.order("amend-without-timestamp")
+		require.NotNil(t, order)
+		assert.Equal(t, "2", order.Size.String())
+
+		found := false
+		for _, log := range publishTrader.Logs() {
+			if log.Type == protocol.LogTypeReject && log.OrderID == "amend-without-timestamp" {
+				found = log.UserID == 57 && log.RejectReason == protocol.RejectReasonInvalidPayload
+			}
+		}
+		assert.True(t, found)
+	})
 }
 
 func TestOrderBook_LotSize(t *testing.T) {
@@ -1224,6 +1355,7 @@ func TestOrderBook_LotSize(t *testing.T) {
 			Price:     "50000",
 			Size:      "0.1",
 			UserID:    1,
+			Timestamp: 1,
 		})
 		assert.Equal(t, int64(1), orderBook.askQueue.orderCount())
 
@@ -1234,6 +1366,7 @@ func TestOrderBook_LotSize(t *testing.T) {
 			Price:     "0",
 			Size:      "0",
 			QuoteSize: udecimal.MustParse("0.04").String(),
+			Timestamp: 2,
 		})
 
 		logs := publishTrader.Logs()
@@ -1259,6 +1392,7 @@ func TestOrderBook_LotSize(t *testing.T) {
 			Side:      Sell,
 			Size:      udecimal.MustParse("0.005").String(),
 			Price:     "1000",
+			Timestamp: 1,
 		})
 		assert.Equal(t, int64(1), orderBook.askQueue.orderCount())
 
@@ -1269,6 +1403,7 @@ func TestOrderBook_LotSize(t *testing.T) {
 			Price:     "0",
 			Size:      "0",
 			QuoteSize: udecimal.MustParse("5.5").String(),
+			Timestamp: 2,
 		})
 
 		logs := publishTrader.Logs()

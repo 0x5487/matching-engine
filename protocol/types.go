@@ -191,6 +191,8 @@ const (
 	LogTypeReject LogType = "reject"
 	// LogTypeUser is generated for generic user events.
 	LogTypeUser LogType = "user_event"
+	// LogTypeAdmin is generated for successful management commands.
+	LogTypeAdmin LogType = "admin_event"
 )
 
 // RejectReason represents the reason why an order was rejected.

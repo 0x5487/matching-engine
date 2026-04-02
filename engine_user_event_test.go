@@ -17,35 +17,39 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 	marketID := "EVENT-TEST"
 	ctx := context.Background()
 
-	err := engine.CreateMarket("admin", marketID, "1.0")
+	err := engine.CreateMarket("event-market-create", 1, marketID, "1.0", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	go engine.Run()
 
 	// 1. Place Order
 	err = engine.PlaceOrder(ctx, marketID, &protocol.PlaceOrderCommand{
+		CommandID: "event-order-1",
 		OrderID:   "order-1",
 		Side:      Buy,
 		OrderType: Limit,
 		Price:     "100",
 		Size:      "1",
 		UserID:    1,
+		Timestamp: 1,
 	})
 	require.NoError(t, err)
 
 	// 2. Send User Event (e.g. EndOfBlock)
 	eventData := []byte("block-hash-0x123456")
-	err = engine.SendUserEvent(999, "EndOfBlock", "blk-1", eventData)
+	err = engine.SendUserEvent("event-user-1", 999, "EndOfBlock", "blk-1", eventData, 123456789)
 	require.NoError(t, err)
 
 	// 3. Place Another Order
 	err = engine.PlaceOrder(ctx, marketID, &protocol.PlaceOrderCommand{
+		CommandID: "event-order-2",
 		OrderID:   "order-2",
 		Side:      Buy,
 		OrderType: Limit,
 		Price:     "101",
 		Size:      "1",
 		UserID:    2,
+		Timestamp: 2,
 	})
 	require.NoError(t, err)
 
@@ -71,7 +75,7 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 				if l.UserID != 999 {
 					return false
 				}
-				if l.Timestamp == 0 {
+				if l.Timestamp != 123456789 {
 					return false
 				}
 			case l.OrderID == "order-2":
@@ -86,4 +90,64 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	_ = engine.Shutdown(ctx)
+}
+
+func TestUserEvent_InvalidPayloadEmitsReject(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("event-test-engine", publish)
+	ctx := context.Background()
+
+	go engine.Run()
+
+	err := engine.EnqueueCommand(&protocol.Command{
+		Type:      protocol.CmdUserEvent,
+		CommandID: "bad-user-event",
+		Payload:   []byte("{"),
+	})
+	require.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		logs := publish.Logs()
+		if len(logs) != 1 {
+			return false
+		}
+		log := logs[0]
+		return log.Type == protocol.LogTypeReject &&
+			log.CommandID == "bad-user-event" &&
+			log.RejectReason == protocol.RejectReasonInvalidPayload
+	}, time.Second, 10*time.Millisecond)
+
+	_ = engine.Shutdown(ctx)
+}
+
+func TestUserEvent_RequiresPositiveTimestamp(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("event-test-engine", publish)
+	ctx := context.Background()
+
+	go engine.Run()
+
+	err := engine.SendUserEvent("event-user-bad-ts", 999, "EndOfBlock", "blk-0", []byte("x"), 0)
+	require.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		logs := publish.Logs()
+		if len(logs) != 1 {
+			return false
+		}
+		log := logs[0]
+		return log.Type == protocol.LogTypeReject &&
+			log.OrderID == "blk-0" &&
+			log.UserID == 999 &&
+			log.RejectReason == protocol.RejectReasonInvalidPayload &&
+			log.Timestamp == 0
+	}, time.Second, 10*time.Millisecond)
+
+	_ = engine.Shutdown(ctx)
+}
+
+func TestUserEvent_RequiresCommandID(t *testing.T) {
+	engine := NewMatchingEngine("event-test-engine", NewMemoryPublishLog())
+	err := engine.SendUserEvent("", 999, "EndOfBlock", "blk-0", []byte("x"), 1)
+	require.ErrorIs(t, err, ErrInvalidParam)
 }
