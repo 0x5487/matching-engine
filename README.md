@@ -30,7 +30,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -57,20 +56,15 @@ func main() {
 	}()
 
 	// 4. Create a Market
-	// Management commands are processed asynchronously by the engine event loop.
-	if err := engine.CreateMarket("create-btc-usdt", 9001, "BTC-USDT", "0.00000001", time.Now().UnixNano()); err != nil {
+	// Management commands return a Future for synchronous-like waiting.
+	future, err := engine.CreateMarket(ctx, "create-btc-usdt", 9001, "BTC-USDT", "0.00000001", time.Now().UnixNano())
+	if err != nil {
 		panic(err)
 	}
 
 	// Wait until the market is visible on the read path before submitting orders.
-	for {
-		if _, err := engine.GetStats("BTC-USDT"); err == nil {
-			break
-		}
-		if !errors.Is(err, match.ErrNotFound) {
-			panic(err)
-		}
-		time.Sleep(10 * time.Millisecond)
+	if _, err := future.Wait(ctx); err != nil {
+		panic(err)
 	}
 
 	// 5. Place a Sell Limit Order

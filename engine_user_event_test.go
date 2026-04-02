@@ -17,10 +17,13 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 	marketID := "EVENT-TEST"
 	ctx := context.Background()
 
-	err := engine.CreateMarket("event-market-create", 1, marketID, "1.0", time.Now().UnixNano())
+	future, err := engine.CreateMarket(ctx, "event-market-create", 1, marketID, "1.0", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	go engine.Run()
+	
+	_, err = future.Wait(ctx)
+	require.NoError(t, err)
 
 	// 1. Place Order
 	err = engine.PlaceOrder(ctx, marketID, &protocol.PlaceOrderCommand{

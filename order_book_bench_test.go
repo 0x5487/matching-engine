@@ -21,11 +21,14 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	publishTrader := NewDiscardPublishLog()
 	engine := NewMatchingEngine("bench-engine", publishTrader)
 
+	ctx := context.Background()
 	marketID := marketBTC
-	_ = engine.CreateMarket("bench-market-create-1", 1, marketID, "", time.Now().UnixNano())
+	future, _ := engine.CreateMarket(ctx, "bench-market-create-1", 1, marketID, "", time.Now().UnixNano())
 
 	// Start engine event loop
 	go engine.Run()
+	
+	_, _ = future.Wait(ctx)
 
 	// Use fixed seed for repeatability
 	rng := rand.New(rand.NewSource(42)) //nolint:gosec // G404: test code
@@ -132,11 +135,14 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 	publishTrader := NewDiscardPublishLog()
 	engine := NewMatchingEngine("bench-engine", publishTrader)
 
+	ctx := context.Background()
 	marketID := marketBTC
-	_ = engine.CreateMarket("bench-market-create-2", 1, marketID, "", time.Now().UnixNano())
+	future, _ := engine.CreateMarket(ctx, "bench-market-create-2", 1, marketID, "", time.Now().UnixNano())
 
 	// Start engine event loop
 	go engine.Run()
+	
+	_, _ = future.Wait(ctx)
 
 	// Use fixed seed for repeatability
 	rng := rand.New(rand.NewSource(42)) //nolint:gosec // G404: test code
@@ -234,11 +240,14 @@ func BenchmarkMatching(b *testing.B) {
 
 	publishTrader := NewDiscardPublishLog()
 	engine := NewMatchingEngine("bench-engine", publishTrader)
+	ctx := context.Background()
 	marketID := "MATCH-USDT"
-	_ = engine.CreateMarket("bench-market-create-3", 1, marketID, "", time.Now().UnixNano())
+	future, _ := engine.CreateMarket(ctx, "bench-market-create-3", 1, marketID, "", time.Now().UnixNano())
 
 	// Start engine event loop
 	go engine.Run()
+	
+	_, _ = future.Wait(ctx)
 
 	price := udecimal.MustFromInt64(10000, 0)
 	size := udecimal.MustFromInt64(1, 0)

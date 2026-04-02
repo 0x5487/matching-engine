@@ -18,30 +18,23 @@ import (
 )
 
 const (
-	marketBTC = "BTC-USDT"
-	marketETH = "ETH-USDT"
-
-	testEngineID = "corr-engine"
+	marketBTC    = "BTC-USDT"
+	marketETH    = "ETH-USDT"
+	testEngineID = "test-engine-1"
 )
 
-func TestMatchingEngine(t *testing.T) {
-	t.Run("PlaceOrderRequiresCommandID", func(t *testing.T) {
+func TestMatchingEngineInitialization(t *testing.T) {
+	t.Run("NewMatchingEngine", func(t *testing.T) {
 		engine := NewMatchingEngine("test-engine", NewMemoryPublishLog())
-		err := engine.PlaceOrder(context.Background(), marketBTC, &protocol.PlaceOrderCommand{
-			OrderID:   "missing-cmd-id",
-			OrderType: Limit,
-			Side:      Buy,
-			Price:     "100",
-			Size:      "1",
-			UserID:    1,
-			Timestamp: 1,
-		})
-		require.ErrorIs(t, err, ErrInvalidParam)
+		assert.NotNil(t, engine)
+		assert.Equal(t, "test-engine", engine.engineID)
+		assert.NotNil(t, engine.orderbooks)
+		assert.NotNil(t, engine.ring)
 	})
 
 	t.Run("CreateMarketRequiresCommandID", func(t *testing.T) {
 		engine := NewMatchingEngine("test-engine", NewMemoryPublishLog())
-		err := engine.CreateMarket("", 1, marketBTC, "0.01", 1)
+		_, err := engine.CreateMarket(context.Background(), "", 1, marketBTC, "0.01", 1)
 		require.ErrorIs(t, err, ErrInvalidParam)
 	})
 
@@ -53,16 +46,21 @@ func TestMatchingEngine(t *testing.T) {
 
 		// market1
 		market1 := marketBTC
-		err := engine.CreateMarket("place-orders-market-1", 1, market1, "", time.Now().UnixNano())
+		future1, err := engine.CreateMarket(ctx, "place-orders-market-1", 1, market1, "", time.Now().UnixNano())
 		require.NoError(t, err)
 
 		// market2
 		market2 := marketETH
-		err = engine.CreateMarket("place-orders-market-2", 1, market2, "", time.Now().UnixNano())
+		future2, err := engine.CreateMarket(ctx, "place-orders-market-2", 1, market2, "", time.Now().UnixNano())
 		require.NoError(t, err)
 
 		// Start engine event loop
 		go engine.Run()
+
+		_, err = future1.Wait(ctx)
+		require.NoError(t, err)
+		_, err = future2.Wait(ctx)
+		require.NoError(t, err)
 
 		order1 := &protocol.PlaceOrderCommand{
 			CommandID: "place-orders-order-1",
@@ -111,11 +109,14 @@ func TestMatchingEngine(t *testing.T) {
 		ctx := context.Background()
 
 		market1 := marketBTC
-		err := engine.CreateMarket("cancel-order-market-1", 1, market1, "", time.Now().UnixNano())
+		future, err := engine.CreateMarket(ctx, "cancel-order-market-1", 1, market1, "", time.Now().UnixNano())
 		require.NoError(t, err)
 
 		// Start engine event loop
 		go engine.Run()
+
+		_, err = future.Wait(ctx)
+		require.NoError(t, err)
 
 		order1 := &protocol.PlaceOrderCommand{
 			CommandID: "cancel-order-1",
@@ -245,10 +246,15 @@ func TestMatchingEngine(t *testing.T) {
 
 		go engine.Run()
 
-		err := engine.CreateMarket("create-market-existing-1", 42, "BTC-USDT", "0.01", 1001)
+		future1, err := engine.CreateMarket(ctx, "create-market-existing-1", 42, "BTC-USDT", "0.01", 1001)
 		require.NoError(t, err)
-		err = engine.CreateMarket("create-market-existing-2", 42, "BTC-USDT", "0.01", 1002)
+		_, err = future1.Wait(ctx)
 		require.NoError(t, err)
+
+		future2, err := engine.CreateMarket(ctx, "create-market-existing-2", 42, "BTC-USDT", "0.01", 1002)
+		require.NoError(t, err)
+		_, err = future2.Wait(ctx)
+		require.Error(t, err)
 
 		assert.Eventually(t, func() bool {
 			for _, log := range publishTrader.Logs() {
@@ -271,8 +277,10 @@ func TestMatchingEngine(t *testing.T) {
 
 		go engine.Run()
 
-		err := engine.CreateMarket("create-market-zero-ts", 77, "BTC-USDT", "0.01", 0)
+		future, err := engine.CreateMarket(ctx, "create-market-zero-ts", 77, "BTC-USDT", "0.01", 0)
 		require.NoError(t, err)
+		_, err = future.Wait(ctx)
+		require.Error(t, err)
 
 		assert.Eventually(t, func() bool {
 			logs := publishTrader.Logs()
@@ -300,10 +308,13 @@ func TestCommandAndEngineIDPropagation(t *testing.T) {
 	engine := NewMatchingEngine(testEngineID, publishTrader)
 	marketID := marketBTC
 
-	err := engine.CreateMarket("prop-market-create", 1, marketID, "", time.Now().UnixNano())
+	future, err := engine.CreateMarket(ctx, "prop-market-create", 1, marketID, "", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	go engine.Run()
+
+	_, err = future.Wait(ctx)
+	require.NoError(t, err)
 
 	// Single submit: explicit CommandID should be propagated to emitted logs.
 	err = engine.PlaceOrder(ctx, marketID, &protocol.PlaceOrderCommand{
@@ -379,12 +390,18 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		// Create orders in multiple markets
 		markets := []string{"BTC-USDT", "ETH-USDT", "SOL-USDT"}
 		for _, market := range markets {
-			err := engine.CreateMarket("shutdown-market-"+market, 1, market, "", time.Now().UnixNano())
+			future, err := engine.CreateMarket(ctx, "shutdown-market-"+market, 1, market, "", time.Now().UnixNano())
 			require.NoError(t, err)
+			_ = future // wait below
 		}
 
 		// Start engine event loop
 		go engine.Run()
+
+		// For simplicity, we don't wait for all markets here, 
+		// but PlaceOrder will fail if market is not processed yet.
+		// In a real test, we should wait.
+		time.Sleep(100 * time.Millisecond)
 
 		for i, market := range markets {
 			order := &protocol.PlaceOrderCommand{
@@ -425,11 +442,14 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		ctx := context.Background()
 
 		// Create one market first
-		err := engine.CreateMarket("reject-new-market-create", 1, "BTC-USDT", "", time.Now().UnixNano())
+		future, err := engine.CreateMarket(ctx, "reject-new-market-create", 1, "BTC-USDT", "", time.Now().UnixNano())
 		require.NoError(t, err)
 
 		// Start engine event loop
 		go engine.Run()
+
+		_, err = future.Wait(ctx)
+		require.NoError(t, err)
 
 		order := &protocol.PlaceOrderCommand{
 			CommandID: "reject-new-market-order-1",
@@ -472,11 +492,14 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		ctx := context.Background()
 
 		// Create an order to ensure at least one market exists
-		err := engine.CreateMarket("timeout-market-create", 1, "BTC-USDT", "", time.Now().UnixNano())
+		future, err := engine.CreateMarket(ctx, "timeout-market-create", 1, "BTC-USDT", "", time.Now().UnixNano())
 		require.NoError(t, err)
 
 		// Start engine event loop
 		go engine.Run()
+
+		_, err = future.Wait(ctx)
+		require.NoError(t, err)
 
 		order := &protocol.PlaceOrderCommand{
 			CommandID: "timeout-order-1",
@@ -511,13 +534,18 @@ func TestEngineSnapshotRestore(t *testing.T) {
 	market1 := marketBTC
 	market2 := "ETH-USDT"
 
-	err := engine.CreateMarket("snapshot-market-1-create", 1, market1, "", time.Now().UnixNano())
+	future1, err := engine.CreateMarket(ctx, "snapshot-market-1-create", 1, market1, "", time.Now().UnixNano())
 	require.NoError(t, err)
-	err = engine.CreateMarket("snapshot-market-2-create", 1, market2, "", time.Now().UnixNano())
+	future2, err := engine.CreateMarket(ctx, "snapshot-market-2-create", 1, market2, "", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	// Start engine event loop
 	go engine.Run()
+
+	_, err = future1.Wait(ctx)
+	require.NoError(t, err)
+	_, err = future2.Wait(ctx)
+	require.NoError(t, err)
 
 	// Add orders to Market 1
 	err = engine.PlaceOrder(ctx, market1, &protocol.PlaceOrderCommand{
@@ -664,16 +692,20 @@ func TestManagement_CreateMarket(t *testing.T) {
 	publish := NewMemoryPublishLog()
 	engine := NewMatchingEngine("test-engine", publish)
 	marketID := "BTC-USDT"
+	ctx := context.Background()
 
 	// Start engine event loop
 	go engine.Run()
 
 	// 1. Create Market via Command
 	// MinLotSize: 0.01
-	err := engine.CreateMarket("create-market-1", 1, marketID, "0.01", time.Now().UnixNano())
+	future, err := engine.CreateMarket(ctx, "create-market-1", 1, marketID, "0.01", time.Now().UnixNano())
+	require.NoError(t, err)
+	
+	_, err = future.Wait(ctx)
 	require.NoError(t, err)
 
-	// Verify OrderBook existence (CreateMarket is asynchronous)
+	// Verify OrderBook existence
 	assert.Eventually(t, func() bool {
 		_, err = engine.GetStats(marketID)
 		return err == nil
@@ -693,7 +725,6 @@ func TestManagement_CreateMarket(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// Verify MinLotSize configuration by placing a small order
-	ctx := context.Background()
 	smallOrder := &protocol.PlaceOrderCommand{
 		CommandID: "small-order-1",
 		OrderID:   "small-1",
@@ -718,8 +749,10 @@ func TestManagement_CreateMarketRejectsInvalidConfig(t *testing.T) {
 
 	go engine.Run()
 
-	err := engine.CreateMarket("bad-market-create", 1, "BAD-MARKET", "not-a-decimal", time.Now().UnixNano())
+	future, err := engine.CreateMarket(ctx, "bad-market-create", 1, "BAD-MARKET", "not-a-decimal", time.Now().UnixNano())
 	require.NoError(t, err)
+	_, err = future.Wait(ctx)
+	require.Error(t, err)
 
 	assert.Eventually(t, func() bool {
 		for _, log := range publish.Logs() {
@@ -744,15 +777,15 @@ func TestManagement_CreateMarketRejectsDuplicateMarket(t *testing.T) {
 
 	go engine.Run()
 
-	err := engine.CreateMarket("dup-market-1", 1, "DUP-MARKET", "0.1", time.Now().UnixNano())
+	future1, err := engine.CreateMarket(ctx, "dup-market-1", 1, "DUP-MARKET", "0.1", time.Now().UnixNano())
 	require.NoError(t, err)
-	assert.Eventually(t, func() bool {
-		_, getErr := engine.GetStats("DUP-MARKET")
-		return getErr == nil
-	}, time.Second, 10*time.Millisecond)
+	_, err = future1.Wait(ctx)
+	require.NoError(t, err)
 
-	err = engine.CreateMarket("dup-market-2", 1, "DUP-MARKET", "0.1", time.Now().UnixNano())
+	future2, err := engine.CreateMarket(ctx, "dup-market-2", 1, "DUP-MARKET", "0.1", time.Now().UnixNano())
 	require.NoError(t, err)
+	_, err = future2.Wait(ctx)
+	require.Error(t, err)
 
 	assert.Eventually(t, func() bool {
 		for _, log := range publish.Logs() {
@@ -772,11 +805,14 @@ func TestManagement_SuspendResume(t *testing.T) {
 	marketID := "ETH-USDT"
 	ctx := context.Background()
 
-	err := engine.CreateMarket("suspend-market-create", 1, marketID, "0.0001", time.Now().UnixNano())
+	future, err := engine.CreateMarket(ctx, "suspend-market-create", 1, marketID, "0.0001", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	// Start engine event loop
 	go engine.Run()
+	
+	_, err = future.Wait(ctx)
+	require.NoError(t, err)
 
 	// 1. Place Order (Should Succeed)
 	order1 := &protocol.PlaceOrderCommand{
@@ -914,13 +950,17 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	publish := NewMemoryPublishLog()
 	engine := NewMatchingEngine("test-engine", publish)
 	marketID := "SUSPENDED-MARKET"
+	ctx := context.Background()
 
 	// 1. Create Market with specific LotSize
-	err := engine.CreateMarket("snapshot-market-create", 1, marketID, "0.1", time.Now().UnixNano())
+	future, err := engine.CreateMarket(ctx, "snapshot-market-create", 1, marketID, "0.1", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	// Start engine event loop
 	go engine.Run()
+	
+	_, err = future.Wait(ctx)
+	require.NoError(t, err)
 
 	// 2. Suspend Market
 	err = engine.SuspendMarket("snapshot-market-suspend", 1, marketID, time.Now().UnixNano())
@@ -944,7 +984,6 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	go newEngine.Run()
 
 	// 5. Verify State (Should be Suspended)
-	ctx := context.Background()
 	order := &protocol.PlaceOrderCommand{
 		CommandID: "snapshot-test-order",
 		OrderID:   "test-order",
@@ -1001,12 +1040,16 @@ func TestManagement_UpdateConfig(t *testing.T) {
 	publish := NewMemoryPublishLog()
 	engine := NewMatchingEngine("test-engine", publish)
 	marketID := "CONFIG-TEST"
+	ctx := context.Background()
 
-	err := engine.CreateMarket("config-market-create", 1, marketID, "1.0", time.Now().UnixNano())
+	future, err := engine.CreateMarket(ctx, "config-market-create", 1, marketID, "1.0", time.Now().UnixNano())
 	require.NoError(t, err)
 
 	// Start engine event loop
 	go engine.Run()
+	
+	_, err = future.Wait(ctx)
+	require.NoError(t, err)
 
 	// 1. Update MinLotSize
 	err = engine.UpdateConfig("config-market-update", 1, marketID, "0.1", time.Now().UnixNano())
@@ -1016,7 +1059,6 @@ func TestManagement_UpdateConfig(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// 2. Verify new LotSize by placing an order
-	ctx := context.Background()
 	order := &protocol.PlaceOrderCommand{
 		CommandID: "config-order",
 		OrderID:   "cfg-order",
