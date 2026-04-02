@@ -79,7 +79,7 @@ func (engine *MatchingEngine) Run() error {
 // It routes events to the appropriate OrderBook based on MarketID.
 func (engine *MatchingEngine) OnEvent(ev *InputEvent) {
 	if ev.Cmd != nil {
-		engine.processCommand(ev.Cmd)
+		engine.processCommand(ev)
 		return
 	}
 
@@ -292,14 +292,15 @@ func (engine *MatchingEngine) CancelOrder(
 
 // CreateMarket sends a command to create a new market.
 func (engine *MatchingEngine) CreateMarket(
+	_ context.Context, // Use ctx for consistency with future API
 	commandID string,
 	userID uint64,
 	marketID string,
 	minLotSize string,
 	timestamp int64,
-) error {
+) (*Future[bool], error) {
 	if err := requireCommandID(commandID); err != nil {
-		return err
+		return nil, err
 	}
 	cmd := &protocol.CreateMarketCommand{
 		UserID:     userID,
@@ -309,14 +310,26 @@ func (engine *MatchingEngine) CreateMarket(
 	}
 	bytes, err := engine.serializer.Marshal(cmd)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return engine.EnqueueCommand(&protocol.Command{
+
+	respChan := engine.acquireResponseChannel()
+	protoCmd := &protocol.Command{
 		Type:      protocol.CmdCreateMarket,
 		MarketID:  marketID,
 		CommandID: commandID,
 		Payload:   bytes,
-	})
+	}
+
+	if err := engine.enqueueCommandWithResponse(protoCmd, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+
+	return &Future[bool]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
 }
 
 // SuspendMarket sends a command to suspend a market.
@@ -803,14 +816,15 @@ func (engine *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMet
 	return &meta, nil
 }
 
-func (engine *MatchingEngine) processCommand(cmd *protocol.Command) {
+func (engine *MatchingEngine) processCommand(ev *InputEvent) {
+	cmd := ev.Cmd
 	if cmd.CommandID == "" {
 		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
 		return
 	}
 
 	if cmd.Type == protocol.CmdCreateMarket {
-		engine.handleCreateMarket(cmd)
+		engine.handleCreateMarket(ev)
 		return
 	}
 
@@ -879,10 +893,12 @@ func (engine *MatchingEngine) handleSnapshotQuery(ev *InputEvent) {
 
 // handleCreateMarket handles the creation of a new market.
 // This is handled asynchronously by the RingBuffer consumer.
-func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) {
+func (engine *MatchingEngine) handleCreateMarket(ev *InputEvent) {
+	cmd := ev.Cmd
 	payload := &protocol.CreateMarketCommand{}
 	if err := engine.serializer.Unmarshal(cmd.Payload, payload); err != nil {
 		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
+		engine.respondQueryError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 	if payload.Timestamp <= 0 {
@@ -892,6 +908,7 @@ func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) {
 			protocol.RejectReasonInvalidPayload,
 			payload.Timestamp,
 		)
+		engine.respondQueryError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
@@ -902,6 +919,7 @@ func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) {
 			protocol.RejectReasonMarketAlreadyExists,
 			payload.Timestamp,
 		)
+		engine.respondQueryError(ev, errors.New(string(protocol.RejectReasonMarketAlreadyExists)))
 		return
 	}
 
@@ -916,6 +934,7 @@ func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) {
 				protocol.RejectReasonInvalidPayload,
 				payload.Timestamp,
 			)
+			engine.respondQueryError(ev, err)
 			return
 		}
 		opts = append(opts, WithLotSize(size))
@@ -938,6 +957,13 @@ func (engine *MatchingEngine) handleCreateMarket(cmd *protocol.Command) {
 	engine.publishTrader.Publish(*logs)
 	releaseBookLog(log)
 	releaseLogSlice(logs)
+
+	if ev.Resp != nil {
+		select {
+		case ev.Resp <- true:
+		default:
+		}
+	}
 }
 
 // handleUserEvent processes a generic user event.
