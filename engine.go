@@ -153,6 +153,38 @@ func (engine *MatchingEngine) EnqueueCommandBatch(cmds []*protocol.Command) erro
 	return nil
 }
 
+func (engine *MatchingEngine) acquireResponseChannel() chan any {
+	val := engine.responsePool.Get()
+	return val.(chan any)
+}
+
+func (engine *MatchingEngine) releaseResponseChannel(ch chan any) {
+	// Drain the channel if not empty
+	select {
+	case <-ch:
+	default:
+	}
+	engine.responsePool.Put(ch)
+}
+
+func (engine *MatchingEngine) enqueueCommandWithResponse(cmd *protocol.Command, resp chan any) error {
+	if engine.isShutdown.Load() {
+		return ErrShutdown
+	}
+
+	seq, ev := engine.ring.Claim()
+	if seq == -1 {
+		return ErrShutdown
+	}
+
+	ev.Cmd = cmd
+	ev.Query = nil
+	ev.Resp = resp // 關鍵：將響應通道傳入事件
+
+	engine.ring.Commit(seq)
+	return nil
+}
+
 func requireCommandID(commandID string) error {
 	if commandID == "" {
 		return ErrInvalidParam
