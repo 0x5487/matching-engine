@@ -76,7 +76,7 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
-			future, e := engine.GetStats(market1)
+			future, e := engine.GetStats(ctx, market1)
 			if e != nil {
 				return false
 			}
@@ -98,7 +98,7 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
-			future, e := engine.GetStats(market2)
+			future, e := engine.GetStats(ctx, market2)
 			if e != nil {
 				return false
 			}
@@ -141,7 +141,7 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		// Wait for order to be in book
 		assert.Eventually(t, func() bool {
-			future, e := engine.GetStats(market1)
+			future, e := engine.GetStats(ctx, market1)
 			if e != nil {
 				return false
 			}
@@ -163,7 +163,7 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		// validate
 		assert.Eventually(t, func() bool {
-			future, err := engine.GetStats(market1)
+			future, err := engine.GetStats(ctx, market1)
 			if err != nil {
 				return false
 			}
@@ -241,14 +241,14 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		go engine.Run()
 
 		start := time.Now()
-		future, err := engine.GetStats("NON-EXISTENT")
+		future, err := engine.GetStats(ctx, "NON-EXISTENT")
 		require.NoError(t, err)
 		stats, err := future.Wait(ctx)
 		assert.Nil(t, stats)
 		require.ErrorIs(t, err, ErrNotFound)
 		assert.Less(t, time.Since(start), 200*time.Millisecond)
 
-		futureDepth, err := engine.Depth("NON-EXISTENT", 10)
+		futureDepth, err := engine.Depth(ctx, "NON-EXISTENT", 10)
 		require.NoError(t, err)
 		depth, err := futureDepth.Wait(ctx)
 		assert.Nil(t, depth)
@@ -313,7 +313,7 @@ func TestMatchingEngineInitialization(t *testing.T) {
 				log.Timestamp == 0
 		}, time.Second, 10*time.Millisecond)
 
-		statsFuture, err := engine.GetStats("BTC-USDT")
+		statsFuture, err := engine.GetStats(ctx, "BTC-USDT")
 		require.NoError(t, err)
 		_, statsErr := statsFuture.Wait(ctx)
 		require.ErrorIs(t, statsErr, ErrNotFound)
@@ -596,8 +596,8 @@ func TestEngineSnapshotRestore(t *testing.T) {
 
 	// Wait for processing
 	assert.Eventually(t, func() bool {
-		f1, err1 := engine.GetStats(market1)
-		f2, err2 := engine.GetStats(market2)
+		f1, err1 := engine.GetStats(ctx, market1)
+		f2, err2 := engine.GetStats(ctx, market2)
 		if err1 != nil || err2 != nil {
 			return false
 		}
@@ -608,7 +608,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 2. Take Snapshot
-	meta, err := engine.TakeSnapshot(tmpDir)
+	meta, err := engine.TakeSnapshot(ctx, tmpDir)
 	require.NoError(t, err)
 	assert.NotNil(t, meta)
 	assert.NotZero(t, meta.Timestamp)
@@ -641,8 +641,8 @@ func TestEngineSnapshotRestore(t *testing.T) {
 
 	// 4. Verify Restored State
 	assert.Eventually(t, func() bool {
-		f1, err1 := newEngine.GetStats(market1)
-		f2, err2 := newEngine.GetStats(market2)
+		f1, err1 := newEngine.GetStats(ctx, market1)
+		f2, err2 := newEngine.GetStats(ctx, market2)
 		if err1 != nil || err2 != nil {
 			return false
 		}
@@ -668,7 +668,7 @@ func TestEngineSnapshotRestore(t *testing.T) {
 
 	// Should match btc-buy-1
 	assert.Eventually(t, func() bool {
-		f1, err := newEngine.GetStats(market1)
+		f1, err := newEngine.GetStats(ctx, market1)
 		if err != nil {
 			return false
 		}
@@ -742,7 +742,7 @@ func TestManagement_CreateMarket(t *testing.T) {
 
 	// Verify OrderBook existence
 	assert.Eventually(t, func() bool {
-		f, e := engine.GetStats(marketID)
+		f, e := engine.GetStats(ctx, marketID)
 		if e != nil {
 			return false
 		}
@@ -809,7 +809,7 @@ func TestManagement_CreateMarketRejectsInvalidConfig(t *testing.T) {
 		return false
 	}, time.Second, 10*time.Millisecond)
 
-	f, err := engine.GetStats("BAD-MARKET")
+	f, err := engine.GetStats(ctx, "BAD-MARKET")
 	require.NoError(t, err)
 	stats, err := f.Wait(ctx)
 	assert.Nil(t, stats)
@@ -878,7 +878,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 	// Wait for Order-1
 	assert.Eventually(t, func() bool {
-		f, e := engine.GetStats(marketID)
+		f, e := engine.GetStats(ctx, marketID)
 		if e != nil {
 			return false
 		}
@@ -987,7 +987,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
-		future, err := engine.GetStats(marketID)
+		future, err := engine.GetStats(ctx, marketID)
 		if err != nil {
 			return false
 		}
@@ -1024,7 +1024,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	require.NoError(t, err)
 
 	// 3. Take Snapshot
-	meta, err := engine.TakeSnapshot(tmpDir)
+	meta, err := engine.TakeSnapshot(ctx, tmpDir)
 	require.NoError(t, err)
 	assert.NotNil(t, meta)
 
@@ -1086,7 +1086,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
-		future, err := newEngine.GetStats(marketID)
+		future, err := newEngine.GetStats(ctx, marketID)
 		if err != nil {
 			return false
 		}
@@ -1207,7 +1207,7 @@ func TestManagement_LateResponsePollution(t *testing.T) {
 
 	// Check if M2 was actually created successfully (proves future2.Wait did not read the old cmd-1 success response)
 	assert.Eventually(t, func() bool {
-		future, err := engine.GetStats("M2")
+		future, err := engine.GetStats(ctxLong, "M2")
 		if err != nil {
 			return false
 		}

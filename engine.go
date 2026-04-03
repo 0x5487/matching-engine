@@ -479,19 +479,19 @@ func (engine *MatchingEngine) SendUserEvent(
 }
 
 // GetStats returns usage statistics for the specified market.
-func (engine *MatchingEngine) GetStats(marketID string) (*Future[*protocol.GetStatsResponse], error) {
+func (engine *MatchingEngine) GetStats(ctx context.Context, marketID string) (*Future[*protocol.GetStatsResponse], error) {
 	if engine.isShutdown.Load() {
 		return nil, ErrShutdown
 	}
 
 	respChan := engine.acquireResponseChannel()
 
-	engine.ring.Publish(InputEvent{
-		Query: &protocol.GetStatsRequest{
-			MarketID: marketID,
-		},
-		Resp: respChan,
-	})
+	if err := engine.enqueueQueryWithResponse(ctx, &protocol.GetStatsRequest{
+		MarketID: marketID,
+	}, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
 
 	return &Future[*protocol.GetStatsResponse]{
 		engine:   engine,
@@ -500,7 +500,7 @@ func (engine *MatchingEngine) GetStats(marketID string) (*Future[*protocol.GetSt
 }
 
 // Depth returns the current depth of the order book for the specified market.
-func (engine *MatchingEngine) Depth(marketID string, limit uint32) (*Future[*protocol.GetDepthResponse], error) {
+func (engine *MatchingEngine) Depth(ctx context.Context, marketID string, limit uint32) (*Future[*protocol.GetDepthResponse], error) {
 	if engine.isShutdown.Load() {
 		return nil, ErrShutdown
 	}
@@ -511,13 +511,13 @@ func (engine *MatchingEngine) Depth(marketID string, limit uint32) (*Future[*pro
 
 	respChan := engine.acquireResponseChannel()
 
-	engine.ring.Publish(InputEvent{
-		Query: &protocol.GetDepthRequest{
-			MarketID: marketID,
-			Limit:    limit,
-		},
-		Resp: respChan,
-	})
+	if err := engine.enqueueQueryWithResponse(ctx, &protocol.GetDepthRequest{
+		MarketID: marketID,
+		Limit:    limit,
+	}, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
 
 	return &Future[*protocol.GetDepthResponse]{
 		engine:   engine,
@@ -542,39 +542,30 @@ type snapshotResult struct {
 // TakeSnapshot captures a consistent snapshot of all order books and writes them to the specified directory.
 // It generates two files: `snapshot.bin` (binary data) and `metadata.json` (metadata).
 // Returns the metadata object or an error.
-func (engine *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, error) {
+func (engine *MatchingEngine) TakeSnapshot(ctx context.Context, outputDir string) (*SnapshotMetadata, error) {
 	if engine.isShutdown.Load() {
 		return nil, ErrShutdown
 	}
 
 	// Request snapshots from all OrderBooks through the RingBuffer
 	// This ensures snapshots are taken on the consumer goroutine (no race conditions)
-	val := engine.responsePool.Get()
-	respChan, ok := val.(chan any)
-	if !ok {
-		return nil, errors.New("failed to get response channel from pool")
+	respChan := engine.acquireResponseChannel()
+	defer engine.releaseResponseChannel(respChan)
+
+	if err := engine.enqueueQueryWithResponse(ctx, &engineSnapshotQuery{}, respChan); err != nil {
+		return nil, err
 	}
-	defer func() {
-		select {
-		case <-respChan:
-		default:
-		}
-		engine.responsePool.Put(respChan)
-	}()
-	engine.ring.Publish(InputEvent{
-		Query: &engineSnapshotQuery{},
-		Resp:  respChan,
-	})
 
 	var results []snapshotResult
 	select {
 	case res := <-respChan:
-		results, ok = res.([]snapshotResult)
+		r, ok := res.([]snapshotResult)
 		if !ok {
 			return nil, errors.New("unexpected response type for snapshot")
 		}
-	case <-time.After(snapshotTimeout):
-		return nil, ErrTimeout
+		results = r
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 
 	// Use a temporary directory for atomic writes
@@ -1216,6 +1207,35 @@ func (engine *MatchingEngine) enqueueCommandWithResponse(ctx context.Context, cm
 			ev.Cmd = cmd
 			ev.Query = nil
 			ev.Resp = resp // Essential: Pass the response channel into the event
+
+			engine.ring.Commit(seq)
+			return nil
+		}
+
+		if engine.isShutdown.Load() {
+			return ErrShutdown
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		strategy.Idle()
+	}
+}
+
+func (engine *MatchingEngine) enqueueQueryWithResponse(ctx context.Context, query any, resp chan any) error {
+	if engine.isShutdown.Load() {
+		return ErrShutdown
+	}
+
+	strategy := YieldingIdleStrategy{}
+	for {
+		seq, ev := engine.ring.TryClaim()
+		if seq != -1 {
+			ev.Cmd = nil
+			ev.Query = query
+			ev.Resp = resp // Essential: Pass the response channel into the query
 
 			engine.ring.Commit(seq)
 			return nil
