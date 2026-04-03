@@ -1221,7 +1221,7 @@ func (engine *MatchingEngine) enqueueCommandWithResponse(cmd *protocol.Command, 
 
 	ev.Cmd = cmd
 	ev.Query = nil
-	ev.Resp = resp // 關鍵：將響應通道傳入事件
+	ev.Resp = resp // Essential: Pass the response channel into the event
 
 	engine.ring.Commit(seq)
 	return nil
