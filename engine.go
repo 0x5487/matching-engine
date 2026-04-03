@@ -838,7 +838,7 @@ func (engine *MatchingEngine) processCommand(ev *InputEvent) {
 		engine.rejectCommand(cmd, protocol.RejectReasonMarketNotFound)
 		return
 	}
-	book.processCommand(cmd)
+	book.processCommand(ev)
 
 	if cmd.SeqID > 0 {
 		book.lastCmdSeqID.Store(cmd.SeqID)

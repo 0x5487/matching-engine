@@ -134,7 +134,8 @@ func (book *OrderBook) Restore(snap *OrderBookSnapshot) {
 	}
 }
 
-func (book *OrderBook) processCommand(cmd *protocol.Command) {
+func (book *OrderBook) processCommand(ev *InputEvent) {
+	cmd := ev.Cmd
 	switch cmd.Type {
 	case protocol.CmdSuspendMarket:
 		payload := &protocol.SuspendMarketCommand{}
@@ -369,6 +370,24 @@ func (book *OrderBook) processQuery(ev *InputEvent) {
 			case ev.Resp <- snap:
 			default:
 			}
+		}
+	}
+}
+
+func (book *OrderBook) respondSuccess(ev *InputEvent, val any) {
+	if ev.Resp != nil {
+		select {
+		case ev.Resp <- val:
+		default:
+		}
+	}
+}
+
+func (book *OrderBook) respondError(ev *InputEvent, err error) {
+	if ev.Resp != nil {
+		select {
+		case ev.Resp <- err:
+		default:
 		}
 	}
 }
