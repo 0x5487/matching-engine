@@ -557,7 +557,12 @@ func (engine *MatchingEngine) TakeSnapshot(ctx context.Context, outputDir string
 	// Request snapshots from all OrderBooks through the RingBuffer
 	// This ensures snapshots are taken on the consumer goroutine (no race conditions)
 	respChan := engine.acquireResponseChannel()
-	defer engine.releaseResponseChannel(respChan)
+	var success bool
+	defer func() {
+		if success {
+			engine.releaseResponseChannel(respChan)
+		}
+	}()
 
 	if err := engine.enqueueQueryWithResponse(ctx, &engineSnapshotQuery{}, respChan); err != nil {
 		return nil, err
