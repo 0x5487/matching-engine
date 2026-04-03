@@ -459,6 +459,10 @@ func (engine *MatchingEngine) SendUserEvent(
 
 // GetStats returns usage statistics for the specified market.
 func (engine *MatchingEngine) GetStats(marketID string) (*Future[*protocol.GetStatsResponse], error) {
+	if engine.isShutdown.Load() {
+		return nil, ErrShutdown
+	}
+
 	respChan := engine.acquireResponseChannel()
 
 	engine.ring.Publish(InputEvent{
@@ -476,6 +480,10 @@ func (engine *MatchingEngine) GetStats(marketID string) (*Future[*protocol.GetSt
 
 // Depth returns the current depth of the order book for the specified market.
 func (engine *MatchingEngine) Depth(marketID string, limit uint32) (*Future[*protocol.GetDepthResponse], error) {
+	if engine.isShutdown.Load() {
+		return nil, ErrShutdown
+	}
+
 	if limit == 0 {
 		return nil, ErrInvalidParam
 	}
@@ -514,6 +522,10 @@ type snapshotResult struct {
 // It generates two files: `snapshot.bin` (binary data) and `metadata.json` (metadata).
 // Returns the metadata object or an error.
 func (engine *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, error) {
+	if engine.isShutdown.Load() {
+		return nil, ErrShutdown
+	}
+
 	// Request snapshots from all OrderBooks through the RingBuffer
 	// This ensures snapshots are taken on the consumer goroutine (no race conditions)
 	val := engine.responsePool.Get()
