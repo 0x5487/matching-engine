@@ -475,23 +475,13 @@ func (engine *MatchingEngine) GetStats(marketID string) (*Future[*protocol.GetSt
 }
 
 // Depth returns the current depth of the order book for the specified market.
-func (engine *MatchingEngine) Depth(marketID string, limit uint32) (*protocol.GetDepthResponse, error) {
+func (engine *MatchingEngine) Depth(marketID string, limit uint32) (*Future[*protocol.GetDepthResponse], error) {
 	if limit == 0 {
 		return nil, ErrInvalidParam
 	}
 
-	val := engine.responsePool.Get()
-	respChan, ok := val.(chan any)
-	if !ok {
-		return nil, errors.New("failed to get response channel from pool")
-	}
-	defer func() {
-		select {
-		case <-respChan:
-		default:
-		}
-		engine.responsePool.Put(respChan)
-	}()
+	respChan := engine.acquireResponseChannel()
+
 	engine.ring.Publish(InputEvent{
 		Query: &protocol.GetDepthRequest{
 			MarketID: marketID,
@@ -500,18 +490,10 @@ func (engine *MatchingEngine) Depth(marketID string, limit uint32) (*protocol.Ge
 		Resp: respChan,
 	})
 
-	select {
-	case res := <-respChan:
-		if err, ok := res.(error); ok {
-			return nil, err
-		}
-		if result, ok := res.(*protocol.GetDepthResponse); ok {
-			return result, nil
-		}
-		return nil, errors.New("unexpected response type")
-	case <-time.After(time.Second):
-		return nil, ErrTimeout
-	}
+	return &Future[*protocol.GetDepthResponse]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
 }
 
 // Shutdown gracefully shuts down the engine.

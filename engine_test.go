@@ -248,7 +248,9 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		require.ErrorIs(t, err, ErrNotFound)
 		assert.Less(t, time.Since(start), 200*time.Millisecond)
 
-		depth, err := engine.Depth("NON-EXISTENT", 10)
+		futureDepth, err := engine.Depth("NON-EXISTENT", 10)
+		require.NoError(t, err)
+		depth, err := futureDepth.Wait(ctx)
 		assert.Nil(t, depth)
 		require.ErrorIs(t, err, ErrNotFound)
 
