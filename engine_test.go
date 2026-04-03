@@ -1123,6 +1123,46 @@ func TestManagement_UpdateConfig(t *testing.T) {
 	_ = engine.Shutdown(ctx)
 }
 
+func TestManagement_LateResponsePollution(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("engine-1", publish)
+
+	ctxShort, cancelShort := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancelShort()
+
+	// 1. 發起第一個命令，但給予極短的超時
+	future1, err := engine.CreateMarket(context.Background(), "cmd-1", 1, "M1", "0.01", time.Now().UnixNano())
+	require.NoError(t, err)
+
+	// 模擬超時退出
+	_, err = future1.Wait(ctxShort)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+
+	// 2. 現在啟動引擎，並處理 cmd-1
+	go engine.Run()
+
+	// 等待一小段時間確保 cmd-1 被處理，響應被發送到那個已被放棄的通道
+	time.Sleep(50 * time.Millisecond)
+
+	// 3. 發起第二個命令
+	ctxLong := context.Background()
+	// 此時 engine 應該會從池中獲取一個新的乾淨通道
+	future2, err := engine.CreateMarket(ctxLong, "cmd-2", 1, "M2", "0.01", time.Now().UnixNano())
+	require.NoError(t, err)
+
+	res, err := future2.Wait(ctxLong)
+	require.NoError(t, err)
+	require.True(t, res)
+
+	// 檢查 M2 是否真的建立成功了 (證明 future2.Wait 沒有讀到舊的 cmd-1 成功響應)
+	assert.Eventually(t, func() bool {
+		stats, err := engine.GetStats("M2")
+		return err == nil && stats != nil
+	}, 1*time.Second, 10*time.Millisecond)
+
+	_ = engine.Shutdown(ctxLong)
+}
+
 func TestManagement_UnknownMarketFuture(t *testing.T) {
 	publish := NewMemoryPublishLog()
 	engine := NewMatchingEngine("engine-1", publish)
