@@ -1268,7 +1268,7 @@ func (book *OrderBook) handleSuspendMarket(ev *InputEvent, payload *protocol.Sus
 			payload.MarketID,
 			payload.UserID,
 			protocol.RejectReasonInvalidPayload,
-			nil,
+			cmd.Metadata,
 			payload.Timestamp,
 		)
 		book.respondError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
@@ -1282,7 +1282,7 @@ func (book *OrderBook) handleSuspendMarket(ev *InputEvent, payload *protocol.Sus
 			payload.MarketID,
 			payload.UserID,
 			protocol.RejectReasonMarketHalted,
-			nil,
+			cmd.Metadata,
 			payload.Timestamp,
 		)
 		book.respondError(ev, errors.New(string(protocol.RejectReasonMarketHalted)))
@@ -1329,7 +1329,7 @@ func (book *OrderBook) handleResumeMarket(ev *InputEvent, payload *protocol.Resu
 			payload.MarketID,
 			payload.UserID,
 			protocol.RejectReasonMarketHalted,
-			nil,
+			cmd.Metadata,
 			payload.Timestamp,
 		)
 		book.respondError(ev, errors.New(string(protocol.RejectReasonMarketHalted)))
@@ -1382,7 +1382,7 @@ func (book *OrderBook) handleUpdateConfig(ev *InputEvent, payload *protocol.Upda
 				payload.MarketID,
 				payload.UserID,
 				protocol.RejectReasonInvalidPayload,
-				nil,
+				ev.Cmd.Metadata,
 				payload.Timestamp,
 			)
 			book.respondError(ev, err)
