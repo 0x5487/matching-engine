@@ -277,6 +277,7 @@ type IdleStrategy interface {
 // YieldingIdleStrategy yields the CPU to other goroutines.
 type YieldingIdleStrategy struct{}
 
+// Idle yields the CPU using runtime.Gosched().
 func (s YieldingIdleStrategy) Idle() {
 	runtime.Gosched()
 }
@@ -284,6 +285,7 @@ func (s YieldingIdleStrategy) Idle() {
 // BusySpinIdleStrategy spins without yielding.
 type BusySpinIdleStrategy struct{}
 
+// Idle performs a busy-spin without yielding.
 func (s BusySpinIdleStrategy) Idle() {
 	// Do nothing, just spin
 }

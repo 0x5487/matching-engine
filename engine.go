@@ -479,7 +479,10 @@ func (engine *MatchingEngine) SendUserEvent(
 }
 
 // GetStats returns usage statistics for the specified market.
-func (engine *MatchingEngine) GetStats(ctx context.Context, marketID string) (*Future[*protocol.GetStatsResponse], error) {
+func (engine *MatchingEngine) GetStats(
+	ctx context.Context,
+	marketID string,
+) (*Future[*protocol.GetStatsResponse], error) {
 	if engine.isShutdown.Load() {
 		return nil, ErrShutdown
 	}
@@ -500,7 +503,11 @@ func (engine *MatchingEngine) GetStats(ctx context.Context, marketID string) (*F
 }
 
 // Depth returns the current depth of the order book for the specified market.
-func (engine *MatchingEngine) Depth(ctx context.Context, marketID string, limit uint32) (*Future[*protocol.GetDepthResponse], error) {
+func (engine *MatchingEngine) Depth(
+	ctx context.Context,
+	marketID string,
+	limit uint32,
+) (*Future[*protocol.GetDepthResponse], error) {
 	if engine.isShutdown.Load() {
 		return nil, ErrShutdown
 	}
@@ -839,7 +846,7 @@ func (engine *MatchingEngine) processCommand(ev *InputEvent) {
 	book := engine.orderBook(cmd.MarketID)
 	if book == nil {
 		engine.rejectCommand(cmd, protocol.RejectReasonMarketNotFound)
-		engine.respondQueryError(ev, ErrNotFound)
+		engine.respondQueryError(ev, errors.New(string(protocol.RejectReasonMarketNotFound)))
 		return
 	}
 	book.processCommand(ev)
@@ -1195,7 +1202,11 @@ func (engine *MatchingEngine) releaseResponseChannel(ch chan any) {
 	engine.responsePool.Put(ch)
 }
 
-func (engine *MatchingEngine) enqueueCommandWithResponse(ctx context.Context, cmd *protocol.Command, resp chan any) error {
+func (engine *MatchingEngine) enqueueCommandWithResponse(
+	ctx context.Context,
+	cmd *protocol.Command,
+	resp chan any,
+) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown
 	}
