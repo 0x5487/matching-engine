@@ -2,7 +2,11 @@
 
 ## [unreleased]
 
-- feature: extend **Future Pattern** to all management commands (`CreateMarket`, `SuspendMarket`, `ResumeMarket`, `UpdateConfig`) for synchronous-like waiting and immediate error reporting (e.g., `MarketNotFound`). See [doc/features/future-pattern.md](doc/features/future-pattern.md).
+- feature: extend **Future Pattern** to all management commands (`CreateMarket`, `SuspendMarket`, `ResumeMarket`, `UpdateConfig`) and query commands (`Depth`, `GetStats`) for synchronous-like waiting and consistent API experience.
+- fix: resolve **Response Channel Pollution (ABA issue)** by abandoning pooled channels upon `Future.Wait` timeout or cancellation, ensuring late responses from the engine do not interfere with subsequent requests.
+- fix: ensure all management commands resolve their Future with an error immediately upon **payload deserialization failure**, preventing the caller from hanging until context timeout.
+- fix: resolve Future hanging in `processCommand` when targeting a non-existent market by immediately reporting `MarketNotFound` error.
+- refactor: translate all Traditional Chinese comments in `engine.go` and `engine_test.go` to English to comply with project engineering standards.
 
 ## v0.8.0 (2026-04-02)
 
