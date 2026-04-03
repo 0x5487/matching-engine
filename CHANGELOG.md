@@ -6,10 +6,10 @@
 - feature: introduce **IdleStrategy** (BusySpin, Yielding) for the RingBuffer to allow flexible waiting behaviors and move waiting logic out of the core Disruptor.
 - feature: implement **Context-Aware Command Submission** in `MatchingEngine`, allowing `PlaceOrder`, `CancelOrder`, etc., to respect context deadlines or cancellations during the RingBuffer submission phase.
 - breaking: standardize all public `MatchingEngine` methods (`GetStats`, `Depth`, `TakeSnapshot`) to require a `context.Context` parameter for better consistency and resource control.
+- breaking: remove `Metadata` field from all command structures to improve performance and enforce separation of concerns between business logic and transport-layer tracing.
 - fix: resolve **Response Channel Pollution (ABA issue)** by abandoning pooled channels upon `Future.Wait` timeout or cancellation, ensuring late responses from the engine do not interfere with subsequent requests.
 - fix: ensure all management commands resolve their Future with an error immediately upon **payload deserialization failure**, preventing the caller from hanging until context timeout.
 - fix: resolve Future hanging in `processCommand` when targeting a non-existent market by immediately reporting `ErrNotFound`.
-- fix: ensure `cmd.Metadata` is preserved in management command reject logs to maintain end-to-end tracing visibility.
 - fix: unify missing market errors to `match.ErrNotFound` across both query and command paths for consistent error handling using `errors.Is`.
 - refactor: translate all Traditional Chinese comments in `engine.go` and `engine_test.go` to English to comply with project engineering standards.
 
