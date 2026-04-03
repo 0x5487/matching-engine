@@ -93,22 +93,26 @@ type Future[T any] struct {
 	err      error // Error during the submission phase
 }
 
-// Wait blocks until the operation completes or the context is cancelled.
+// Wait blocks until the operation completes or the context is canceled.
 func (f *Future[T]) Wait(ctx context.Context) (T, error) {
 	if f.err != nil {
 		var zero T
 		return zero, f.err
 	}
 
-	// Helper to ensure channel is returned to pool
+	var success bool
 	defer func() {
-		if f.engine != nil && f.respChan != nil {
+		// Only return channel to pool if we successfully received the response.
+		// If we timed out or were canceled, the engine might still send a late response
+		// to this channel. Abandoning the channel is safer to prevent pollution of the pool.
+		if success && f.engine != nil && f.respChan != nil {
 			f.engine.releaseResponseChannel(f.respChan)
 		}
 	}()
 
 	select {
 	case res := <-f.respChan:
+		success = true
 		if err, ok := res.(error); ok {
 			var zero T
 			return zero, err

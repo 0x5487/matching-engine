@@ -76,9 +76,12 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
-			var stats *protocol.GetStatsResponse
-			stats, err = engine.GetStats(market1)
-			return err == nil && stats.BidOrderCount == 1
+			future, e := engine.GetStats(ctx, market1)
+			if e != nil {
+				return false
+			}
+			stats, e := future.Wait(ctx)
+			return e == nil && stats.BidOrderCount == 1
 		}, 1*time.Second, 10*time.Millisecond)
 
 		order2 := &protocol.PlaceOrderCommand{
@@ -95,8 +98,12 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
-			stats, err := engine.GetStats(market2)
-			return err == nil && stats.AskOrderCount == 1
+			future, e := engine.GetStats(ctx, market2)
+			if e != nil {
+				return false
+			}
+			stats, e := future.Wait(ctx)
+			return e == nil && stats.AskOrderCount == 1
 		}, 1*time.Second, 10*time.Millisecond)
 
 		_ = engine.Shutdown(ctx)
@@ -134,9 +141,12 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		// Wait for order to be in book
 		assert.Eventually(t, func() bool {
-			var stats *protocol.GetStatsResponse
-			stats, err = engine.GetStats(market1)
-			return err == nil && stats.BidOrderCount == 1
+			future, e := engine.GetStats(ctx, market1)
+			if e != nil {
+				return false
+			}
+			stats, e := future.Wait(ctx)
+			return e == nil && stats.BidOrderCount == 1
 		}, 1*time.Second, 10*time.Millisecond)
 
 		err = engine.CancelOrder(
@@ -153,7 +163,11 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		// validate
 		assert.Eventually(t, func() bool {
-			stats, err := engine.GetStats(market1)
+			future, err := engine.GetStats(ctx, market1)
+			if err != nil {
+				return false
+			}
+			stats, err := future.Wait(ctx)
 			return err == nil && stats.BidOrderCount == 0
 		}, 1*time.Second, 10*time.Millisecond)
 
@@ -227,12 +241,16 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		go engine.Run()
 
 		start := time.Now()
-		stats, err := engine.GetStats("NON-EXISTENT")
+		future, err := engine.GetStats(ctx, "NON-EXISTENT")
+		require.NoError(t, err)
+		stats, err := future.Wait(ctx)
 		assert.Nil(t, stats)
 		require.ErrorIs(t, err, ErrNotFound)
 		assert.Less(t, time.Since(start), 200*time.Millisecond)
 
-		depth, err := engine.Depth("NON-EXISTENT", 10)
+		futureDepth, err := engine.Depth(ctx, "NON-EXISTENT", 10)
+		require.NoError(t, err)
+		depth, err := futureDepth.Wait(ctx)
 		assert.Nil(t, depth)
 		require.ErrorIs(t, err, ErrNotFound)
 
@@ -295,7 +313,9 @@ func TestMatchingEngineInitialization(t *testing.T) {
 				log.Timestamp == 0
 		}, time.Second, 10*time.Millisecond)
 
-		_, statsErr := engine.GetStats("BTC-USDT")
+		statsFuture, err := engine.GetStats(ctx, "BTC-USDT")
+		require.NoError(t, err)
+		_, statsErr := statsFuture.Wait(ctx)
 		require.ErrorIs(t, statsErr, ErrNotFound)
 
 		_ = engine.Shutdown(ctx)
@@ -389,19 +409,20 @@ func TestMatchingEngineShutdown(t *testing.T) {
 
 		// Create orders in multiple markets
 		markets := []string{"BTC-USDT", "ETH-USDT", "SOL-USDT"}
+		futures := make([]*Future[bool], 0, len(markets))
 		for _, market := range markets {
 			future, err := engine.CreateMarket(ctx, "shutdown-market-"+market, 1, market, "", time.Now().UnixNano())
 			require.NoError(t, err)
-			_ = future // wait below
+			futures = append(futures, future)
 		}
 
 		// Start engine event loop
 		go engine.Run()
 
-		// For simplicity, we don't wait for all markets here, 
-		// but PlaceOrder will fail if market is not processed yet.
-		// In a real test, we should wait.
-		time.Sleep(100 * time.Millisecond)
+		for _, future := range futures {
+			_, err := future.Wait(ctx)
+			require.NoError(t, err)
+		}
 
 		for i, market := range markets {
 			order := &protocol.PlaceOrderCommand{
@@ -575,14 +596,19 @@ func TestEngineSnapshotRestore(t *testing.T) {
 
 	// Wait for processing
 	assert.Eventually(t, func() bool {
-		stats1, err1 := engine.GetStats(market1)
-		stats2, err2 := engine.GetStats(market2)
+		f1, err1 := engine.GetStats(ctx, market1)
+		f2, err2 := engine.GetStats(ctx, market2)
+		if err1 != nil || err2 != nil {
+			return false
+		}
+		s1, err1 := f1.Wait(ctx)
+		s2, err2 := f2.Wait(ctx)
 		return err1 == nil && err2 == nil &&
-			stats1.BidOrderCount == 1 && stats2.AskOrderCount == 1
+			s1.BidOrderCount == 1 && s2.AskOrderCount == 1
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 2. Take Snapshot
-	meta, err := engine.TakeSnapshot(tmpDir)
+	meta, err := engine.TakeSnapshot(ctx, tmpDir)
 	require.NoError(t, err)
 	assert.NotNil(t, meta)
 	assert.NotZero(t, meta.Timestamp)
@@ -615,11 +641,16 @@ func TestEngineSnapshotRestore(t *testing.T) {
 
 	// 4. Verify Restored State
 	assert.Eventually(t, func() bool {
-		stats1, err1 := newEngine.GetStats(market1)
-		stats2, err2 := newEngine.GetStats(market2)
+		f1, err1 := newEngine.GetStats(ctx, market1)
+		f2, err2 := newEngine.GetStats(ctx, market2)
+		if err1 != nil || err2 != nil {
+			return false
+		}
+		s1, err1 := f1.Wait(ctx)
+		s2, err2 := f2.Wait(ctx)
 		return err1 == nil && err2 == nil &&
-			stats1.BidOrderCount == 1 && stats1.AskOrderCount == 0 &&
-			stats2.BidOrderCount == 0 && stats2.AskOrderCount == 1
+			s1.BidOrderCount == 1 && s1.AskOrderCount == 0 &&
+			s2.BidOrderCount == 0 && s2.AskOrderCount == 1
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 5. Verify Continuity (Add new orders to restored engine)
@@ -637,8 +668,12 @@ func TestEngineSnapshotRestore(t *testing.T) {
 
 	// Should match btc-buy-1
 	assert.Eventually(t, func() bool {
-		stats1, err := newEngine.GetStats(market1)
-		return err == nil && stats1.BidOrderCount == 0 && stats1.AskOrderCount == 0
+		f1, err := newEngine.GetStats(ctx, market1)
+		if err != nil {
+			return false
+		}
+		s1, err := f1.Wait(ctx)
+		return err == nil && s1.BidOrderCount == 0 && s1.AskOrderCount == 0
 	}, 1*time.Second, 10*time.Millisecond)
 
 	_ = newEngine.Shutdown(ctx)
@@ -701,14 +736,18 @@ func TestManagement_CreateMarket(t *testing.T) {
 	// MinLotSize: 0.01
 	future, err := engine.CreateMarket(ctx, "create-market-1", 1, marketID, "0.01", time.Now().UnixNano())
 	require.NoError(t, err)
-	
+
 	_, err = future.Wait(ctx)
 	require.NoError(t, err)
 
 	// Verify OrderBook existence
 	assert.Eventually(t, func() bool {
-		_, err = engine.GetStats(marketID)
-		return err == nil
+		f, e := engine.GetStats(ctx, marketID)
+		if e != nil {
+			return false
+		}
+		_, e = f.Wait(ctx)
+		return e == nil
 	}, 1*time.Second, 10*time.Millisecond)
 
 	assert.Eventually(t, func() bool {
@@ -749,7 +788,14 @@ func TestManagement_CreateMarketRejectsInvalidConfig(t *testing.T) {
 
 	go engine.Run()
 
-	future, err := engine.CreateMarket(ctx, "bad-market-create", 1, "BAD-MARKET", "not-a-decimal", time.Now().UnixNano())
+	future, err := engine.CreateMarket(
+		ctx,
+		"bad-market-create",
+		1,
+		"BAD-MARKET",
+		"not-a-decimal",
+		time.Now().UnixNano(),
+	)
 	require.NoError(t, err)
 	_, err = future.Wait(ctx)
 	require.Error(t, err)
@@ -763,7 +809,9 @@ func TestManagement_CreateMarketRejectsInvalidConfig(t *testing.T) {
 		return false
 	}, time.Second, 10*time.Millisecond)
 
-	stats, err := engine.GetStats("BAD-MARKET")
+	f, err := engine.GetStats(ctx, "BAD-MARKET")
+	require.NoError(t, err)
+	stats, err := f.Wait(ctx)
 	assert.Nil(t, stats)
 	require.ErrorIs(t, err, ErrNotFound)
 
@@ -810,7 +858,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 	// Start engine event loop
 	go engine.Run()
-	
+
 	_, err = future.Wait(ctx)
 	require.NoError(t, err)
 
@@ -830,17 +878,19 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 	// Wait for Order-1
 	assert.Eventually(t, func() bool {
-		var stats *protocol.GetStatsResponse
-		stats, err = engine.GetStats(marketID)
-		return err == nil && stats.BidOrderCount == 1
+		f, e := engine.GetStats(ctx, marketID)
+		if e != nil {
+			return false
+		}
+		s, e := f.Wait(ctx)
+		return e == nil && s.BidOrderCount == 1
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 2. Suspend Market
-	err = engine.SuspendMarket("suspend-market-1", 1, marketID, time.Now().UnixNano())
+	futureSuspend, err := engine.SuspendMarket(ctx, "suspend-market-1", 1, marketID, time.Now().UnixNano())
 	require.NoError(t, err)
-
-	// Give time for suspend command to process
-	time.Sleep(50 * time.Millisecond)
+	_, err = futureSuspend.Wait(ctx)
+	require.NoError(t, err)
 
 	// 3. Place Order (Should be Rejected)
 	order2 := &protocol.PlaceOrderCommand{
@@ -891,9 +941,10 @@ func TestManagement_SuspendResume(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 5. Resume Market
-	err = engine.ResumeMarket("resume-market-1", 1, marketID, time.Now().UnixNano())
+	resumeFuture, err := engine.ResumeMarket(ctx, "resume-market-1", 1, marketID, time.Now().UnixNano())
 	require.NoError(t, err)
-	time.Sleep(50 * time.Millisecond)
+	_, err = resumeFuture.Wait(ctx)
+	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
 		for _, l := range publish.Logs() {
@@ -936,7 +987,11 @@ func TestManagement_SuspendResume(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
-		stats, err := engine.GetStats(marketID)
+		future, err := engine.GetStats(ctx, marketID)
+		if err != nil {
+			return false
+		}
+		stats, err := future.Wait(ctx)
 		return err == nil && stats.BidOrderCount == 1
 	}, 1*time.Second, 10*time.Millisecond)
 
@@ -958,17 +1013,18 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 
 	// Start engine event loop
 	go engine.Run()
-	
+
 	_, err = future.Wait(ctx)
 	require.NoError(t, err)
 
 	// 2. Suspend Market
-	err = engine.SuspendMarket("snapshot-market-suspend", 1, marketID, time.Now().UnixNano())
+	futureSuspend, err := engine.SuspendMarket(ctx, "snapshot-market-suspend", 1, marketID, time.Now().UnixNano())
 	require.NoError(t, err)
-	time.Sleep(50 * time.Millisecond) // Wait for processing
+	_, err = futureSuspend.Wait(ctx)
+	require.NoError(t, err)
 
 	// 3. Take Snapshot
-	meta, err := engine.TakeSnapshot(tmpDir)
+	meta, err := engine.TakeSnapshot(ctx, tmpDir)
 	require.NoError(t, err)
 	assert.NotNil(t, meta)
 
@@ -1010,9 +1066,10 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 6. Resume
-	err = newEngine.ResumeMarket("snapshot-market-resume", 1, marketID, time.Now().UnixNano())
+	futureResume, err := newEngine.ResumeMarket(ctx, "snapshot-market-resume", 1, marketID, time.Now().UnixNano())
 	require.NoError(t, err)
-	time.Sleep(50 * time.Millisecond)
+	_, err = futureResume.Wait(ctx)
+	require.NoError(t, err)
 
 	// 7. Test resumed functionality
 	order2 := &protocol.PlaceOrderCommand{
@@ -1029,7 +1086,11 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
-		stats, err := newEngine.GetStats(marketID)
+		future, err := newEngine.GetStats(ctx, marketID)
+		if err != nil {
+			return false
+		}
+		stats, err := future.Wait(ctx)
 		return err == nil && stats.BidOrderCount == 1
 	}, 1*time.Second, 10*time.Millisecond)
 
@@ -1047,16 +1108,16 @@ func TestManagement_UpdateConfig(t *testing.T) {
 
 	// Start engine event loop
 	go engine.Run()
-	
+
 	_, err = future.Wait(ctx)
 	require.NoError(t, err)
 
 	// 1. Update MinLotSize
-	err = engine.UpdateConfig("config-market-update", 1, marketID, "0.1", time.Now().UnixNano())
+	updateFuture, err := engine.UpdateConfig(ctx, "config-market-update", 1, marketID, "0.1", time.Now().UnixNano())
 	require.NoError(t, err)
 
-	// Wait for async processing
-	time.Sleep(50 * time.Millisecond)
+	_, err = updateFuture.Wait(ctx)
+	require.NoError(t, err)
 
 	// 2. Verify new LotSize by placing an order
 	order := &protocol.PlaceOrderCommand{
@@ -1083,7 +1144,6 @@ func TestManagement_UpdateConfig(t *testing.T) {
 		Timestamp: 1,
 	})
 	require.NoError(t, err)
-	time.Sleep(50 * time.Millisecond)
 
 	err = engine.PlaceOrder(ctx, marketID, order)
 	require.NoError(t, err)
@@ -1110,6 +1170,75 @@ func TestManagement_UpdateConfig(t *testing.T) {
 		}
 		return false
 	}, 1*time.Second, 10*time.Millisecond)
+
+	_ = engine.Shutdown(ctx)
+}
+
+func TestManagement_LateResponsePollution(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("engine-1", publish)
+
+	ctxShort, cancelShort := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancelShort()
+
+	// 1. Issue the first command with a very short timeout
+	future1, err := engine.CreateMarket(context.Background(), "cmd-1", 1, "M1", "0.01", time.Now().UnixNano())
+	require.NoError(t, err)
+
+	// Simulate timeout exit
+	_, err = future1.Wait(ctxShort)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+
+	// 2. Start the engine and process cmd-1
+	go engine.Run()
+
+	// Wait for a short time to ensure cmd-1 is processed and response is sent to the abandoned channel
+	time.Sleep(50 * time.Millisecond)
+
+	// 3. Issue the second command
+	ctxLong := context.Background()
+	// At this point, the engine should acquire a new clean channel from the pool
+	future2, err := engine.CreateMarket(ctxLong, "cmd-2", 1, "M2", "0.01", time.Now().UnixNano())
+	require.NoError(t, err)
+
+	res, err := future2.Wait(ctxLong)
+	require.NoError(t, err)
+	require.True(t, res)
+
+	// Check if M2 was actually created successfully (proves future2.Wait did not read the old cmd-1 success response)
+	assert.Eventually(t, func() bool {
+		future, err := engine.GetStats(ctxLong, "M2")
+		if err != nil {
+			return false
+		}
+		stats, err := future.Wait(ctxLong)
+		return err == nil && stats != nil
+	}, 1*time.Second, 10*time.Millisecond)
+
+	_ = engine.Shutdown(ctxLong)
+}
+
+func TestManagement_UnknownMarketFuture(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("engine-1", publish)
+	go engine.Run()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	// Try to suspend a non-existent market
+	future, err := engine.SuspendMarket(ctx, "cmd-unknown", 1, "UNKNOWN-MARKET", time.Now().UnixNano())
+	require.NoError(t, err)
+
+	// If fixed correctly, this should return an error immediately instead of waiting for ctx timeout
+	start := time.Now()
+	_, err = future.Wait(ctx)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	// If elapsed time is close to 200ms, it means it hung until timeout
+	require.Less(t, elapsed, 100*time.Millisecond, "Future should return immediately for unknown market")
+	require.ErrorIs(t, err, ErrNotFound)
 
 	_ = engine.Shutdown(ctx)
 }

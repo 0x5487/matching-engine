@@ -91,28 +91,39 @@ func (engine *MatchingEngine) OnEvent(ev *InputEvent) {
 
 // EnqueueCommand routes the command to the Engine's shared RingBuffer.
 // CreateMarket is handled synchronously so the OrderBook is immediately available.
-func (engine *MatchingEngine) EnqueueCommand(cmd *protocol.Command) error {
+func (engine *MatchingEngine) EnqueueCommand(ctx context.Context, cmd *protocol.Command) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown
 	}
 
-	// All commands go through the shared RingBuffer
-	seq, ev := engine.ring.Claim()
-	if seq == -1 {
-		return ErrShutdown
+	strategy := YieldingIdleStrategy{}
+	for {
+		// All commands go through the shared RingBuffer
+		seq, ev := engine.ring.TryClaim()
+		if seq != -1 {
+			ev.Cmd = cmd
+			ev.Query = nil
+			ev.Resp = nil
+
+			engine.ring.Commit(seq)
+			return nil
+		}
+
+		if engine.isShutdown.Load() {
+			return ErrShutdown
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		strategy.Idle()
 	}
-
-	ev.Cmd = cmd
-	ev.Query = nil
-	ev.Resp = nil
-
-	engine.ring.Commit(seq)
-	return nil
 }
 
 // EnqueueCommandBatch routes a batch of commands to the Engine's shared RingBuffer.
 // It claims n contiguous slots in the RingBuffer to amortize synchronization overhead.
-func (engine *MatchingEngine) EnqueueCommandBatch(cmds []*protocol.Command) error {
+func (engine *MatchingEngine) EnqueueCommandBatch(ctx context.Context, cmds []*protocol.Command) error {
 	if len(cmds) == 0 {
 		return nil
 	}
@@ -124,65 +135,42 @@ func (engine *MatchingEngine) EnqueueCommandBatch(cmds []*protocol.Command) erro
 	n := int64(len(cmds))
 
 	// Handle case where batch size exceeds ring buffer capacity limit
-	// Simplest approach: if it's too large, we fall back to smaller chunks or single enqueues.
-	// In practice, RingBuffer capacity is large (32768), so typical batches (100-1000) will fit.
 	if n > engine.ring.capacity {
 		// Fallback to individual enqueues if batch is larger than capacity
 		for _, cmd := range cmds {
-			if err := engine.EnqueueCommand(cmd); err != nil {
+			if err := engine.EnqueueCommand(ctx, cmd); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 
-	startSeq, endSeq := engine.ring.ClaimN(n)
-	if startSeq == -1 {
-		return ErrShutdown
+	strategy := YieldingIdleStrategy{}
+	for {
+		startSeq, endSeq := engine.ring.TryClaimN(n)
+		if startSeq != -1 {
+			for i, cmd := range cmds {
+				seq := startSeq + int64(i)
+				slot := &engine.ring.buffer[seq&engine.ring.bufferMask]
+				slot.Cmd = cmd
+				slot.Query = nil
+				slot.Resp = nil
+			}
+
+			engine.ring.CommitN(startSeq, endSeq)
+			return nil
+		}
+
+		if engine.isShutdown.Load() {
+			return ErrShutdown
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		strategy.Idle()
 	}
-
-	for i, cmd := range cmds {
-		seq := startSeq + int64(i)
-		slot := &engine.ring.buffer[seq&engine.ring.bufferMask]
-		slot.Cmd = cmd
-		slot.Query = nil
-		slot.Resp = nil
-	}
-
-	engine.ring.CommitN(startSeq, endSeq)
-	return nil
-}
-
-func (engine *MatchingEngine) acquireResponseChannel() chan any {
-	val := engine.responsePool.Get()
-	return val.(chan any)
-}
-
-func (engine *MatchingEngine) releaseResponseChannel(ch chan any) {
-	// Drain the channel if not empty
-	select {
-	case <-ch:
-	default:
-	}
-	engine.responsePool.Put(ch)
-}
-
-func (engine *MatchingEngine) enqueueCommandWithResponse(cmd *protocol.Command, resp chan any) error {
-	if engine.isShutdown.Load() {
-		return ErrShutdown
-	}
-
-	seq, ev := engine.ring.Claim()
-	if seq == -1 {
-		return ErrShutdown
-	}
-
-	ev.Cmd = cmd
-	ev.Query = nil
-	ev.Resp = resp // 關鍵：將響應通道傳入事件
-
-	engine.ring.Commit(seq)
-	return nil
 }
 
 func requireCommandID(commandID string) error {
@@ -194,7 +182,7 @@ func requireCommandID(commandID string) error {
 
 // PlaceOrder adds an order to the appropriate order book based on the market ID.
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
-func (engine *MatchingEngine) PlaceOrder(_ context.Context, marketID string, cmd *protocol.PlaceOrderCommand) error {
+func (engine *MatchingEngine) PlaceOrder(ctx context.Context, marketID string, cmd *protocol.PlaceOrderCommand) error {
 	if err := requireCommandID(cmd.CommandID); err != nil {
 		return err
 	}
@@ -208,14 +196,14 @@ func (engine *MatchingEngine) PlaceOrder(_ context.Context, marketID string, cmd
 		CommandID: cmd.CommandID,
 		Payload:   bytes,
 	}
-	return engine.EnqueueCommand(protoCmd)
+	return engine.EnqueueCommand(ctx, protoCmd)
 }
 
 // PlaceOrderBatch adds multiple orders to the appropriate order book(s).
 // This method performs serialization before acquiring RingBuffer slots,
 // ensuring that serialization errors do not block or waste RingBuffer sequences.
 func (engine *MatchingEngine) PlaceOrderBatch(
-	_ context.Context,
+	ctx context.Context,
 	marketID string,
 	cmds []*protocol.PlaceOrderCommand,
 ) error {
@@ -245,12 +233,12 @@ func (engine *MatchingEngine) PlaceOrderBatch(
 		})
 	}
 
-	return engine.EnqueueCommandBatch(protoCmds)
+	return engine.EnqueueCommandBatch(ctx, protoCmds)
 }
 
 // AmendOrder modifies an existing order in the appropriate order book.
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
-func (engine *MatchingEngine) AmendOrder(_ context.Context, marketID string, cmd *protocol.AmendOrderCommand) error {
+func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, cmd *protocol.AmendOrderCommand) error {
 	if err := requireCommandID(cmd.CommandID); err != nil {
 		return err
 	}
@@ -264,13 +252,13 @@ func (engine *MatchingEngine) AmendOrder(_ context.Context, marketID string, cmd
 		CommandID: cmd.CommandID,
 		Payload:   bytes,
 	}
-	return engine.EnqueueCommand(protoCmd)
+	return engine.EnqueueCommand(ctx, protoCmd)
 }
 
 // CancelOrder cancels an order in the appropriate order book.
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
 func (engine *MatchingEngine) CancelOrder(
-	_ context.Context,
+	ctx context.Context,
 	marketID string,
 	cmd *protocol.CancelOrderCommand,
 ) error {
@@ -287,12 +275,12 @@ func (engine *MatchingEngine) CancelOrder(
 		CommandID: cmd.CommandID,
 		Payload:   bytes,
 	}
-	return engine.EnqueueCommand(protoCmd)
+	return engine.EnqueueCommand(ctx, protoCmd)
 }
 
 // CreateMarket sends a command to create a new market.
 func (engine *MatchingEngine) CreateMarket(
-	_ context.Context, // Use ctx for consistency with future API
+	ctx context.Context,
 	commandID string,
 	userID uint64,
 	marketID string,
@@ -321,7 +309,7 @@ func (engine *MatchingEngine) CreateMarket(
 		Payload:   bytes,
 	}
 
-	if err := engine.enqueueCommandWithResponse(protoCmd, respChan); err != nil {
+	if err := engine.enqueueCommandWithResponse(ctx, protoCmd, respChan); err != nil {
 		engine.releaseResponseChannel(respChan)
 		return nil, err
 	}
@@ -333,9 +321,15 @@ func (engine *MatchingEngine) CreateMarket(
 }
 
 // SuspendMarket sends a command to suspend a market.
-func (engine *MatchingEngine) SuspendMarket(commandID string, userID uint64, marketID string, timestamp int64) error {
+func (engine *MatchingEngine) SuspendMarket(
+	ctx context.Context,
+	commandID string,
+	userID uint64,
+	marketID string,
+	timestamp int64,
+) (*Future[bool], error) {
 	if err := requireCommandID(commandID); err != nil {
-		return err
+		return nil, err
 	}
 	cmd := &protocol.SuspendMarketCommand{
 		UserID:    userID,
@@ -345,20 +339,38 @@ func (engine *MatchingEngine) SuspendMarket(commandID string, userID uint64, mar
 	}
 	bytes, err := engine.serializer.Marshal(cmd)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return engine.EnqueueCommand(&protocol.Command{
+
+	respChan := engine.acquireResponseChannel()
+	protoCmd := &protocol.Command{
 		Type:      protocol.CmdSuspendMarket,
 		MarketID:  marketID,
 		CommandID: commandID,
 		Payload:   bytes,
-	})
+	}
+
+	if err := engine.enqueueCommandWithResponse(ctx, protoCmd, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+
+	return &Future[bool]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
 }
 
 // ResumeMarket sends a command to resume a market.
-func (engine *MatchingEngine) ResumeMarket(commandID string, userID uint64, marketID string, timestamp int64) error {
+func (engine *MatchingEngine) ResumeMarket(
+	ctx context.Context,
+	commandID string,
+	userID uint64,
+	marketID string,
+	timestamp int64,
+) (*Future[bool], error) {
 	if err := requireCommandID(commandID); err != nil {
-		return err
+		return nil, err
 	}
 	cmd := &protocol.ResumeMarketCommand{
 		UserID:    userID,
@@ -367,26 +379,39 @@ func (engine *MatchingEngine) ResumeMarket(commandID string, userID uint64, mark
 	}
 	bytes, err := engine.serializer.Marshal(cmd)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return engine.EnqueueCommand(&protocol.Command{
+
+	respChan := engine.acquireResponseChannel()
+	protoCmd := &protocol.Command{
 		Type:      protocol.CmdResumeMarket,
 		MarketID:  marketID,
 		CommandID: commandID,
 		Payload:   bytes,
-	})
+	}
+
+	if err := engine.enqueueCommandWithResponse(ctx, protoCmd, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+
+	return &Future[bool]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
 }
 
 // UpdateConfig sends a command to update market configuration.
 func (engine *MatchingEngine) UpdateConfig(
+	ctx context.Context,
 	commandID string,
 	userID uint64,
 	marketID string,
 	minLotSize string,
 	timestamp int64,
-) error {
+) (*Future[bool], error) {
 	if err := requireCommandID(commandID); err != nil {
-		return err
+		return nil, err
 	}
 	cmd := &protocol.UpdateConfigCommand{
 		UserID:     userID,
@@ -396,19 +421,32 @@ func (engine *MatchingEngine) UpdateConfig(
 	}
 	bytes, err := engine.serializer.Marshal(cmd)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return engine.EnqueueCommand(&protocol.Command{
+
+	respChan := engine.acquireResponseChannel()
+	protoCmd := &protocol.Command{
 		Type:      protocol.CmdUpdateConfig,
 		MarketID:  marketID,
 		CommandID: commandID,
 		Payload:   bytes,
-	})
+	}
+
+	if err := engine.enqueueCommandWithResponse(ctx, protoCmd, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+
+	return &Future[bool]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
 }
 
 // SendUserEvent sends a generic user event to the matching engine.
 // These events are processed sequentially with trades and emitted via PublishLog.
 func (engine *MatchingEngine) SendUserEvent(
+	ctx context.Context,
 	commandID string,
 	userID uint64,
 	eventType string,
@@ -433,7 +471,7 @@ func (engine *MatchingEngine) SendUserEvent(
 	}
 	// MarketID is empty for global events, or could be specific if needed.
 	// For now we treat them as global or engine-level events.
-	return engine.EnqueueCommand(&protocol.Command{
+	return engine.EnqueueCommand(ctx, &protocol.Command{
 		Type:      protocol.CmdUserEvent,
 		CommandID: commandID,
 		Payload:   bytes,
@@ -441,80 +479,57 @@ func (engine *MatchingEngine) SendUserEvent(
 }
 
 // GetStats returns usage statistics for the specified market.
-func (engine *MatchingEngine) GetStats(marketID string) (*protocol.GetStatsResponse, error) {
-	val := engine.responsePool.Get()
-	respChan, ok := val.(chan any)
-	if !ok {
-		return nil, errors.New("failed to get response channel from pool")
+func (engine *MatchingEngine) GetStats(
+	ctx context.Context,
+	marketID string,
+) (*Future[*protocol.GetStatsResponse], error) {
+	if engine.isShutdown.Load() {
+		return nil, ErrShutdown
 	}
-	defer func() {
-		// Ensure channel is drained before putting back
-		select {
-		case <-respChan:
-		default:
-		}
-		engine.responsePool.Put(respChan)
-	}()
 
-	engine.ring.Publish(InputEvent{
-		Query: &protocol.GetStatsRequest{
-			MarketID: marketID,
-		},
-		Resp: respChan,
-	})
+	respChan := engine.acquireResponseChannel()
 
-	select {
-	case res := <-respChan:
-		if err, ok := res.(error); ok {
-			return nil, err
-		}
-		if result, ok := res.(*protocol.GetStatsResponse); ok {
-			return result, nil
-		}
-		return nil, errors.New("unexpected response type")
-	case <-time.After(time.Second):
-		return nil, ErrTimeout
+	if err := engine.enqueueQueryWithResponse(ctx, &protocol.GetStatsRequest{
+		MarketID: marketID,
+	}, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
 	}
+
+	return &Future[*protocol.GetStatsResponse]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
 }
 
 // Depth returns the current depth of the order book for the specified market.
-func (engine *MatchingEngine) Depth(marketID string, limit uint32) (*protocol.GetDepthResponse, error) {
+func (engine *MatchingEngine) Depth(
+	ctx context.Context,
+	marketID string,
+	limit uint32,
+) (*Future[*protocol.GetDepthResponse], error) {
+	if engine.isShutdown.Load() {
+		return nil, ErrShutdown
+	}
+
 	if limit == 0 {
 		return nil, ErrInvalidParam
 	}
 
-	val := engine.responsePool.Get()
-	respChan, ok := val.(chan any)
-	if !ok {
-		return nil, errors.New("failed to get response channel from pool")
-	}
-	defer func() {
-		select {
-		case <-respChan:
-		default:
-		}
-		engine.responsePool.Put(respChan)
-	}()
-	engine.ring.Publish(InputEvent{
-		Query: &protocol.GetDepthRequest{
-			MarketID: marketID,
-			Limit:    limit,
-		},
-		Resp: respChan,
-	})
+	respChan := engine.acquireResponseChannel()
 
-	select {
-	case res := <-respChan:
-		if err, ok := res.(error); ok {
-			return nil, err
-		}
-		if result, ok := res.(*protocol.GetDepthResponse); ok {
-			return result, nil
-		}
-		return nil, errors.New("unexpected response type")
-	case <-time.After(time.Second):
-		return nil, ErrTimeout
+	if err := engine.enqueueQueryWithResponse(ctx, &protocol.GetDepthRequest{
+		MarketID: marketID,
+		Limit:    limit,
+	}, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
 	}
+
+	return &Future[*protocol.GetDepthResponse]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
 }
 
 // Shutdown gracefully shuts down the engine.
@@ -534,35 +549,35 @@ type snapshotResult struct {
 // TakeSnapshot captures a consistent snapshot of all order books and writes them to the specified directory.
 // It generates two files: `snapshot.bin` (binary data) and `metadata.json` (metadata).
 // Returns the metadata object or an error.
-func (engine *MatchingEngine) TakeSnapshot(outputDir string) (*SnapshotMetadata, error) {
+func (engine *MatchingEngine) TakeSnapshot(ctx context.Context, outputDir string) (*SnapshotMetadata, error) {
+	if engine.isShutdown.Load() {
+		return nil, ErrShutdown
+	}
+
 	// Request snapshots from all OrderBooks through the RingBuffer
 	// This ensures snapshots are taken on the consumer goroutine (no race conditions)
-	val := engine.responsePool.Get()
-	respChan, ok := val.(chan any)
-	if !ok {
-		return nil, errors.New("failed to get response channel from pool")
-	}
+	respChan := engine.acquireResponseChannel()
+	var success bool
 	defer func() {
-		select {
-		case <-respChan:
-		default:
+		if success {
+			engine.releaseResponseChannel(respChan)
 		}
-		engine.responsePool.Put(respChan)
 	}()
-	engine.ring.Publish(InputEvent{
-		Query: &engineSnapshotQuery{},
-		Resp:  respChan,
-	})
+
+	if err := engine.enqueueQueryWithResponse(ctx, &engineSnapshotQuery{}, respChan); err != nil {
+		return nil, err
+	}
 
 	var results []snapshotResult
 	select {
 	case res := <-respChan:
-		results, ok = res.([]snapshotResult)
+		r, ok := res.([]snapshotResult)
 		if !ok {
 			return nil, errors.New("unexpected response type for snapshot")
 		}
-	case <-time.After(snapshotTimeout):
-		return nil, ErrTimeout
+		results = r
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 
 	// Use a temporary directory for atomic writes
@@ -836,9 +851,10 @@ func (engine *MatchingEngine) processCommand(ev *InputEvent) {
 	book := engine.orderBook(cmd.MarketID)
 	if book == nil {
 		engine.rejectCommand(cmd, protocol.RejectReasonMarketNotFound)
+		engine.respondQueryError(ev, ErrNotFound)
 		return
 	}
-	book.processCommand(cmd)
+	book.processCommand(ev)
 
 	if cmd.SeqID > 0 {
 		book.lastCmdSeqID.Store(cmd.SeqID)
@@ -970,7 +986,7 @@ func (engine *MatchingEngine) handleCreateMarket(ev *InputEvent) {
 func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
 	payload := &protocol.UserEventCommand{}
 	if err := engine.serializer.Unmarshal(cmd.Payload, payload); err != nil {
-		logger.Error("failed to unmarshal UserEvent command", "error", err)
+		logger.Warn("failed to unmarshal UserEvent command", "error", err)
 		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
 		return
 	}
@@ -1170,4 +1186,85 @@ func (engine *MatchingEngine) commandUserID(cmd *protocol.Command) uint64 {
 		return 0
 	}
 	return 0
+}
+
+func (engine *MatchingEngine) acquireResponseChannel() chan any {
+	val := engine.responsePool.Get()
+	ch, ok := val.(chan any)
+	if !ok {
+		// Should not happen with our pool setup, but satisfies linter
+		return make(chan any, 1)
+	}
+	return ch
+}
+
+func (engine *MatchingEngine) releaseResponseChannel(ch chan any) {
+	// Drain the channel if not empty
+	select {
+	case <-ch:
+	default:
+	}
+	engine.responsePool.Put(ch)
+}
+
+func (engine *MatchingEngine) enqueueCommandWithResponse(
+	ctx context.Context,
+	cmd *protocol.Command,
+	resp chan any,
+) error {
+	if engine.isShutdown.Load() {
+		return ErrShutdown
+	}
+
+	strategy := YieldingIdleStrategy{}
+	for {
+		seq, ev := engine.ring.TryClaim()
+		if seq != -1 {
+			ev.Cmd = cmd
+			ev.Query = nil
+			ev.Resp = resp // Essential: Pass the response channel into the event
+
+			engine.ring.Commit(seq)
+			return nil
+		}
+
+		if engine.isShutdown.Load() {
+			return ErrShutdown
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		strategy.Idle()
+	}
+}
+
+func (engine *MatchingEngine) enqueueQueryWithResponse(ctx context.Context, query any, resp chan any) error {
+	if engine.isShutdown.Load() {
+		return ErrShutdown
+	}
+
+	strategy := YieldingIdleStrategy{}
+	for {
+		seq, ev := engine.ring.TryClaim()
+		if seq != -1 {
+			ev.Cmd = nil
+			ev.Query = query
+			ev.Resp = resp // Essential: Pass the response channel into the query
+
+			engine.ring.Commit(seq)
+			return nil
+		}
+
+		if engine.isShutdown.Load() {
+			return ErrShutdown
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		strategy.Idle()
+	}
 }

@@ -74,9 +74,6 @@ type Command struct {
 	// Payload contains the serialized business data (e.g., JSON bytes of PlaceOrderCommand).
 	// We use lazy deserialization to optimize routing performance.
 	Payload []byte `json:"payload"`
-
-	// Metadata stores non-business context (e.g., Tracing ID, Source IP).
-	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // PlaceOrderCommand is the payload for placing a new order.

@@ -130,14 +130,17 @@ The engine supports dynamic market management:
 
 ```go
 // Suspend a market (rejects new Place/Amend orders)
-engine.SuspendMarket("suspend-btc-usdt", 9001, "BTC-USDT", time.Now().UnixNano())
+future, err := engine.SuspendMarket(ctx, "suspend-btc-usdt", 9001, "BTC-USDT", time.Now().UnixNano())
+_, err = future.Wait(ctx)
 
 // Resume a market
-engine.ResumeMarket("resume-btc-usdt", 9001, "BTC-USDT", time.Now().UnixNano())
+future, err = engine.ResumeMarket(ctx, "resume-btc-usdt", 9001, "BTC-USDT", time.Now().UnixNano())
+_, err = future.Wait(ctx)
 
 // Update market configuration (e.g. MinLotSize)
 newLotSize := "0.01"
-engine.UpdateConfig("update-btc-usdt-lot", 9001, "BTC-USDT", newLotSize, time.Now().UnixNano())
+future, err = engine.UpdateConfig(ctx, "update-btc-usdt-lot", 9001, "BTC-USDT", newLotSize, time.Now().UnixNano())
+_, err = future.Wait(ctx)
 ```
 
 Successful management commands are emitted as `LogTypeAdmin`. Invalid management commands are reported through the same event stream as trading rejects. For example:

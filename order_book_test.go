@@ -49,30 +49,36 @@ func newCancelCmd(id string, userID uint64) *protocol.CancelOrderCommand {
 // testPlace serializes a PlaceOrderCommand and calls processCommand synchronously.
 func testPlace(book *OrderBook, cmd *protocol.PlaceOrderCommand) {
 	bytes, _ := testSerializer.Marshal(cmd)
-	book.processCommand(&protocol.Command{
-		MarketID: book.marketID,
-		Type:     protocol.CmdPlaceOrder,
-		Payload:  bytes,
+	book.processCommand(&InputEvent{
+		Cmd: &protocol.Command{
+			MarketID: book.marketID,
+			Type:     protocol.CmdPlaceOrder,
+			Payload:  bytes,
+		},
 	})
 }
 
 // testCancel serializes a CancelOrderCommand and calls processCommand synchronously.
 func testCancel(book *OrderBook, cmd *protocol.CancelOrderCommand) {
 	bytes, _ := testSerializer.Marshal(cmd)
-	book.processCommand(&protocol.Command{
-		MarketID: book.marketID,
-		Type:     protocol.CmdCancelOrder,
-		Payload:  bytes,
+	book.processCommand(&InputEvent{
+		Cmd: &protocol.Command{
+			MarketID: book.marketID,
+			Type:     protocol.CmdCancelOrder,
+			Payload:  bytes,
+		},
 	})
 }
 
 // testAmend serializes an AmendOrderCommand and calls processCommand synchronously.
 func testAmend(book *OrderBook, cmd *protocol.AmendOrderCommand) {
 	bytes, _ := testSerializer.Marshal(cmd)
-	book.processCommand(&protocol.Command{
-		MarketID: book.marketID,
-		Type:     protocol.CmdAmendOrder,
-		Payload:  bytes,
+	book.processCommand(&InputEvent{
+		Cmd: &protocol.Command{
+			MarketID: book.marketID,
+			Type:     protocol.CmdAmendOrder,
+			Payload:  bytes,
+		},
 	})
 }
 
@@ -112,11 +118,13 @@ func TestLimitOrders(t *testing.T) {
 			Timestamp: 1,
 		}
 		bytes, _ := testSerializer.Marshal(payload)
-		testOrderBook.processCommand(&protocol.Command{
-			MarketID: testOrderBook.marketID,
-			SeqID:    100,
-			Type:     protocol.CmdPlaceOrder,
-			Payload:  bytes,
+		testOrderBook.processCommand(&InputEvent{
+			Cmd: &protocol.Command{
+				MarketID: testOrderBook.marketID,
+				SeqID:    100,
+				Type:     protocol.CmdPlaceOrder,
+				Payload:  bytes,
+			},
 		})
 
 		// Verify LastCmdSeqID was updated
@@ -1223,10 +1231,12 @@ func TestOrderValidation(t *testing.T) {
 		bytes, err := testSerializer.Marshal(payload)
 		require.NoError(t, err)
 
-		book.processCommand(&protocol.Command{
-			MarketID: "BTC-USDT",
-			Type:     protocol.CmdPlaceOrder,
-			Payload:  bytes,
+		book.processCommand(&InputEvent{
+			Cmd: &protocol.Command{
+				MarketID: "BTC-USDT",
+				Type:     protocol.CmdPlaceOrder,
+				Payload:  bytes,
+			},
 		})
 
 		found := false

@@ -72,12 +72,12 @@ Management helper methods on `MatchingEngine` construct these payloads, wrap the
 
 Current helper methods:
 
-- `CreateMarket(commandID, userID, marketID, minLotSize, timestamp)`
-- `SuspendMarket(commandID, userID, marketID, timestamp)`
-- `ResumeMarket(commandID, userID, marketID, timestamp)`
-- `UpdateConfig(commandID, userID, marketID, minLotSize, timestamp)`
+- `CreateMarket(ctx, commandID, userID, marketID, minLotSize, timestamp) (*Future[bool], error)`
+- `SuspendMarket(ctx, commandID, userID, marketID, timestamp) (*Future[bool], error)`
+- `ResumeMarket(ctx, commandID, userID, marketID, timestamp) (*Future[bool], error)`
+- `UpdateConfig(ctx, commandID, userID, marketID, minLotSize, timestamp) (*Future[bool], error)`
 
-These methods are asynchronous with respect to business execution. A returned `error` means enqueue or serialization failure, not business rejection.
+These methods are asynchronous with respect to business execution but return a `Future` that can be used to wait for the result. A returned `error` from the helper method itself means enqueue or serialization failure, not business rejection. Business-level errors (e.g., duplicate market) are returned when calling `future.Wait(ctx)`.
 An empty `commandID` is rejected before enqueue.
 
 ### 3.2 Business Failures

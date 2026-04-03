@@ -27,7 +27,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 
 	// Start engine event loop
 	go engine.Run()
-	
+
 	_, _ = future.Wait(ctx)
 
 	// Use fixed seed for repeatability
@@ -103,18 +103,20 @@ func BenchmarkPlaceOrders(b *testing.B) {
 
 	for i := range b.N {
 		// Hot path: only ExecuteCommand (no serialization overhead)
-		_ = engine.EnqueueCommand(cmdPool[i%poolSize])
+		_ = engine.EnqueueCommand(ctx, cmdPool[i%poolSize])
 	}
 
 	b.StopTimer()
 
 	// Report final state of the order book
-	if stats, err := engine.GetStats(marketID); err == nil {
-		b.Logf(
-			"\nFinal Order Book State: Bids=%d levels, Asks=%d levels\n",
-			stats.BidDepthCount,
-			stats.AskDepthCount,
-		)
+	if f, err := engine.GetStats(ctx, marketID); err == nil {
+		if stats, err := f.Wait(context.Background()); err == nil {
+			b.Logf(
+				"\nFinal Order Book State: Bids=%d levels, Asks=%d levels\n",
+				stats.BidDepthCount,
+				stats.AskDepthCount,
+			)
+		}
 	}
 
 	// Report custom metric: orders per second
@@ -141,7 +143,7 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 
 	// Start engine event loop
 	go engine.Run()
-	
+
 	_, _ = future.Wait(ctx)
 
 	// Use fixed seed for repeatability
@@ -218,7 +220,7 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 
 	for i := range b.N {
 		// Hot path: ExecuteCommandBatch
-		_ = engine.EnqueueCommandBatch(batches[i%len(batches)])
+		_ = engine.EnqueueCommandBatch(ctx, batches[i%len(batches)])
 	}
 
 	b.StopTimer()
@@ -246,7 +248,7 @@ func BenchmarkMatching(b *testing.B) {
 
 	// Start engine event loop
 	go engine.Run()
-	
+
 	_, _ = future.Wait(ctx)
 
 	price := udecimal.MustFromInt64(10000, 0)
@@ -304,10 +306,10 @@ func BenchmarkMatching(b *testing.B) {
 		idx := (i * 2) % poolSize
 
 		// Place Sell (Resting)
-		_ = engine.EnqueueCommand(cmdPool[idx])
+		_ = engine.EnqueueCommand(ctx, cmdPool[idx])
 
 		// Place Buy (Matches immediately)
-		_ = engine.EnqueueCommand(cmdPool[idx+1])
+		_ = engine.EnqueueCommand(ctx, cmdPool[idx+1])
 	}
 
 	b.StopTimer()
