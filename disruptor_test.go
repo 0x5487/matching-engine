@@ -295,7 +295,7 @@ func TestRingBuffer_TryClaim(t *testing.T) {
 	rb := NewRingBuffer[TestEvent](4, handler)
 
 	// Claim 4 slots
-	for i := int64(0); i < 4; i++ {
+	for i := range int64(4) {
 		seq, slot := rb.TryClaim()
 		assert.Equal(t, i, seq)
 		assert.NotNil(t, slot)
