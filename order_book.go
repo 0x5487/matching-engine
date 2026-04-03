@@ -141,7 +141,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 	case protocol.CmdSuspendMarket:
 		payload := &protocol.SuspendMarketCommand{}
 		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
-			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, 0)
 			book.respondError(ev, err)
 			return
 		}
@@ -150,7 +150,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 	case protocol.CmdResumeMarket:
 		payload := &protocol.ResumeMarketCommand{}
 		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
-			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, 0)
 			book.respondError(ev, err)
 			return
 		}
@@ -159,7 +159,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 	case protocol.CmdUpdateConfig:
 		payload := &protocol.UpdateConfigCommand{}
 		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
-			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, 0)
 			book.respondError(ev, err)
 			return
 		}
@@ -169,7 +169,6 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				payload.MarketID,
 				payload.UserID,
 				protocol.RejectReasonInvalidPayload,
-				cmd.Metadata,
 				payload.Timestamp,
 			)
 			book.respondError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
@@ -181,13 +180,13 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 		val := placeOrderCmdPool.Get()
 		payload, ok := val.(*protocol.PlaceOrderCommand)
 		if !ok {
-			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, 0)
 			return
 		}
 		*payload = protocol.PlaceOrderCommand{} // Reset before use
 		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
 			placeOrderCmdPool.Put(payload)
-			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, 0)
 			return
 		}
 		if payload.Timestamp <= 0 {
@@ -197,7 +196,6 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				payload.OrderID,
 				payload.UserID,
 				protocol.RejectReasonInvalidPayload,
-				cmd.Metadata,
 				payload.Timestamp,
 			)
 			return
@@ -209,7 +207,6 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				payload.OrderID,
 				payload.UserID,
 				protocol.RejectReasonMarketHalted,
-				cmd.Metadata,
 				payload.Timestamp,
 			)
 			placeOrderCmdPool.Put(payload)
@@ -221,7 +218,6 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				payload.OrderID,
 				payload.UserID,
 				protocol.RejectReasonMarketSuspended,
-				cmd.Metadata,
 				payload.Timestamp,
 			)
 			placeOrderCmdPool.Put(payload)
@@ -234,13 +230,13 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 		val := cancelOrderCmdPool.Get()
 		payload, ok := val.(*protocol.CancelOrderCommand)
 		if !ok {
-			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, 0)
 			return
 		}
 		*payload = protocol.CancelOrderCommand{} // Reset before use
 		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
 			cancelOrderCmdPool.Put(payload)
-			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, 0)
 			return
 		}
 		if payload.Timestamp <= 0 {
@@ -250,7 +246,6 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				payload.OrderID,
 				payload.UserID,
 				protocol.RejectReasonInvalidPayload,
-				cmd.Metadata,
 				payload.Timestamp,
 			)
 			return
@@ -263,7 +258,6 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				payload.OrderID,
 				payload.UserID,
 				protocol.RejectReasonMarketHalted,
-				cmd.Metadata,
 				payload.Timestamp,
 			)
 			cancelOrderCmdPool.Put(payload)
@@ -275,7 +269,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 	case protocol.CmdAmendOrder:
 		var payload protocol.AmendOrderCommand
 		if err := book.serializer.Unmarshal(cmd.Payload, &payload); err != nil {
-			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, 0)
 			return
 		}
 		if payload.Timestamp <= 0 {
@@ -284,7 +278,6 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				payload.OrderID,
 				payload.UserID,
 				protocol.RejectReasonInvalidPayload,
-				cmd.Metadata,
 				payload.Timestamp,
 			)
 			return
@@ -296,7 +289,6 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				payload.OrderID,
 				payload.UserID,
 				protocol.RejectReasonMarketHalted,
-				cmd.Metadata,
 				payload.Timestamp,
 			)
 			return
@@ -307,7 +299,6 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				payload.OrderID,
 				payload.UserID,
 				protocol.RejectReasonMarketSuspended,
-				cmd.Metadata,
 				payload.Timestamp,
 			)
 			return
@@ -381,7 +372,6 @@ func (book *OrderBook) rejectInvalidPayload(
 	orderID string,
 	userID uint64,
 	reason protocol.RejectReason,
-	_ map[string]string,
 	timestamp int64,
 ) {
 	logsPtr := acquireLogSlice()
@@ -411,7 +401,6 @@ func (book *OrderBook) handlePlaceOrder(commandID string, cmd *protocol.PlaceOrd
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonInvalidPayload,
-			nil,
 			cmd.Timestamp,
 		)
 		return
@@ -423,7 +412,6 @@ func (book *OrderBook) handlePlaceOrder(commandID string, cmd *protocol.PlaceOrd
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonInvalidPayload,
-			nil,
 			cmd.Timestamp,
 		)
 		return
@@ -438,7 +426,6 @@ func (book *OrderBook) handlePlaceOrder(commandID string, cmd *protocol.PlaceOrd
 				cmd.OrderID,
 				cmd.UserID,
 				protocol.RejectReasonInvalidPayload,
-				nil,
 				cmd.Timestamp,
 			)
 			return
@@ -453,7 +440,6 @@ func (book *OrderBook) handlePlaceOrder(commandID string, cmd *protocol.PlaceOrd
 				cmd.OrderID,
 				cmd.UserID,
 				protocol.RejectReasonInvalidPayload,
-				nil,
 				cmd.Timestamp,
 			)
 			return
@@ -486,7 +472,6 @@ func (book *OrderBook) handleAmendOrder(commandID string, cmd *protocol.AmendOrd
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonInvalidPayload,
-			nil,
 			cmd.Timestamp,
 		)
 		return
@@ -498,7 +483,6 @@ func (book *OrderBook) handleAmendOrder(commandID string, cmd *protocol.AmendOrd
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonInvalidPayload,
-			nil,
 			cmd.Timestamp,
 		)
 		return
@@ -1268,7 +1252,6 @@ func (book *OrderBook) handleSuspendMarket(ev *InputEvent, payload *protocol.Sus
 			payload.MarketID,
 			payload.UserID,
 			protocol.RejectReasonInvalidPayload,
-			cmd.Metadata,
 			payload.Timestamp,
 		)
 		book.respondError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
@@ -1282,7 +1265,6 @@ func (book *OrderBook) handleSuspendMarket(ev *InputEvent, payload *protocol.Sus
 			payload.MarketID,
 			payload.UserID,
 			protocol.RejectReasonMarketHalted,
-			cmd.Metadata,
 			payload.Timestamp,
 		)
 		book.respondError(ev, errors.New(string(protocol.RejectReasonMarketHalted)))
@@ -1316,7 +1298,6 @@ func (book *OrderBook) handleResumeMarket(ev *InputEvent, payload *protocol.Resu
 			payload.MarketID,
 			payload.UserID,
 			protocol.RejectReasonInvalidPayload,
-			cmd.Metadata,
 			payload.Timestamp,
 		)
 		book.respondError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
@@ -1329,7 +1310,6 @@ func (book *OrderBook) handleResumeMarket(ev *InputEvent, payload *protocol.Resu
 			payload.MarketID,
 			payload.UserID,
 			protocol.RejectReasonMarketHalted,
-			cmd.Metadata,
 			payload.Timestamp,
 		)
 		book.respondError(ev, errors.New(string(protocol.RejectReasonMarketHalted)))
@@ -1382,7 +1362,6 @@ func (book *OrderBook) handleUpdateConfig(ev *InputEvent, payload *protocol.Upda
 				payload.MarketID,
 				payload.UserID,
 				protocol.RejectReasonInvalidPayload,
-				ev.Cmd.Metadata,
 				payload.Timestamp,
 			)
 			book.respondError(ev, err)
