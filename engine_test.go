@@ -76,12 +76,12 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
-			future, err := engine.GetStats(market1)
-			if err != nil {
+			future, e := engine.GetStats(market1)
+			if e != nil {
 				return false
 			}
-			stats, err := future.Wait(ctx)
-			return err == nil && stats.BidOrderCount == 1
+			stats, e := future.Wait(ctx)
+			return e == nil && stats.BidOrderCount == 1
 		}, 1*time.Second, 10*time.Millisecond)
 
 		order2 := &protocol.PlaceOrderCommand{
@@ -98,12 +98,12 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
-			future, err := engine.GetStats(market2)
-			if err != nil {
+			future, e := engine.GetStats(market2)
+			if e != nil {
 				return false
 			}
-			stats, err := future.Wait(ctx)
-			return err == nil && stats.AskOrderCount == 1
+			stats, e := future.Wait(ctx)
+			return e == nil && stats.AskOrderCount == 1
 		}, 1*time.Second, 10*time.Millisecond)
 
 		_ = engine.Shutdown(ctx)
@@ -141,12 +141,12 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		// Wait for order to be in book
 		assert.Eventually(t, func() bool {
-			future, err := engine.GetStats(market1)
-			if err != nil {
+			future, e := engine.GetStats(market1)
+			if e != nil {
 				return false
 			}
-			stats, err := future.Wait(ctx)
-			return err == nil && stats.BidOrderCount == 1
+			stats, e := future.Wait(ctx)
+			return e == nil && stats.BidOrderCount == 1
 		}, 1*time.Second, 10*time.Millisecond)
 
 		err = engine.CancelOrder(
@@ -742,12 +742,12 @@ func TestManagement_CreateMarket(t *testing.T) {
 
 	// Verify OrderBook existence
 	assert.Eventually(t, func() bool {
-		f, err := engine.GetStats(marketID)
-		if err != nil {
+		f, e := engine.GetStats(marketID)
+		if e != nil {
 			return false
 		}
-		_, err = f.Wait(ctx)
-		return err == nil
+		_, e = f.Wait(ctx)
+		return e == nil
 	}, 1*time.Second, 10*time.Millisecond)
 
 	assert.Eventually(t, func() bool {
@@ -878,12 +878,12 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 	// Wait for Order-1
 	assert.Eventually(t, func() bool {
-		f, err := engine.GetStats(marketID)
-		if err != nil {
+		f, e := engine.GetStats(marketID)
+		if e != nil {
 			return false
 		}
-		s, err := f.Wait(ctx)
-		return err == nil && s.BidOrderCount == 1
+		s, e := f.Wait(ctx)
+		return e == nil && s.BidOrderCount == 1
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 2. Suspend Market
