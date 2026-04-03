@@ -1122,3 +1122,28 @@ func TestManagement_UpdateConfig(t *testing.T) {
 
 	_ = engine.Shutdown(ctx)
 }
+
+func TestManagement_UnknownMarketFuture(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("engine-1", publish)
+	go engine.Run()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	// 嘗試暫停一個不存在的市場
+	future, err := engine.SuspendMarket(ctx, "cmd-unknown", 1, "UNKNOWN-MARKET", time.Now().UnixNano())
+	require.NoError(t, err)
+
+	// 如果修復正確，這應該立即返回錯誤，而不是等到 ctx 超時
+	start := time.Now()
+	_, err = future.Wait(ctx)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	// 如果耗時接近 200ms，說明它掛起直到超時了
+	require.Less(t, elapsed, 100*time.Millisecond, "Future should return immediately for unknown market")
+	require.Contains(t, err.Error(), string(protocol.RejectReasonMarketNotFound))
+
+	_ = engine.Shutdown(ctx)
+}

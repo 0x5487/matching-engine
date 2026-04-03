@@ -853,6 +853,7 @@ func (engine *MatchingEngine) processCommand(ev *InputEvent) {
 	book := engine.orderBook(cmd.MarketID)
 	if book == nil {
 		engine.rejectCommand(cmd, protocol.RejectReasonMarketNotFound)
+		engine.respondQueryError(ev, errors.New(string(protocol.RejectReasonMarketNotFound)))
 		return
 	}
 	book.processCommand(ev)
