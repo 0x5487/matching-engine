@@ -270,6 +270,43 @@ func TestRingBuffer_PowerOf2Validation(t *testing.T) {
 	})
 }
 
+func TestRingBuffer_TryClaimN(t *testing.T) {
+	handler := &simpleHandler[TestEvent]{fn: func(_ *TestEvent) {}}
+	rb := NewRingBuffer[TestEvent](4, handler)
+
+	// Claim 2 slots
+	start, end := rb.TryClaimN(2)
+	assert.Equal(t, int64(0), start)
+	assert.Equal(t, int64(1), end)
+
+	// Claim another 2 slots
+	start, end = rb.TryClaimN(2)
+	assert.Equal(t, int64(2), start)
+	assert.Equal(t, int64(3), end)
+
+	// Buffer is now full, TryClaimN should return -1, -1
+	start, end = rb.TryClaimN(1)
+	assert.Equal(t, int64(-1), start)
+	assert.Equal(t, int64(-1), end)
+}
+
+func TestRingBuffer_TryClaim(t *testing.T) {
+	handler := &simpleHandler[TestEvent]{fn: func(_ *TestEvent) {}}
+	rb := NewRingBuffer[TestEvent](4, handler)
+
+	// Claim 4 slots
+	for i := int64(0); i < 4; i++ {
+		seq, slot := rb.TryClaim()
+		assert.Equal(t, i, seq)
+		assert.NotNil(t, slot)
+	}
+
+	// Buffer is full
+	seq, slot := rb.TryClaim()
+	assert.Equal(t, int64(-1), seq)
+	assert.Nil(t, slot)
+}
+
 // simpleHandler is a test helper that wraps a function.
 type simpleHandler[T any] struct {
 	fn func(*T)

@@ -77,6 +77,54 @@ func (rb *RingBuffer[T]) Publish(event T) {
 	rb.Commit(seq)
 }
 
+// TryClaim atomically tries to claim a sequence and returns a pointer to the slot.
+// Returns (-1, nil) if the RingBuffer is full or shut down.
+func (rb *RingBuffer[T]) TryClaim() (int64, *T) {
+	seq, _ := rb.TryClaimN(1)
+	if seq == -1 {
+		return -1, nil
+	}
+	return seq, &rb.buffer[seq&rb.bufferMask]
+}
+
+// TryClaimN atomically tries to claim n sequences and returns the start and end sequence numbers.
+// Returns (-1, -1) if the RingBuffer is full, CAS fails, or shut down.
+func (rb *RingBuffer[T]) TryClaimN(n int64) (start int64, end int64) {
+	// Check if shutdown
+	if rb.isShutdown.Load() {
+		return -1, -1
+	}
+
+	if n <= 0 {
+		return -1, -1
+	}
+
+	if n > rb.capacity {
+		n = rb.capacity
+	}
+
+	currentProducerSeq := rb.producerSequence.Load()
+	nextSeq := currentProducerSeq + n
+
+	// Check if there is enough space
+	wrapPoint := nextSeq - rb.capacity
+	consumerSeq := rb.consumerSequence.Load()
+
+	if wrapPoint > consumerSeq {
+		// Buffer is full
+		return -1, -1
+	}
+
+	// Try to atomically update producer sequence
+	if rb.producerSequence.CompareAndSwap(currentProducerSeq, nextSeq) {
+		// Successfully claimed the sequence
+		// Return the range [start, end]
+		return currentProducerSeq + 1, nextSeq
+	}
+	// CAS failed
+	return -1, -1
+}
+
 // Claim atomically claims a sequence and returns a pointer to the slot.
 // Returns (-1, nil) if the RingBuffer is shut down.
 // The caller should write to the slot and then call Commit(seq).
@@ -92,41 +140,19 @@ func (rb *RingBuffer[T]) Claim() (int64, *T) {
 // Returns (-1, -1) if the RingBuffer is shut down.
 // The caller should write to the slots from startSeq to endSeq and then call CommitN(startSeq, endSeq).
 func (rb *RingBuffer[T]) ClaimN(n int64) (start int64, end int64) {
-	// Check if shutdown
-	if rb.isShutdown.Load() {
-		return -1, -1
-	}
-
-	if n <= 0 {
-		return -1, -1
-	}
-
-	if n > rb.capacity {
-		n = rb.capacity
-	}
-
+	strategy := YieldingIdleStrategy{}
 	for {
-		currentProducerSeq := rb.producerSequence.Load()
-		nextSeq := currentProducerSeq + n
-
-		// Check if there is enough space
-		wrapPoint := nextSeq - rb.capacity
-		consumerSeq := rb.consumerSequence.Load()
-
-		if wrapPoint > consumerSeq {
-			// Buffer is full, wait for consumer to catch up
-			runtime.Gosched()
-			continue
+		start, end = rb.TryClaimN(n)
+		if start != -1 {
+			return start, end
 		}
 
-		// Try to atomically update producer sequence
-		if rb.producerSequence.CompareAndSwap(currentProducerSeq, nextSeq) {
-			// Successfully claimed the sequence
-			// Return the range [start, end]
-			return currentProducerSeq + 1, nextSeq
+		// Check if shutdown
+		if rb.isShutdown.Load() {
+			return -1, -1
 		}
-		// CAS failed, retry
-		runtime.Gosched()
+
+		strategy.Idle()
 	}
 }
 
@@ -241,4 +267,23 @@ func (rb *RingBuffer[T]) GetPendingEvents() int64 {
 	producerSeq := rb.producerSequence.Load()
 	consumerSeq := rb.consumerSequence.Load()
 	return producerSeq - consumerSeq
+}
+
+// IdleStrategy defines a strategy for waiting during busy-spin loops.
+type IdleStrategy interface {
+	Idle()
+}
+
+// YieldingIdleStrategy yields the CPU to other goroutines.
+type YieldingIdleStrategy struct{}
+
+func (s YieldingIdleStrategy) Idle() {
+	runtime.Gosched()
+}
+
+// BusySpinIdleStrategy spins without yielding.
+type BusySpinIdleStrategy struct{}
+
+func (s BusySpinIdleStrategy) Idle() {
+	// Do nothing, just spin
 }
