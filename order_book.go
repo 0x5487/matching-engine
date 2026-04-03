@@ -139,15 +139,28 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 	cmd := ev.Cmd
 	switch cmd.Type {
 	case protocol.CmdSuspendMarket:
-		book.handleSuspendMarket(ev)
+		payload := &protocol.SuspendMarketCommand{}
+		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
+			book.respondError(ev, err)
+			return
+		}
+		book.handleSuspendMarket(ev, payload)
 
 	case protocol.CmdResumeMarket:
-		book.handleResumeMarket(ev)
+		payload := &protocol.ResumeMarketCommand{}
+		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
+			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
+			book.respondError(ev, err)
+			return
+		}
+		book.handleResumeMarket(ev, payload)
 
 	case protocol.CmdUpdateConfig:
 		payload := &protocol.UpdateConfigCommand{}
 		if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
 			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
+			book.respondError(ev, err)
 			return
 		}
 		if payload.Timestamp <= 0 {
@@ -1246,14 +1259,8 @@ func (book *OrderBook) checkReplenish(
 }
 
 // handleSuspendMarket updates the order book state to Suspended.
-func (book *OrderBook) handleSuspendMarket(ev *InputEvent) {
+func (book *OrderBook) handleSuspendMarket(ev *InputEvent, payload *protocol.SuspendMarketCommand) {
 	cmd := ev.Cmd
-	payload := &protocol.SuspendMarketCommand{}
-	if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
-		book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, nil, 0)
-		book.respondError(ev, err)
-		return
-	}
 
 	if payload.Timestamp <= 0 {
 		book.rejectInvalidPayload(
@@ -1301,14 +1308,8 @@ func (book *OrderBook) handleSuspendMarket(ev *InputEvent) {
 }
 
 // handleResumeMarket updates the order book state to Running.
-func (book *OrderBook) handleResumeMarket(ev *InputEvent) {
+func (book *OrderBook) handleResumeMarket(ev *InputEvent, payload *protocol.ResumeMarketCommand) {
 	cmd := ev.Cmd
-	payload := &protocol.ResumeMarketCommand{}
-	if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
-		book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Metadata, 0)
-		book.respondError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
-		return
-	}
 	if payload.Timestamp <= 0 {
 		book.rejectInvalidPayload(
 			cmd.CommandID,
