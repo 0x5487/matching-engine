@@ -1086,7 +1086,6 @@ func TestManagement_UpdateConfig(t *testing.T) {
 		Timestamp: 1,
 	})
 	require.NoError(t, err)
-	time.Sleep(50 * time.Millisecond)
 
 	err = engine.PlaceOrder(ctx, marketID, order)
 	require.NoError(t, err)

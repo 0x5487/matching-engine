@@ -1249,6 +1249,7 @@ func (book *OrderBook) handleSuspendMarket(ev *InputEvent) {
 	cmd := ev.Cmd
 	payload := &protocol.SuspendMarketCommand{}
 	if err := book.serializer.Unmarshal(cmd.Payload, payload); err != nil {
+		book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, nil, 0)
 		book.respondError(ev, err)
 		return
 	}
