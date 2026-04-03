@@ -389,19 +389,20 @@ func TestMatchingEngineShutdown(t *testing.T) {
 
 		// Create orders in multiple markets
 		markets := []string{"BTC-USDT", "ETH-USDT", "SOL-USDT"}
+		futures := make([]*Future[bool], 0, len(markets))
 		for _, market := range markets {
 			future, err := engine.CreateMarket(ctx, "shutdown-market-"+market, 1, market, "", time.Now().UnixNano())
 			require.NoError(t, err)
-			_ = future // wait below
+			futures = append(futures, future)
 		}
 
 		// Start engine event loop
 		go engine.Run()
 
-		// For simplicity, we don't wait for all markets here, 
-		// but PlaceOrder will fail if market is not processed yet.
-		// In a real test, we should wait.
-		time.Sleep(100 * time.Millisecond)
+		for _, future := range futures {
+			_, err := future.Wait(ctx)
+			require.NoError(t, err)
+		}
 
 		for i, market := range markets {
 			order := &protocol.PlaceOrderCommand{
@@ -836,11 +837,10 @@ func TestManagement_SuspendResume(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 2. Suspend Market
-	err = engine.SuspendMarket("suspend-market-1", 1, marketID, time.Now().UnixNano())
+	futureSuspend, err := engine.SuspendMarket(ctx, "suspend-market-1", 1, marketID, time.Now().UnixNano())
 	require.NoError(t, err)
-
-	// Give time for suspend command to process
-	time.Sleep(50 * time.Millisecond)
+	_, err = futureSuspend.Wait(ctx)
+	require.NoError(t, err)
 
 	// 3. Place Order (Should be Rejected)
 	order2 := &protocol.PlaceOrderCommand{
@@ -891,9 +891,10 @@ func TestManagement_SuspendResume(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 5. Resume Market
-	err = engine.ResumeMarket("resume-market-1", 1, marketID, time.Now().UnixNano())
+	resumeFuture, err := engine.ResumeMarket(ctx, "resume-market-1", 1, marketID, time.Now().UnixNano())
 	require.NoError(t, err)
-	time.Sleep(50 * time.Millisecond)
+	_, err = resumeFuture.Wait(ctx)
+	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
 		for _, l := range publish.Logs() {
@@ -963,9 +964,10 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	require.NoError(t, err)
 
 	// 2. Suspend Market
-	err = engine.SuspendMarket("snapshot-market-suspend", 1, marketID, time.Now().UnixNano())
+	futureSuspend, err := engine.SuspendMarket(ctx, "snapshot-market-suspend", 1, marketID, time.Now().UnixNano())
 	require.NoError(t, err)
-	time.Sleep(50 * time.Millisecond) // Wait for processing
+	_, err = futureSuspend.Wait(ctx)
+	require.NoError(t, err)
 
 	// 3. Take Snapshot
 	meta, err := engine.TakeSnapshot(tmpDir)
@@ -1010,9 +1012,10 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 6. Resume
-	err = newEngine.ResumeMarket("snapshot-market-resume", 1, marketID, time.Now().UnixNano())
+	futureResume, err := newEngine.ResumeMarket(ctx, "snapshot-market-resume", 1, marketID, time.Now().UnixNano())
 	require.NoError(t, err)
-	time.Sleep(50 * time.Millisecond)
+	_, err = futureResume.Wait(ctx)
+	require.NoError(t, err)
 
 	// 7. Test resumed functionality
 	order2 := &protocol.PlaceOrderCommand{
@@ -1052,11 +1055,11 @@ func TestManagement_UpdateConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	// 1. Update MinLotSize
-	err = engine.UpdateConfig("config-market-update", 1, marketID, "0.1", time.Now().UnixNano())
+	updateFuture, err := engine.UpdateConfig(ctx, "config-market-update", 1, marketID, "0.1", time.Now().UnixNano())
 	require.NoError(t, err)
 
-	// Wait for async processing
-	time.Sleep(50 * time.Millisecond)
+	_, err = updateFuture.Wait(ctx)
+	require.NoError(t, err)
 
 	// 2. Verify new LotSize by placing an order
 	order := &protocol.PlaceOrderCommand{

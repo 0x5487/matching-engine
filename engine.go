@@ -333,9 +333,15 @@ func (engine *MatchingEngine) CreateMarket(
 }
 
 // SuspendMarket sends a command to suspend a market.
-func (engine *MatchingEngine) SuspendMarket(commandID string, userID uint64, marketID string, timestamp int64) error {
+func (engine *MatchingEngine) SuspendMarket(
+	_ context.Context, // Use ctx for consistency with future API
+	commandID string,
+	userID uint64,
+	marketID string,
+	timestamp int64,
+) (*Future[bool], error) {
 	if err := requireCommandID(commandID); err != nil {
-		return err
+		return nil, err
 	}
 	cmd := &protocol.SuspendMarketCommand{
 		UserID:    userID,
@@ -345,20 +351,38 @@ func (engine *MatchingEngine) SuspendMarket(commandID string, userID uint64, mar
 	}
 	bytes, err := engine.serializer.Marshal(cmd)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return engine.EnqueueCommand(&protocol.Command{
+
+	respChan := engine.acquireResponseChannel()
+	protoCmd := &protocol.Command{
 		Type:      protocol.CmdSuspendMarket,
 		MarketID:  marketID,
 		CommandID: commandID,
 		Payload:   bytes,
-	})
+	}
+
+	if err := engine.enqueueCommandWithResponse(protoCmd, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+
+	return &Future[bool]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
 }
 
 // ResumeMarket sends a command to resume a market.
-func (engine *MatchingEngine) ResumeMarket(commandID string, userID uint64, marketID string, timestamp int64) error {
+func (engine *MatchingEngine) ResumeMarket(
+	_ context.Context, // Use ctx for consistency with future API
+	commandID string,
+	userID uint64,
+	marketID string,
+	timestamp int64,
+) (*Future[bool], error) {
 	if err := requireCommandID(commandID); err != nil {
-		return err
+		return nil, err
 	}
 	cmd := &protocol.ResumeMarketCommand{
 		UserID:    userID,
@@ -367,26 +391,39 @@ func (engine *MatchingEngine) ResumeMarket(commandID string, userID uint64, mark
 	}
 	bytes, err := engine.serializer.Marshal(cmd)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return engine.EnqueueCommand(&protocol.Command{
+
+	respChan := engine.acquireResponseChannel()
+	protoCmd := &protocol.Command{
 		Type:      protocol.CmdResumeMarket,
 		MarketID:  marketID,
 		CommandID: commandID,
 		Payload:   bytes,
-	})
+	}
+
+	if err := engine.enqueueCommandWithResponse(protoCmd, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+
+	return &Future[bool]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
 }
 
 // UpdateConfig sends a command to update market configuration.
 func (engine *MatchingEngine) UpdateConfig(
+	_ context.Context,
 	commandID string,
 	userID uint64,
 	marketID string,
 	minLotSize string,
 	timestamp int64,
-) error {
+) (*Future[bool], error) {
 	if err := requireCommandID(commandID); err != nil {
-		return err
+		return nil, err
 	}
 	cmd := &protocol.UpdateConfigCommand{
 		UserID:     userID,
@@ -396,14 +433,26 @@ func (engine *MatchingEngine) UpdateConfig(
 	}
 	bytes, err := engine.serializer.Marshal(cmd)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return engine.EnqueueCommand(&protocol.Command{
+
+	respChan := engine.acquireResponseChannel()
+	protoCmd := &protocol.Command{
 		Type:      protocol.CmdUpdateConfig,
 		MarketID:  marketID,
 		CommandID: commandID,
 		Payload:   bytes,
-	})
+	}
+
+	if err := engine.enqueueCommandWithResponse(protoCmd, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+
+	return &Future[bool]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
 }
 
 // SendUserEvent sends a generic user event to the matching engine.
