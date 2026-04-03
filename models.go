@@ -93,7 +93,7 @@ type Future[T any] struct {
 	err      error // Error during the submission phase
 }
 
-// Wait blocks until the operation completes or the context is cancelled.
+// Wait blocks until the operation completes or the context is canceled.
 func (f *Future[T]) Wait(ctx context.Context) (T, error) {
 	if f.err != nil {
 		var zero T

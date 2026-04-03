@@ -27,7 +27,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 
 	// Start engine event loop
 	go engine.Run()
-	
+
 	_, _ = future.Wait(ctx)
 
 	// Use fixed seed for repeatability
@@ -141,7 +141,7 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 
 	// Start engine event loop
 	go engine.Run()
-	
+
 	_, _ = future.Wait(ctx)
 
 	// Use fixed seed for repeatability
@@ -246,7 +246,7 @@ func BenchmarkMatching(b *testing.B) {
 
 	// Start engine event loop
 	go engine.Run()
-	
+
 	_, _ = future.Wait(ctx)
 
 	price := udecimal.MustFromInt64(10000, 0)

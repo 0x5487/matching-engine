@@ -21,7 +21,7 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 	require.NoError(t, err)
 
 	go engine.Run()
-	
+
 	_, err = future.Wait(ctx)
 	require.NoError(t, err)
 

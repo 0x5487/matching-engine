@@ -344,6 +344,7 @@ func (book *OrderBook) processQuery(ev *InputEvent) {
 	}
 }
 
+//nolint:unparam
 func (book *OrderBook) respondSuccess(ev *InputEvent, val any) {
 	if ev.Resp != nil {
 		select {

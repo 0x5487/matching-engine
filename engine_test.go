@@ -702,7 +702,7 @@ func TestManagement_CreateMarket(t *testing.T) {
 	// MinLotSize: 0.01
 	future, err := engine.CreateMarket(ctx, "create-market-1", 1, marketID, "0.01", time.Now().UnixNano())
 	require.NoError(t, err)
-	
+
 	_, err = future.Wait(ctx)
 	require.NoError(t, err)
 
@@ -750,7 +750,14 @@ func TestManagement_CreateMarketRejectsInvalidConfig(t *testing.T) {
 
 	go engine.Run()
 
-	future, err := engine.CreateMarket(ctx, "bad-market-create", 1, "BAD-MARKET", "not-a-decimal", time.Now().UnixNano())
+	future, err := engine.CreateMarket(
+		ctx,
+		"bad-market-create",
+		1,
+		"BAD-MARKET",
+		"not-a-decimal",
+		time.Now().UnixNano(),
+	)
 	require.NoError(t, err)
 	_, err = future.Wait(ctx)
 	require.Error(t, err)
@@ -811,7 +818,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 	// Start engine event loop
 	go engine.Run()
-	
+
 	_, err = future.Wait(ctx)
 	require.NoError(t, err)
 
@@ -959,7 +966,7 @@ func TestManagement_SnapshotRestore(t *testing.T) {
 
 	// Start engine event loop
 	go engine.Run()
-	
+
 	_, err = future.Wait(ctx)
 	require.NoError(t, err)
 
@@ -1050,7 +1057,7 @@ func TestManagement_UpdateConfig(t *testing.T) {
 
 	// Start engine event loop
 	go engine.Run()
-	
+
 	_, err = future.Wait(ctx)
 	require.NoError(t, err)
 
