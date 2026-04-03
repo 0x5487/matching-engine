@@ -458,20 +458,8 @@ func (engine *MatchingEngine) SendUserEvent(
 }
 
 // GetStats returns usage statistics for the specified market.
-func (engine *MatchingEngine) GetStats(marketID string) (*protocol.GetStatsResponse, error) {
-	val := engine.responsePool.Get()
-	respChan, ok := val.(chan any)
-	if !ok {
-		return nil, errors.New("failed to get response channel from pool")
-	}
-	defer func() {
-		// Ensure channel is drained before putting back
-		select {
-		case <-respChan:
-		default:
-		}
-		engine.responsePool.Put(respChan)
-	}()
+func (engine *MatchingEngine) GetStats(marketID string) (*Future[*protocol.GetStatsResponse], error) {
+	respChan := engine.acquireResponseChannel()
 
 	engine.ring.Publish(InputEvent{
 		Query: &protocol.GetStatsRequest{
@@ -480,18 +468,10 @@ func (engine *MatchingEngine) GetStats(marketID string) (*protocol.GetStatsRespo
 		Resp: respChan,
 	})
 
-	select {
-	case res := <-respChan:
-		if err, ok := res.(error); ok {
-			return nil, err
-		}
-		if result, ok := res.(*protocol.GetStatsResponse); ok {
-			return result, nil
-		}
-		return nil, errors.New("unexpected response type")
-	case <-time.After(time.Second):
-		return nil, ErrTimeout
-	}
+	return &Future[*protocol.GetStatsResponse]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
 }
 
 // Depth returns the current depth of the order book for the specified market.
