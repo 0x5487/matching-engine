@@ -26,7 +26,7 @@ type MatchingEngine struct {
 	engineID      string
 	orderbooks    map[string]*OrderBook
 	ring          *RingBuffer[InputEvent]
-	publishTrader PublishLog
+	publishTrader Publisher
 	serializer    protocol.Serializer
 	responsePool  *sync.Pool
 }
@@ -41,7 +41,7 @@ const (
 )
 
 // NewMatchingEngine creates a new matching engine instance.
-func NewMatchingEngine(engineID string, publishTrader PublishLog) *MatchingEngine {
+func NewMatchingEngine(engineID string, publishTrader Publisher) *MatchingEngine {
 	engine := &MatchingEngine{
 		engineID:      engineID,
 		orderbooks:    make(map[string]*OrderBook),
@@ -968,11 +968,11 @@ func (engine *MatchingEngine) handleCreateMarket(ev *InputEvent) {
 		"market_created",
 		payload.Timestamp,
 	)
-	logs := acquireLogSlice()
-	*logs = append(*logs, log)
-	engine.publishTrader.Publish(*logs)
+	batch := acquireLogBatch()
+	batch.Logs = append(batch.Logs, log)
+	engine.publishTrader.Publish(batch.Logs)
 	releaseBookLog(log)
-	releaseLogSlice(logs)
+	batch.Release()
 
 	if ev.Resp != nil {
 		select {
@@ -1009,11 +1009,11 @@ func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
 
 	// Publish via the shared publishTrader
 	// We wrap it in a slice as required by the interface
-	logs := acquireLogSlice()
-	*logs = append(*logs, log)
-	engine.publishTrader.Publish(*logs)
+	batch := acquireLogBatch()
+	batch.Logs = append(batch.Logs, log)
+	engine.publishTrader.Publish(batch.Logs)
 	releaseBookLog(log)
-	releaseLogSlice(logs)
+	batch.Release()
 }
 
 // orderBook is an internal helper to look up an OrderBook by marketID.
@@ -1054,11 +1054,11 @@ func (engine *MatchingEngine) rejectCommandWithMarket(
 		reason,
 		timestamp,
 	)
-	logs := acquireLogSlice()
-	*logs = append(*logs, log)
-	engine.publishTrader.Publish(*logs)
+	batch := acquireLogBatch()
+	batch.Logs = append(batch.Logs, log)
+	engine.publishTrader.Publish(batch.Logs)
 	releaseBookLog(log)
-	releaseLogSlice(logs)
+	batch.Release()
 }
 
 // commandTimestamp extracts the command timestamp when available.

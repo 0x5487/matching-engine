@@ -130,7 +130,7 @@ func TestLimitOrders(t *testing.T) {
 		// Verify LastCmdSeqID was updated
 		assert.Equal(t, uint64(100), testOrderBook.LastCmdSeqID())
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 10, memoryPublishTrader.Count())
 
@@ -160,7 +160,7 @@ func TestLimitOrders(t *testing.T) {
 		orderBook := createTestOrderBook(t)
 		testPlace(orderBook, newPlaceCmd("match-1", Limit, Sell, 90, 1, 204))
 
-		memoryPublishTrader, ok := orderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := orderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 	})
@@ -177,7 +177,7 @@ func TestLimitOrders(t *testing.T) {
 			Timestamp: 1,
 		})
 
-		memoryPublishTrader, ok := orderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := orderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 		assert.Equal(t, int64(3), orderBook.askQueue.depthCount())
@@ -193,7 +193,7 @@ func TestLimitOrders(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("sell-match", Limit, Sell, 80, 2.5, 204))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 9, memoryPublishTrader.Count())
 		assert.Equal(t, int64(4), testOrderBook.askQueue.depthCount())
@@ -217,7 +217,7 @@ func TestLimitOrders(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("sell-match", IOC, Sell, 75, 4, 204))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 9, memoryPublishTrader.Count())
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
@@ -239,7 +239,7 @@ func TestMarketOrder(t *testing.T) {
 			Timestamp: 1,
 		})
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 9, memoryPublishTrader.Count())
 		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
@@ -258,7 +258,7 @@ func TestMarketOrder(t *testing.T) {
 			Timestamp: 1,
 		})
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
@@ -277,7 +277,7 @@ func TestMarketOrder(t *testing.T) {
 			Timestamp: 1,
 		})
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 8, memoryPublishTrader.Count())
 
@@ -306,7 +306,7 @@ func TestMarketOrder(t *testing.T) {
 			Timestamp: 1,
 		})
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 
@@ -349,7 +349,7 @@ func TestMarketOrder(t *testing.T) {
 			Timestamp: 1,
 		})
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 8, memoryPublishTrader.Count())
 
@@ -377,7 +377,7 @@ func TestMarketOrder(t *testing.T) {
 			Timestamp: 1,
 		})
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 
@@ -400,7 +400,7 @@ func TestMarketOrder(t *testing.T) {
 			Timestamp: 1,
 		})
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 9, memoryPublishTrader.Count())
 		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
@@ -420,7 +420,7 @@ func TestPostOnlyOrder(t *testing.T) {
 			Timestamp: 1,
 		})
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
@@ -431,7 +431,7 @@ func TestPostOnlyOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("post_only", PostOnly, Buy, 115, 1, 0))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 
@@ -447,7 +447,7 @@ func TestIOCOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("ioc", IOC, Buy, 100, 1, 0))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 
@@ -461,7 +461,7 @@ func TestIOCOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("ioc", IOC, Buy, 1000, 3, 0))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 9, memoryPublishTrader.Count())
 		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
@@ -472,7 +472,7 @@ func TestIOCOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("ioc", IOC, Sell, 10, 4, 0))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 10, memoryPublishTrader.Count())
 		assert.Equal(t, int64(3), testOrderBook.askQueue.depthCount())
@@ -483,7 +483,7 @@ func TestIOCOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("ioc", IOC, Buy, 115, 2, 0))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 8, memoryPublishTrader.Count())
 		assert.Equal(t, int64(2), testOrderBook.askQueue.depthCount())
@@ -496,7 +496,7 @@ func TestFOKOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("fok", FOK, Buy, 100, 1, 0))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 
@@ -510,7 +510,7 @@ func TestFOKOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("fok", FOK, Buy, 1000, 3, 0))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 9, memoryPublishTrader.Count())
 		assert.Equal(t, int64(0), testOrderBook.askQueue.depthCount())
@@ -521,7 +521,7 @@ func TestFOKOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("fok", FOK, Sell, 10, 4, 0))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 
@@ -535,7 +535,7 @@ func TestFOKOrder(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("fok", FOK, Buy, 115, 2, 0))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 
@@ -555,7 +555,7 @@ func TestFOKOrder(t *testing.T) {
 
 		testPlace(orderBook, newPlaceCmd("fok-buy", FOK, Buy, 115, 5, 301))
 
-		memoryPublishTrader, ok := orderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := orderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 4, memoryPublishTrader.Count())
 
@@ -576,7 +576,7 @@ func TestFOKOrder(t *testing.T) {
 
 		testPlace(orderBook, newPlaceCmd("fok-buy", FOK, Buy, 125, 5, 301))
 
-		memoryPublishTrader, ok := orderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := orderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 4, memoryPublishTrader.Count())
 		assert.Equal(t, int64(0), orderBook.askQueue.depthCount())
@@ -603,7 +603,7 @@ func TestFOKOrder(t *testing.T) {
 
 		testPlace(orderBook, newPlaceCmd("fok-buy", FOK, Buy, 115, 3, 301))
 
-		memoryPublishTrader, ok := orderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := orderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 6, memoryPublishTrader.Count())
 		assert.Equal(t, int64(0), orderBook.askQueue.depthCount(), "All sell orders should be matched")
@@ -632,7 +632,7 @@ func TestAmendOrder(t *testing.T) {
 		depth := testOrderBook.depth(10)
 		assert.Equal(t, "0.5", depth.Bids[0].Size)
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 		log := memoryPublishTrader.Get(6)
@@ -660,7 +660,7 @@ func TestAmendOrder(t *testing.T) {
 		testAmend(testOrderBook, newAmendCmd("buy-1", 90, 2, 101))
 		testPlace(testOrderBook, newPlaceCmd("sell-match", Limit, Sell, 90, 1, 0))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		found := false
 		for i := range memoryPublishTrader.Count() {
@@ -697,7 +697,7 @@ func TestAmendOrder(t *testing.T) {
 		assert.Equal(t, "95", depth.Bids[0].Price)
 		assert.Equal(t, "5", depth.Bids[0].Size)
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		log := memoryPublishTrader.Get(6)
 		assert.Equal(t, protocol.LogTypeAmend, log.Type)
@@ -712,7 +712,7 @@ func TestAmendOrder(t *testing.T) {
 
 		testAmend(testOrderBook, newAmendCmd("buy-1", 115, 2, 101))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 9, memoryPublishTrader.Count())
 
@@ -771,7 +771,7 @@ func TestRejectReason(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("ioc-price", IOC, Buy, 100, 1, 0))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 		log := memoryPublishTrader.Get(6)
@@ -783,7 +783,7 @@ func TestRejectReason(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("fok-size", FOK, Buy, 1000, 10, 0))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 		log := memoryPublishTrader.Get(6)
@@ -795,7 +795,7 @@ func TestRejectReason(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("fok-price", FOK, Buy, 100, 1, 0))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 		log := memoryPublishTrader.Get(6)
@@ -807,7 +807,7 @@ func TestRejectReason(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 		testPlace(testOrderBook, newPlaceCmd("post-only-cross", PostOnly, Buy, 115, 1, 0))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 		log := memoryPublishTrader.Get(6)
@@ -834,7 +834,7 @@ func TestMatchAmount(t *testing.T) {
 		testPlace(testOrderBook, newPlaceCmd("sell-1", Limit, Sell, 80, 3, 204))
 		testPlace(testOrderBook, newPlaceCmd("buy-fok", FOK, Buy, 80, 3, 104))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 2, memoryPublishTrader.Count())
 
@@ -852,7 +852,7 @@ func TestMatchAmount(t *testing.T) {
 		testPlace(testOrderBook, newPlaceCmd("sell-2", Limit, Sell, 80, 1, 205))
 		testPlace(testOrderBook, newPlaceCmd("buy-fok", FOK, Buy, 80, 2, 104))
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 4, memoryPublishTrader.Count())
 
@@ -885,7 +885,7 @@ func TestMatchAmount(t *testing.T) {
 			Timestamp: 1,
 		})
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 6, memoryPublishTrader.Count())
 
@@ -906,7 +906,7 @@ func TestMatchAmount(t *testing.T) {
 func TestTradeID(t *testing.T) {
 	t.Run("trade ID only on match events", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 
 		for i := range 6 {
@@ -941,7 +941,7 @@ func TestTradeID(t *testing.T) {
 			Timestamp: 1,
 		})
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 9, memoryPublishTrader.Count())
 
@@ -968,7 +968,7 @@ func TestTradeID(t *testing.T) {
 			Timestamp: 1,
 		})
 
-		memoryPublishTrader, ok := testOrderBook.publishTrader.(*MemoryPublishLog)
+		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 		rejectLog := memoryPublishTrader.Get(6)

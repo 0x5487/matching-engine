@@ -8,7 +8,7 @@ import (
 	"github.com/0x5487/matching-engine/protocol"
 )
 
-// PublishLog is an interface for publishing order book logs (trades, opens, cancels).
+// Publisher is an interface for publishing order book logs (trades, opens, cancels).
 //
 // IMPORTANT: Implementations must either:
 //  1. Process logs synchronously before returning, OR
@@ -16,7 +16,7 @@ import (
 //
 // The caller recycles BookLog objects to a sync.Pool after Publish returns,
 // so any asynchronous processing must work with cloned data.
-type PublishLog interface {
+type Publisher interface {
 	// Publish publishes order book logs. The slice comes from logSlicePool.
 	Publish(logs []*OrderBookLog)
 }
@@ -138,35 +138,42 @@ func releaseBookLog(log *OrderBookLog) {
 
 const defaultLogSliceCap = 8
 
-// logSlicePool pools the *[]*OrderBookLog pointers to reduce allocations.
-var logSlicePool = sync.Pool{
+// LogBatch pools a slice of OrderBookLog pointers to reduce allocations.
+type LogBatch struct {
+	Logs []*OrderBookLog
+}
+
+// Release resets the batch and returns it to the pool.
+func (b *LogBatch) Release() {
+	b.Logs = b.Logs[:0]
+	logBatchPool.Put(b)
+}
+
+// logBatchPool pools the *LogBatch pointers.
+var logBatchPool = sync.Pool{
 	New: func() any {
-		s := make([]*OrderBookLog, 0, defaultLogSliceCap)
-		return &s
+		return &LogBatch{
+			Logs: make([]*OrderBookLog, 0, defaultLogSliceCap),
+		}
 	},
 }
 
-func acquireLogSlice() *[]*OrderBookLog {
-	val := logSlicePool.Get()
-	ps, ok := val.(*[]*OrderBookLog)
+// acquireLogBatch gets a LogBatch from the pool.
+func acquireLogBatch() *LogBatch {
+	val := logBatchPool.Get()
+	batch, ok := val.(*LogBatch)
 	if !ok {
-		s := make([]*OrderBookLog, 0, defaultLogSliceCap)
-		return &s
+		return &LogBatch{
+			Logs: make([]*OrderBookLog, 0, defaultLogSliceCap),
+		}
 	}
-	return ps
-}
-
-func releaseLogSlice(ps *[]*OrderBookLog) {
-	s := *ps
-	// Clear the slice but keep capacity for reuse.
-	*ps = s[:0]
-	logSlicePool.Put(ps)
+	return batch
 }
 
 // NewOpenLog creates a new OrderBookLog for an open order event.
 //
-//nolint:revive // argument-limit: many parameters needed for log creation
-func NewOpenLog(
+
+func NewOpenLog( //nolint:revive
 	seqID uint64,
 	commandID, engineID, marketID string,
 	orderID string,
@@ -194,8 +201,8 @@ func NewOpenLog(
 
 // NewMatchLog creates a new OrderBookLog for a trade match event.
 //
-//nolint:revive // argument-limit: many parameters needed for log creation
-func NewMatchLog(
+
+func NewMatchLog( //nolint:revive
 	seqID uint64,
 	commandID, engineID string,
 	tradeID uint64,
@@ -232,8 +239,8 @@ func NewMatchLog(
 
 // NewCancelLog creates a new OrderBookLog for an order cancellation event.
 //
-//nolint:revive // argument-limit: many parameters needed for log creation
-func NewCancelLog(
+
+func NewCancelLog( //nolint:revive
 	seqID uint64,
 	commandID, engineID, marketID string,
 	orderID string,
@@ -261,8 +268,8 @@ func NewCancelLog(
 
 // NewAmendLog creates a new OrderBookLog for an order amendment event.
 //
-//nolint:revive // argument-limit: many parameters needed for log creation
-func NewAmendLog(
+
+func NewAmendLog( //nolint:revive
 	seqID uint64,
 	commandID, engineID, marketID string,
 	orderID string,
@@ -294,8 +301,8 @@ func NewAmendLog(
 
 // NewRejectLog creates a new OrderBookLog for an order rejection event.
 //
-//nolint:revive // argument-limit: many parameters needed for log creation
-func NewRejectLog(
+
+func NewRejectLog( //nolint:revive
 	seqID uint64,
 	commandID, engineID, marketID string,
 	orderID string,
@@ -318,8 +325,8 @@ func NewRejectLog(
 
 // NewUserEventLog creates a new OrderBookLog for a generic user event.
 //
-//nolint:revive // argument-limit: many parameters needed for log creation
-func NewUserEventLog(
+
+func NewUserEventLog( //nolint:revive
 	seqID uint64,
 	commandID, engineID string,
 	userID uint64,
