@@ -851,7 +851,7 @@ func (engine *MatchingEngine) processCommand(ev *InputEvent) {
 	book := engine.orderBook(cmd.MarketID)
 	if book == nil {
 		engine.rejectCommand(cmd, protocol.RejectReasonMarketNotFound)
-engine.respondQueryError(ev, ErrNotFound)
+		engine.respondQueryError(ev, ErrNotFound)
 		return
 	}
 	book.processCommand(ev)
@@ -986,7 +986,7 @@ func (engine *MatchingEngine) handleCreateMarket(ev *InputEvent) {
 func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
 	payload := &protocol.UserEventCommand{}
 	if err := engine.serializer.Unmarshal(cmd.Payload, payload); err != nil {
-		logger.Error("failed to unmarshal UserEvent command", "error", err)
+		logger.Warn("failed to unmarshal UserEvent command", "error", err)
 		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
 		return
 	}

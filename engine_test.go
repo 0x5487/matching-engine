@@ -1238,7 +1238,7 @@ func TestManagement_UnknownMarketFuture(t *testing.T) {
 	require.Error(t, err)
 	// If elapsed time is close to 200ms, it means it hung until timeout
 	require.Less(t, elapsed, 100*time.Millisecond, "Future should return immediately for unknown market")
-	require.Contains(t, err.Error(), string(protocol.RejectReasonMarketNotFound))
+	require.ErrorIs(t, err, ErrNotFound)
 
 	_ = engine.Shutdown(ctx)
 }
