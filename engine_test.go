@@ -1130,23 +1130,23 @@ func TestManagement_LateResponsePollution(t *testing.T) {
 	ctxShort, cancelShort := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancelShort()
 
-	// 1. 發起第一個命令，但給予極短的超時
+	// 1. Issue the first command with a very short timeout
 	future1, err := engine.CreateMarket(context.Background(), "cmd-1", 1, "M1", "0.01", time.Now().UnixNano())
 	require.NoError(t, err)
 
-	// 模擬超時退出
+	// Simulate timeout exit
 	_, err = future1.Wait(ctxShort)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 
-	// 2. 現在啟動引擎，並處理 cmd-1
+	// 2. Start the engine and process cmd-1
 	go engine.Run()
 
-	// 等待一小段時間確保 cmd-1 被處理，響應被發送到那個已被放棄的通道
+	// Wait for a short time to ensure cmd-1 is processed and response is sent to the abandoned channel
 	time.Sleep(50 * time.Millisecond)
 
-	// 3. 發起第二個命令
+	// 3. Issue the second command
 	ctxLong := context.Background()
-	// 此時 engine 應該會從池中獲取一個新的乾淨通道
+	// At this point, the engine should acquire a new clean channel from the pool
 	future2, err := engine.CreateMarket(ctxLong, "cmd-2", 1, "M2", "0.01", time.Now().UnixNano())
 	require.NoError(t, err)
 
@@ -1154,7 +1154,7 @@ func TestManagement_LateResponsePollution(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, res)
 
-	// 檢查 M2 是否真的建立成功了 (證明 future2.Wait 沒有讀到舊的 cmd-1 成功響應)
+	// Check if M2 was actually created successfully (proves future2.Wait did not read the old cmd-1 success response)
 	assert.Eventually(t, func() bool {
 		stats, err := engine.GetStats("M2")
 		return err == nil && stats != nil
@@ -1171,17 +1171,17 @@ func TestManagement_UnknownMarketFuture(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	// 嘗試暫停一個不存在的市場
+	// Try to suspend a non-existent market
 	future, err := engine.SuspendMarket(ctx, "cmd-unknown", 1, "UNKNOWN-MARKET", time.Now().UnixNano())
 	require.NoError(t, err)
 
-	// 如果修復正確，這應該立即返回錯誤，而不是等到 ctx 超時
+	// If fixed correctly, this should return an error immediately instead of waiting for ctx timeout
 	start := time.Now()
 	_, err = future.Wait(ctx)
 	elapsed := time.Since(start)
 
 	require.Error(t, err)
-	// 如果耗時接近 200ms，說明它掛起直到超時了
+	// If elapsed time is close to 200ms, it means it hung until timeout
 	require.Less(t, elapsed, 100*time.Millisecond, "Future should return immediately for unknown market")
 	require.Contains(t, err.Error(), string(protocol.RejectReasonMarketNotFound))
 
