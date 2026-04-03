@@ -2,7 +2,7 @@
 
 ## [unreleased]
 
-- feature: add **Future Pattern** for synchronous-like waiting on management commands. See [doc/features/future-pattern.md](doc/features/future-pattern.md).
+- feature: extend **Future Pattern** to all management commands (`CreateMarket`, `SuspendMarket`, `ResumeMarket`, `UpdateConfig`) for synchronous-like waiting and immediate error reporting (e.g., `MarketNotFound`). See [doc/features/future-pattern.md](doc/features/future-pattern.md).
 
 ## v0.8.0 (2026-04-02)
 
