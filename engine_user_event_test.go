@@ -40,7 +40,7 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 
 	// 2. Send User Event (e.g. EndOfBlock)
 	eventData := []byte("block-hash-0x123456")
-	err = engine.SendUserEvent("event-user-1", 999, "EndOfBlock", "blk-1", eventData, 123456789)
+	err = engine.SendUserEvent(ctx, "event-user-1", 999, "EndOfBlock", "blk-1", eventData, 123456789)
 	require.NoError(t, err)
 
 	// 3. Place Another Order
@@ -102,7 +102,7 @@ func TestUserEvent_InvalidPayloadEmitsReject(t *testing.T) {
 
 	go engine.Run()
 
-	err := engine.EnqueueCommand(&protocol.Command{
+	err := engine.EnqueueCommand(ctx, &protocol.Command{
 		Type:      protocol.CmdUserEvent,
 		CommandID: "bad-user-event",
 		Payload:   []byte("{"),
@@ -130,7 +130,7 @@ func TestUserEvent_RequiresPositiveTimestamp(t *testing.T) {
 
 	go engine.Run()
 
-	err := engine.SendUserEvent("event-user-bad-ts", 999, "EndOfBlock", "blk-0", []byte("x"), 0)
+	err := engine.SendUserEvent(ctx, "event-user-bad-ts", 999, "EndOfBlock", "blk-0", []byte("x"), 0)
 	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
@@ -151,6 +151,6 @@ func TestUserEvent_RequiresPositiveTimestamp(t *testing.T) {
 
 func TestUserEvent_RequiresCommandID(t *testing.T) {
 	engine := NewMatchingEngine("event-test-engine", NewMemoryPublishLog())
-	err := engine.SendUserEvent("", 999, "EndOfBlock", "blk-0", []byte("x"), 1)
+	err := engine.SendUserEvent(context.Background(), "", 999, "EndOfBlock", "blk-0", []byte("x"), 1)
 	require.ErrorIs(t, err, ErrInvalidParam)
 }

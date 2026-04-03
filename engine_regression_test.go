@@ -39,7 +39,7 @@ func TestManagement_UpdateConfig_MalformedPayload(t *testing.T) {
 		Payload:   []byte("this-is-not-json-or-binary"),
 	}
 
-	err = engine.enqueueCommandWithResponse(protoCmd, respChan)
+	err = engine.enqueueCommandWithResponse(ctx, protoCmd, respChan)
 	require.NoError(t, err)
 
 	malformedFuture := &Future[bool]{
@@ -81,7 +81,7 @@ func TestManagement_SuspendMarket_MalformedPayload(t *testing.T) {
 		Payload:   []byte("this-is-not-json-or-binary"),
 	}
 
-	err = engine.enqueueCommandWithResponse(protoCmd, respChan)
+	err = engine.enqueueCommandWithResponse(ctx, protoCmd, respChan)
 	require.NoError(t, err)
 
 	malformedFuture := &Future[bool]{
@@ -122,7 +122,7 @@ func TestManagement_ResumeMarket_MalformedPayload(t *testing.T) {
 		Payload:   []byte("this-is-not-json-or-binary"),
 	}
 
-	err = engine.enqueueCommandWithResponse(protoCmd, respChan)
+	err = engine.enqueueCommandWithResponse(ctx, protoCmd, respChan)
 	require.NoError(t, err)
 
 	malformedFuture := &Future[bool]{

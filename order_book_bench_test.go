@@ -103,7 +103,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 
 	for i := range b.N {
 		// Hot path: only ExecuteCommand (no serialization overhead)
-		_ = engine.EnqueueCommand(cmdPool[i%poolSize])
+		_ = engine.EnqueueCommand(ctx, cmdPool[i%poolSize])
 	}
 
 	b.StopTimer()
@@ -220,7 +220,7 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 
 	for i := range b.N {
 		// Hot path: ExecuteCommandBatch
-		_ = engine.EnqueueCommandBatch(batches[i%len(batches)])
+		_ = engine.EnqueueCommandBatch(ctx, batches[i%len(batches)])
 	}
 
 	b.StopTimer()
@@ -306,10 +306,10 @@ func BenchmarkMatching(b *testing.B) {
 		idx := (i * 2) % poolSize
 
 		// Place Sell (Resting)
-		_ = engine.EnqueueCommand(cmdPool[idx])
+		_ = engine.EnqueueCommand(ctx, cmdPool[idx])
 
 		// Place Buy (Matches immediately)
-		_ = engine.EnqueueCommand(cmdPool[idx+1])
+		_ = engine.EnqueueCommand(ctx, cmdPool[idx+1])
 	}
 
 	b.StopTimer()
