@@ -98,7 +98,34 @@ func (engine *MatchingEngine) SubmitAsync(ctx context.Context, cmd *protocol.Com
 	if err := requireCommandID(cmd.CommandID); err != nil {
 		return err
 	}
-	return engine.enqueueCommand(ctx, cmd)
+
+	if engine.isShutdown.Load() {
+		return ErrShutdown
+	}
+
+	strategy := YieldingIdleStrategy{}
+	for {
+		// All commands go through the shared RingBuffer
+		seq, ev := engine.ring.TryClaim()
+		if seq != -1 {
+			ev.Cmd = cmd
+			ev.Query = nil
+			ev.Resp = nil
+
+			engine.ring.Commit(seq)
+			return nil
+		}
+
+		if engine.isShutdown.Load() {
+			return ErrShutdown
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		strategy.Idle()
+	}
 }
 
 // Run starts the engine's event loop. This is a blocking call.
@@ -127,43 +154,71 @@ func requireCommandID(commandID string) error {
 	return nil
 }
 
-// PlaceOrderBatch adds multiple orders to the appropriate order book(s).
-// This method performs serialization before acquiring RingBuffer slots,
-// ensuring that serialization errors do not block or waste RingBuffer sequences.
-func (engine *MatchingEngine) PlaceOrderBatch(
-	ctx context.Context,
-	marketID string,
-	cmds []*protocol.PlaceOrderParams,
-) error {
+// SubmitAsyncBatch sends a batch of commands to the engine without waiting for results.
+// This is the fastest way to insert multiple commands (e.g., placing/canceling multiple orders)
+// into the queue atomically. It guarantees "all or nothing" semantics: if any command
+// fails validation, an error is returned immediately and NOTHING is inserted into the queue.
+func (engine *MatchingEngine) SubmitAsyncBatch(ctx context.Context, cmds []*protocol.Command) error {
 	if len(cmds) == 0 {
 		return nil
+	}
+
+	if ctx == nil {
+		return ErrInvalidParam
+	}
+
+	for _, cmd := range cmds {
+		if cmd == nil {
+			return ErrInvalidParam
+		}
+		if err := requireCommandID(cmd.CommandID); err != nil {
+			return err
+		}
 	}
 
 	if engine.isShutdown.Load() {
 		return ErrShutdown
 	}
 
-	protoCmds := make([]*protocol.Command, 0, len(cmds))
-	for _, cmd := range cmds {
-		// Use OrderID as CommandID for legacy batch support until Task 6
-		if err := requireCommandID(cmd.OrderID); err != nil {
-			return err
+	n := int64(len(cmds))
+
+	// Handle case where batch size exceeds ring buffer capacity limit
+	if n > engine.ring.capacity {
+		// Fallback to individual enqueues if batch is larger than capacity
+		for _, cmd := range cmds {
+			if err := engine.SubmitAsync(ctx, cmd); err != nil {
+				return err
+			}
 		}
-		bytes, err := cmd.MarshalBinary()
-		if err != nil {
-			// Early return on serialization error - nothing has been inserted into the queue yet.
-			return err
-		}
-		protoCmds = append(protoCmds, &protocol.Command{
-			MarketID:  marketID,
-			Type:      protocol.CmdPlaceOrder,
-			CommandID: cmd.OrderID,
-			Timestamp: time.Now().UnixNano(),
-			Payload:   bytes,
-		})
+		return nil
 	}
 
-	return engine.enqueueCommandBatch(ctx, protoCmds)
+	strategy := YieldingIdleStrategy{}
+	for {
+		startSeq, endSeq := engine.ring.TryClaimN(n)
+		if startSeq != -1 {
+			for i, cmd := range cmds {
+				seq := startSeq + int64(i)
+				slot := &engine.ring.buffer[seq&engine.ring.bufferMask]
+				slot.Cmd = cmd
+				slot.Query = nil
+				slot.Resp = nil
+			}
+
+			engine.ring.CommitN(startSeq, endSeq)
+			return nil
+		}
+
+		if engine.isShutdown.Load() {
+			return ErrShutdown
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		strategy.Idle()
+	}
 }
 
 // Query executes a read-only request against the matching engine.
@@ -902,89 +957,5 @@ func (engine *MatchingEngine) onEvent(ev *InputEvent) {
 	if ev.Query != nil {
 		engine.processQuery(ev)
 		return
-	}
-}
-
-// enqueueCommand routes the command to the Engine's shared RingBuffer.
-// Create market commands are handled synchronously so the OrderBook is immediately available.
-func (engine *MatchingEngine) enqueueCommand(ctx context.Context, cmd *protocol.Command) error {
-	if engine.isShutdown.Load() {
-		return ErrShutdown
-	}
-
-	strategy := YieldingIdleStrategy{}
-	for {
-		// All commands go through the shared RingBuffer
-		seq, ev := engine.ring.TryClaim()
-		if seq != -1 {
-			ev.Cmd = cmd
-			ev.Query = nil
-			ev.Resp = nil
-
-			engine.ring.Commit(seq)
-			return nil
-		}
-
-		if engine.isShutdown.Load() {
-			return ErrShutdown
-		}
-
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		strategy.Idle()
-	}
-}
-
-// enqueueCommandBatch routes a batch of commands to the Engine's shared RingBuffer.
-// It claims n contiguous slots in the RingBuffer to amortize synchronization overhead.
-func (engine *MatchingEngine) enqueueCommandBatch(ctx context.Context, cmds []*protocol.Command) error {
-	if len(cmds) == 0 {
-		return nil
-	}
-
-	if engine.isShutdown.Load() {
-		return ErrShutdown
-	}
-
-	n := int64(len(cmds))
-
-	// Handle case where batch size exceeds ring buffer capacity limit
-	if n > engine.ring.capacity {
-		// Fallback to individual enqueues if batch is larger than capacity
-		for _, cmd := range cmds {
-			if err := engine.enqueueCommand(ctx, cmd); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	strategy := YieldingIdleStrategy{}
-	for {
-		startSeq, endSeq := engine.ring.TryClaimN(n)
-		if startSeq != -1 {
-			for i, cmd := range cmds {
-				seq := startSeq + int64(i)
-				slot := &engine.ring.buffer[seq&engine.ring.bufferMask]
-				slot.Cmd = cmd
-				slot.Query = nil
-				slot.Resp = nil
-			}
-
-			engine.ring.CommitN(startSeq, endSeq)
-			return nil
-		}
-
-		if engine.isShutdown.Load() {
-			return ErrShutdown
-		}
-
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		strategy.Idle()
 	}
 }

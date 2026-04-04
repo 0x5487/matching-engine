@@ -110,7 +110,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 
 	for i := range b.N {
 		// Hot path: only ExecuteCommand (no serialization overhead)
-		_ = engine.enqueueCommand(ctx, cmdPool[i%poolSize])
+		_ = engine.SubmitAsync(ctx, cmdPool[i%poolSize])
 	}
 
 	b.StopTimer()
@@ -138,7 +138,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	_ = engine.Shutdown(context.Background())
 }
 
-func BenchmarkPlaceOrderBatch(b *testing.B) {
+func BenchmarkSubmitAsyncBatch(b *testing.B) {
 	// Ensure engine and producer can run concurrently
 	oldProcs := runtime.GOMAXPROCS(runtime.NumCPU())
 	defer runtime.GOMAXPROCS(oldProcs)
@@ -234,8 +234,8 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 	b.ResetTimer()
 
 	for i := range b.N {
-		// Hot path: ExecuteCommandBatch
-		_ = engine.enqueueCommandBatch(ctx, batches[i%len(batches)])
+		// Hot path: SubmitAsyncBatch
+		_ = engine.SubmitAsyncBatch(ctx, batches[i%len(batches)])
 	}
 
 	b.StopTimer()
@@ -329,10 +329,10 @@ func BenchmarkMatching(b *testing.B) {
 		idx := (i * 2) % poolSize
 
 		// Place Sell (Resting)
-		_ = engine.enqueueCommand(ctx, cmdPool[idx])
+		_ = engine.SubmitAsync(ctx, cmdPool[idx])
 
 		// Place Buy (Matches immediately)
-		_ = engine.enqueueCommand(ctx, cmdPool[idx+1])
+		_ = engine.SubmitAsync(ctx, cmdPool[idx+1])
 	}
 
 	b.StopTimer()
