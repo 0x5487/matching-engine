@@ -146,12 +146,10 @@ func TestRingBuffer_GetPendingEvents(t *testing.T) {
 		rb.Publish(TestEvent{ID: int64(i)})
 	}
 
-	// Allow some time for producer sequence to update
-	time.Sleep(10 * time.Millisecond)
-
 	// Check pending events
-	pending := rb.GetPendingEvents()
-	assert.GreaterOrEqual(t, pending, int64(4)) // At least 4 pending
+	assert.Eventually(t, func() bool {
+		return rb.GetPendingEvents() >= 4
+	}, time.Second, 10*time.Millisecond)
 
 	// Unblock all handlers
 	close(blockCh)

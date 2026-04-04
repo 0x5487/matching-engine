@@ -41,25 +41,19 @@ type Command struct {
 
 ### 2.2 Public Engine API
 
-The SDK does not expose a public `ExecuteCommand` method. Instead, the `MatchingEngine` provides façade methods such as:
+The SDK exposes a unified, generic command submission API. `MatchingEngine` provides the following core methods:
 
-- `PlaceOrder`
-- `PlaceOrderBatch`
-- `CancelOrder`
-- `AmendOrder`
-- `CreateMarket`
-- `SuspendMarket`
-- `ResumeMarket`
-- `UpdateConfig`
-- `SendUserEvent`
+- `Submit(ctx, *protocol.Command) (*Future[any], error)`
+- `SubmitAsync(ctx, *protocol.Command) error`
+- `SubmitAsyncBatch(ctx, []*protocol.Command) error`
 
-These helpers wrap payloads into `protocol.Command` and enqueue them into the engine ring buffer.
+These methods directly enqueue commands into the engine ring buffer.
 
-Helper-level contract:
+Contract:
 
-- trading helper payloads must provide a non-empty helper `CommandID` used to populate the envelope
-- management helpers require `commandID` as an explicit method argument
-- `SendUserEvent` requires an explicit `commandID`
+- All payload serialization must be performed by the caller before invoking generic submission APIs.
+- The `CommandID` must be explicitly populated on the `*protocol.Command` envelope.
+- `Timestamp` must be explicitly populated on the `*protocol.Command` envelope for logical time ordering.
 
 ### 2.3 Read Path
 

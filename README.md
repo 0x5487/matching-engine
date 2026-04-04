@@ -56,8 +56,17 @@ func main() {
 	}()
 
 	// 4. Create a Market
+	createCmd := &protocol.Command{
+		CommandID: "create-btc-usdt",
+		MarketID:  "BTC-USDT",
+		UserID:    9001,
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = createCmd.SetPayload(&protocol.CreateMarketParams{
+		MinLotSize: "0.00000001",
+	})
 	// Management commands return a Future for synchronous-like waiting.
-	future, err := engine.CreateMarket(ctx, "create-btc-usdt", 9001, "BTC-USDT", "0.00000001", time.Now().UnixNano())
+	future, err := engine.Submit(ctx, createCmd)
 	if err != nil {
 		panic(err)
 	}
@@ -68,32 +77,38 @@ func main() {
 	}
 
 	// 5. Place a Sell Limit Order
-	sellCmd := &protocol.PlaceOrderCommand{
+	sellCmd := &protocol.Command{
 		CommandID: "sell-1-cmd",
+		MarketID:  "BTC-USDT",
+		UserID:    1001,
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = sellCmd.SetPayload(&protocol.PlaceOrderParams{
 		OrderID:   "sell-1",
 		OrderType: protocol.OrderTypeLimit,
 		Side:      protocol.SideSell,
 		Price:     udecimal.MustFromInt64(50000, 0).String(), // 50000
 		Size:      udecimal.MustFromInt64(1, 0).String(),     // 1.0
-		UserID:    1001,
-		Timestamp: time.Now().UnixNano(),
-	}
-	if err := engine.PlaceOrder(ctx, "BTC-USDT", sellCmd); err != nil {
+	})
+	if err := engine.SubmitAsync(ctx, sellCmd); err != nil {
 		fmt.Printf("Error placing sell order: %v\n", err)
 	}
 
 	// 6. Place a Buy Limit Order (Matches immediately)
-	buyCmd := &protocol.PlaceOrderCommand{
+	buyCmd := &protocol.Command{
 		CommandID: "buy-1-cmd",
+		MarketID:  "BTC-USDT",
+		UserID:    1002,
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = buyCmd.SetPayload(&protocol.PlaceOrderParams{
 		OrderID:   "buy-1",
 		OrderType: protocol.OrderTypeLimit,
 		Side:      protocol.SideBuy,
 		Price:     udecimal.MustFromInt64(50000, 0).String(), // 50000
 		Size:      udecimal.MustFromInt64(1, 0).String(),     // 1.0
-		UserID:    1002,
-		Timestamp: time.Now().UnixNano(),
-	}
-	if err := engine.PlaceOrder(ctx, "BTC-USDT", buyCmd); err != nil {
+	})
+	if err := engine.SubmitAsync(ctx, buyCmd); err != nil {
 		fmt.Printf("Error placing buy order: %v\n", err)
 	}
 
@@ -122,7 +137,7 @@ func main() {
 - Every state-changing command must carry an upstream-assigned logical `Timestamp`. `Timestamp <= 0` is rejected as `invalid_payload`. For engine helper methods such as `CreateMarket`, `SuspendMarket`, `ResumeMarket`, `UpdateConfig`, and `SendUserEvent`, pass the timestamp explicitly from your Gateway / Sequencer / OMS.
 - Business-level failures are emitted as `OrderBookLog` entries with `Type == protocol.LogTypeReject`.
 - Commands sent to a missing market generate a reject event with `RejectReasonMarketNotFound`.
-- `GetStats()` and `Depth()` return `ErrNotFound` immediately when the market does not exist.
+- The `Query()` method (e.g., for `protocol.GetStatsRequest` or `protocol.GetDepthRequest`) returns `ErrNotFound` immediately when the market does not exist.
 
 ### Management Commands
 
@@ -130,16 +145,41 @@ The engine supports dynamic market management:
 
 ```go
 // Suspend a market (rejects new Place/Amend orders)
-future, err := engine.SuspendMarket(ctx, "suspend-btc-usdt", 9001, "BTC-USDT", time.Now().UnixNano())
+suspendCmd := &protocol.Command{
+	CommandID: "suspend-btc-usdt",
+	MarketID:  "BTC-USDT",
+	UserID:    9001,
+	Timestamp: time.Now().UnixNano(),
+}
+_ = suspendCmd.SetPayload(&protocol.SuspendMarketParams{
+	Reason: "maintenance",
+})
+future, err := engine.Submit(ctx, suspendCmd)
 _, err = future.Wait(ctx)
 
 // Resume a market
-future, err = engine.ResumeMarket(ctx, "resume-btc-usdt", 9001, "BTC-USDT", time.Now().UnixNano())
+resumeCmd := &protocol.Command{
+	CommandID: "resume-btc-usdt",
+	MarketID:  "BTC-USDT",
+	UserID:    9001,
+	Timestamp: time.Now().UnixNano(),
+}
+_ = resumeCmd.SetPayload(&protocol.ResumeMarketParams{})
+future, err = engine.Submit(ctx, resumeCmd)
 _, err = future.Wait(ctx)
 
 // Update market configuration (e.g. MinLotSize)
 newLotSize := "0.01"
-future, err = engine.UpdateConfig(ctx, "update-btc-usdt-lot", 9001, "BTC-USDT", newLotSize, time.Now().UnixNano())
+updateCmd := &protocol.Command{
+	CommandID: "update-btc-usdt-lot",
+	MarketID:  "BTC-USDT",
+	UserID:    9001,
+	Timestamp: time.Now().UnixNano(),
+}
+_ = updateCmd.SetPayload(&protocol.UpdateConfigParams{
+	MinLotSize: newLotSize,
+})
+future, err = engine.Submit(ctx, updateCmd)
 _, err = future.Wait(ctx)
 ```
 
@@ -187,8 +227,17 @@ Inject custom events into the matching engine's log stream. These events are pro
 ```go
 // Example: Sending an End-Of-Block signal from an L1 Blockchain
 blockHash := []byte("0x123abc...")
-// SendUserEvent(commandID, userID, eventType, key, data, timestamp)
-err := engine.SendUserEvent("block-100-event", 999, "EndOfBlock", "block-100", blockHash, time.Now().UnixNano())
+userEventCmd := &protocol.Command{
+	CommandID: "block-100-event",
+	UserID:    999,
+	Timestamp: time.Now().UnixNano(),
+}
+_ = userEventCmd.SetPayload(&protocol.UserEventParams{
+	EventType: "EndOfBlock",
+	Key:       "block-100",
+	Data:      blockHash,
+})
+err := engine.SubmitAsync(ctx, userEventCmd)
 ```
 
 The event will appear in the `PublishLog` stream as `LogTypeUser` with your custom data payload. Malformed user-event payloads are emitted as `LogTypeReject` with `RejectReasonInvalidPayload`.

@@ -69,7 +69,11 @@ func NewPooledSkiplist(capacity int32, seed int64) *PooledSkiplist {
 }
 
 // NewPooledSkiplistWithOptions creates a new pooled skiplist with custom options.
-func NewPooledSkiplistWithOptions(capacity int32, seed int64, opts SkiplistOptions) *PooledSkiplist {
+func NewPooledSkiplistWithOptions(
+	capacity int32,
+	seed int64,
+	opts SkiplistOptions,
+) *PooledSkiplist {
 	// +1 for head sentinel
 	totalCap := capacity + 1
 	sl := &PooledSkiplist{
@@ -114,7 +118,7 @@ func (sl *PooledSkiplist) Insert(price udecimal.Decimal) (bool, error) {
 			sl.less(sl.nodes[sl.nodes[x].Forward[i]].Price, price) {
 			x = sl.nodes[x].Forward[i]
 		}
-		update[i] = x //nolint:gosec // G602: bounds checked by NullIndex
+		update[i] = x //nolint:gosec // false positive
 	}
 
 	x = sl.nodes[x].Forward[0]
@@ -142,8 +146,8 @@ func (sl *PooledSkiplist) Insert(price udecimal.Decimal) (bool, error) {
 	sl.nodes[newNode].Level = newLevel
 
 	for i := range newLevel {
-		sl.nodes[newNode].Forward[i] = sl.nodes[update[i]].Forward[i] //nolint:gosec // G602: index safety verified
-		sl.nodes[update[i]].Forward[i] = newNode                      //nolint:gosec // G602: index safety verified
+		sl.nodes[newNode].Forward[i] = sl.nodes[update[i]].Forward[i] //nolint:gosec // false positive
+		sl.nodes[update[i]].Forward[i] = newNode                      //nolint:gosec // false positive
 	}
 
 	sl.count++
@@ -187,7 +191,7 @@ func (sl *PooledSkiplist) Delete(price udecimal.Decimal) bool {
 			sl.less(sl.nodes[sl.nodes[x].Forward[i]].Price, price) {
 			x = sl.nodes[x].Forward[i]
 		}
-		update[i] = x //nolint:gosec // G602: bounds checked by NullIndex
+		update[i] = x //nolint:gosec // false positive
 	}
 
 	x = sl.nodes[x].Forward[0]
@@ -199,7 +203,7 @@ func (sl *PooledSkiplist) Delete(price udecimal.Decimal) bool {
 
 	// Update forward pointers
 	for i := range sl.level {
-		if sl.nodes[update[i]].Forward[i] != x { //nolint:gosec // G602: index safety verified
+		if sl.nodes[update[i]].Forward[i] != x { //nolint:gosec // false positive
 			break
 		}
 		sl.nodes[update[i]].Forward[i] = sl.nodes[x].Forward[i]

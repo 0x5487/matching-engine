@@ -1,73 +1,5 @@
 package protocol
 
-import (
-	"github.com/bytedance/sonic"
-)
-
-// Serializer defines the contract for serializing and deserializing command payloads.
-type Serializer interface {
-	Marshal(v any) ([]byte, error)
-	Unmarshal(data []byte, v any) error
-}
-
-// DefaultJSONSerializer is a high-performance JSON serializer using the sonic library.
-type DefaultJSONSerializer struct{}
-
-// Marshal serializes the value to JSON.
-func (s *DefaultJSONSerializer) Marshal(v any) ([]byte, error) {
-	return sonic.Marshal(v)
-}
-
-// Unmarshal deserializes the JSON data into the value.
-func (s *DefaultJSONSerializer) Unmarshal(data []byte, v any) error {
-	return sonic.Unmarshal(data, v)
-}
-
-// FastBinarySerializer implements the Serializer interface, prioritizing
-// manual binary serialization for supported types with a JSON fallback.
-type FastBinarySerializer struct {
-	json DefaultJSONSerializer
-}
-
-// Marshal serializes the value to binary format if supported, otherwise to JSON.
-func (s *FastBinarySerializer) Marshal(v any) ([]byte, error) {
-	if marshaler, ok := v.(FastBinaryMarshaler); ok {
-		size := marshaler.BinarySize()
-		buf := make([]byte, size)
-		n, err := marshaler.MarshalBinary(buf)
-		if err != nil {
-			return nil, err
-		}
-		return buf[:n], nil
-	}
-	return s.json.Marshal(v)
-}
-
-// Unmarshal deserializes the binary data if supported, otherwise from JSON.
-func (s *FastBinarySerializer) Unmarshal(data []byte, v any) error {
-	if unmarshaler, ok := v.(FastBinaryUnmarshaler); ok {
-		_, err := unmarshaler.UnmarshalBinary(data)
-		if err == nil {
-			return nil
-		}
-	}
-	// Fallback to JSON if binary fails (e.g. for legacy JSON payloads in tests)
-	return s.json.Unmarshal(data, v)
-}
-
-// FastBinaryMarshaler is implemented by types that can serialize themselves
-// into a binary format efficiently.
-type FastBinaryMarshaler interface {
-	MarshalBinary(buf []byte) (int, error)
-	BinarySize() int
-}
-
-// FastBinaryUnmarshaler is implemented by types that can deserialize themselves
-// from a binary format efficiently.
-type FastBinaryUnmarshaler interface {
-	UnmarshalBinary(data []byte) (int, error)
-}
-
 // DepthItem represents a single price level in the order book depth.
 type DepthItem struct {
 	Price string `json:"price"`
@@ -116,6 +48,18 @@ const (
 	OrderTypePostOnly OrderType = "post_only" // Maker only
 	// OrderTypeCancel represents a cancellation request.
 	OrderTypeCancel OrderType = "cancel" // The order has been canceled
+)
+
+// OrderBookState represents the operational status of a market.
+type OrderBookState uint8
+
+const (
+	// OrderBookStateRunning indicates the order book is running.
+	OrderBookStateRunning OrderBookState = 1
+	// OrderBookStateSuspended indicates the order book is suspended.
+	OrderBookStateSuspended OrderBookState = 2
+	// OrderBookStateHalted indicates the order book is halted.
+	OrderBookStateHalted OrderBookState = 3
 )
 
 const (

@@ -97,7 +97,13 @@ func TestPriceLevelTree_DeleteMin(t *testing.T) {
 	for _, exp := range expected {
 		minVal, ok := tree.DeleteMin()
 		assert.True(t, ok)
-		assert.True(t, minVal.Equal(udecimal.MustFromInt64(exp, 0)), "Expected %d, got %s", exp, minVal.String())
+		assert.True(
+			t,
+			minVal.Equal(udecimal.MustFromInt64(exp, 0)),
+			"Expected %d, got %s",
+			exp,
+			minVal.String(),
+		)
 	}
 
 	assert.Equal(t, int32(0), tree.Count())
@@ -320,7 +326,12 @@ func FuzzPriceLevelTree(f *testing.F) {
 		slice := tree.InOrderSlice()
 		for i := 1; i < len(slice); i++ {
 			if !slice[i-1].LessThan(slice[i]) {
-				t.Errorf("Not sorted at index %d: %s >= %s", i, slice[i-1].String(), slice[i].String())
+				t.Errorf(
+					"Not sorted at index %d: %s >= %s",
+					i,
+					slice[i-1].String(),
+					slice[i].String(),
+				)
 			}
 		}
 
