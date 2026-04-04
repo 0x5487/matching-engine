@@ -8,163 +8,141 @@ import (
 	"github.com/0x5487/matching-engine/protocol"
 )
 
-// Publisher is an interface for publishing order book logs (trades, opens, cancels).
-//
-// IMPORTANT: Implementations must either:
-//  1. Process logs synchronously before returning, OR
-//  2. Clone the BookLog data before returning
-//
-// The caller recycles BookLog objects to a sync.Pool after Publish returns,
-// so any asynchronous processing must work with cloned data.
+// LogBatch is a reusable container for a batch of order book logs.
+type LogBatch struct {
+	Logs []*OrderBookLog
+}
+
+var logBatchPool = sync.Pool{
+	New: func() any {
+		return &LogBatch{
+			Logs: make([]*OrderBookLog, 0, 16), //nolint:mnd
+		}
+	},
+}
+
+// Release returns the LogBatch to the pool after clearing the logs.
+func (b *LogBatch) Release() {
+	b.Logs = b.Logs[:0]
+	logBatchPool.Put(b)
+}
+
+// OrderBookLog represents a single event in the order book's history.
+type OrderBookLog struct {
+	SeqID        uint64                `json:"seq_id"`
+	CommandID    string                `json:"command_id"`
+	EngineID     string                `json:"engine_id"`
+	TradeID      uint64                `json:"trade_id,omitempty"`
+	Type         protocol.LogType      `json:"type"`
+	MarketID     string                `json:"market_id"`
+	Side         Side                  `json:"side"`
+	Price        udecimal.Decimal      `json:"price"`
+	Size         udecimal.Decimal      `json:"size"`
+	Amount       udecimal.Decimal      `json:"amount"`
+	OrderID      string                `json:"order_id"`
+	UserID       uint64                `json:"user_id"`
+	OrderType    OrderType             `json:"order_type"`
+	OldPrice     udecimal.Decimal      `json:"old_price"`
+	OldSize      udecimal.Decimal      `json:"old_size"`
+	MakerOrderID string                `json:"maker_order_id,omitempty"`
+	MakerUserID  uint64                `json:"maker_user_id,omitempty"`
+	RejectReason protocol.RejectReason `json:"reject_reason,omitempty"`
+	EventType    string                `json:"event_type,omitempty"` // For Admin/User events
+	Data         []byte                `json:"data,omitempty"`       // For User events
+	Timestamp    int64                 `json:"timestamp"`
+}
+
+var bookLogPool = sync.Pool{
+	New: func() any {
+		return &OrderBookLog{}
+	},
+}
+
+func acquireBookLog() *OrderBookLog {
+	return bookLogPool.Get().(*OrderBookLog) //nolint:revive,forcetypeassert
+}
+
+func releaseBookLog(log *OrderBookLog) {
+	*log = OrderBookLog{}
+	bookLogPool.Put(log)
+}
+
+// Publisher is the interface for receiving order book logs.
 type Publisher interface {
-	// Publish publishes order book logs. The slice comes from a pooled LogBatch.
 	Publish(logs []*OrderBookLog)
 }
 
-// MemoryPublishLog stores logs in memory, useful for testing.
+// MemoryPublishLog is an in-memory publisher for testing and simple use cases.
 type MemoryPublishLog struct {
-	mu     sync.RWMutex
-	Trades []*OrderBookLog
+	mu   sync.RWMutex
+	logs []*OrderBookLog
 }
 
-// NewMemoryPublishLog creates a new MemoryPublishLog.
+// NewMemoryPublishLog creates a new MemoryPublishLog instance.
 func NewMemoryPublishLog() *MemoryPublishLog {
 	return &MemoryPublishLog{
-		Trades: make([]*OrderBookLog, 0),
+		logs: make([]*OrderBookLog, 0),
 	}
 }
 
-// Publish appends logs to the in-memory slice.
-func (m *MemoryPublishLog) Publish(trades []*OrderBookLog) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, trade := range trades {
-		cpy := new(OrderBookLog)
-		*cpy = *trade
-		m.Trades = append(m.Trades, cpy)
+// Publish adds the logs to the in-memory buffer.
+func (p *MemoryPublishLog) Publish(logs []*OrderBookLog) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, log := range logs {
+		// We take a copy because logs are pooled
+		copyLog := *log
+		p.logs = append(p.logs, &copyLog)
 	}
 }
 
-// Count returns the number of logs stored.
-func (m *MemoryPublishLog) Count() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return len(m.Trades)
+// Logs returns all captured logs.
+func (p *MemoryPublishLog) Logs() []*OrderBookLog {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	res := make([]*OrderBookLog, len(p.logs))
+	copy(res, p.logs)
+	return res
 }
 
-// Get returns the log at the specified index.
-func (m *MemoryPublishLog) Get(index int) *OrderBookLog {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	return m.Trades[index]
+// Count returns the number of captured logs.
+func (p *MemoryPublishLog) Count() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return len(p.logs)
 }
 
-// Logs returns a copy of all logs stored.
-func (m *MemoryPublishLog) Logs() []*OrderBookLog {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	logs := make([]*OrderBookLog, len(m.Trades))
-	copy(logs, m.Trades)
-	return logs
+// Get returns a log at the specific index.
+func (p *MemoryPublishLog) Get(index int) *OrderBookLog {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.logs[index]
 }
 
-// DiscardPublishLog discards all logs, useful for benchmarking.
+// DiscardPublishLog is a publisher that ignores all logs.
 type DiscardPublishLog struct{}
 
-// NewDiscardPublishLog creates a new DiscardPublishLog.
+// NewDiscardPublishLog creates a new DiscardPublishLog instance.
 func NewDiscardPublishLog() *DiscardPublishLog {
 	return &DiscardPublishLog{}
 }
 
 // Publish does nothing.
 func (p *DiscardPublishLog) Publish(_ []*OrderBookLog) {
+	// No-op
 }
 
-// OrderBookLog represents an event in the order book.
-// SequenceID is a globally increasing ID for every event, used for ordering,
-// deduplication, and rebuild synchronization in downstream systems.
-// Use LogType to determine if the event affects order book state:
-// - Open, Match, Cancel, Amend, Admin: affect order book state or lifecycle metadata
-// - Reject: does not affect order book state.
-type OrderBookLog struct {
-	SeqID        uint64                `json:"seq_id"`
-	CommandID    string                `json:"command_id,omitempty"`
-	EngineID     string                `json:"engine_id,omitempty"`
-	TradeID      uint64                `json:"trade_id,omitempty"` // Sequential trade ID, only set for Match events
-	Type         protocol.LogType      `json:"type"`               // Event type: open, match, cancel, amend, reject
-	MarketID     string                `json:"market_id"`
-	Side         Side                  `json:"side"`
-	Price        udecimal.Decimal      `json:"price"`
-	Size         udecimal.Decimal      `json:"size"`
-	Amount       udecimal.Decimal      `json:"amount,omitzero"` // Price * Size, only set for Match events
-	OldPrice     udecimal.Decimal      `json:"old_price,omitzero"`
-	OldSize      udecimal.Decimal      `json:"old_size,omitzero"`
-	OrderID      string                `json:"order_id"`
-	UserID       uint64                `json:"user_id"`
-	OrderType    OrderType             `json:"order_type,omitempty"` // Order type: limit, market, ioc, fok
-	MakerOrderID string                `json:"maker_order_id,omitempty"`
-	MakerUserID  uint64                `json:"maker_user_id,omitempty"`
-	RejectReason protocol.RejectReason `json:"reject_reason,omitempty"` // Reason for rejection, only set for Reject events
-	EventType    string                `json:"event_type,omitempty"`    // User defined event type
-	Data         []byte                `json:"data,omitempty"`          // Arbitrary data for user events
-	Timestamp    int64                 `json:"timestamp"`               // Command timestamp for determinism
-}
-
-var bookLogPool = sync.Pool{
-	New: func() any {
-		return new(OrderBookLog)
-	},
-}
-
-func acquireBookLog() *OrderBookLog {
-	val := bookLogPool.Get()
-	log, ok := val.(*OrderBookLog)
-	if !ok {
-		return new(OrderBookLog)
-	}
-	return log
-}
-
-func releaseBookLog(log *OrderBookLog) {
-	// Reset structure to zero values.
-	// For decimal.Decimal, the zero value (nil internal pointer) represents 0, which is valid.
-	log.EventType = ""
-	log.Data = nil
-	*log = OrderBookLog{}
-	bookLogPool.Put(log)
-}
-
-const defaultLogSliceCap = 8
-
-// LogBatch pools a slice of OrderBookLog pointers to reduce allocations.
-type LogBatch struct {
-	Logs []*OrderBookLog
-}
-
-// Release resets the batch and returns it to the pool.
-func (b *LogBatch) Release() {
-	b.Logs = b.Logs[:0]
-	logBatchPool.Put(b)
-}
-
-// logBatchPool pools the *LogBatch pointers.
-var logBatchPool = sync.Pool{
-	New: func() any {
-		return &LogBatch{
-			Logs: make([]*OrderBookLog, 0, defaultLogSliceCap),
-		}
-	},
-}
+// --- Log Creation Helpers ---
 
 // acquireLogBatch gets a LogBatch from the pool.
 func acquireLogBatch() *LogBatch {
-	return logBatchPool.Get().(*LogBatch) //nolint
+	return logBatchPool.Get().(*LogBatch) //nolint:revive,forcetypeassert
 }
 
 // NewOpenLog creates a new OrderBookLog for an open order event.
-func NewOpenLog( //nolint:revive // argument-limit: many parameters needed for log creation
+//
+//nolint:revive // argument-limit
+func NewOpenLog(
 	seqID uint64,
 	commandID, engineID, marketID string,
 	orderID string,
@@ -192,8 +170,8 @@ func NewOpenLog( //nolint:revive // argument-limit: many parameters needed for l
 
 // NewMatchLog creates a new OrderBookLog for a trade match event.
 //
-
-func NewMatchLog( //nolint:revive
+//nolint:revive // argument-limit
+func NewMatchLog(
 	seqID uint64,
 	commandID, engineID string,
 	tradeID uint64,
@@ -230,8 +208,8 @@ func NewMatchLog( //nolint:revive
 
 // NewCancelLog creates a new OrderBookLog for an order cancellation event.
 //
-
-func NewCancelLog( //nolint:revive
+//nolint:revive // argument-limit
+func NewCancelLog(
 	seqID uint64,
 	commandID, engineID, marketID string,
 	orderID string,
@@ -259,8 +237,8 @@ func NewCancelLog( //nolint:revive
 
 // NewAmendLog creates a new OrderBookLog for an order amendment event.
 //
-
-func NewAmendLog( //nolint:revive
+//nolint:revive // argument-limit
+func NewAmendLog(
 	seqID uint64,
 	commandID, engineID, marketID string,
 	orderID string,
@@ -292,8 +270,8 @@ func NewAmendLog( //nolint:revive
 
 // NewRejectLog creates a new OrderBookLog for an order rejection event.
 //
-
-func NewRejectLog( //nolint:revive
+//nolint:revive // argument-limit
+func NewRejectLog(
 	seqID uint64,
 	commandID, engineID, marketID string,
 	orderID string,
@@ -316,8 +294,8 @@ func NewRejectLog( //nolint:revive
 
 // NewUserEventLog creates a new OrderBookLog for a generic user event.
 //
-
-func NewUserEventLog( //nolint:revive
+//nolint:revive // argument-limit
+func NewUserEventLog(
 	seqID uint64,
 	commandID, engineID string,
 	userID uint64,

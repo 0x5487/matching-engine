@@ -62,7 +62,7 @@ func TestMatchingEngine_ContextAwareSubmission(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 
-		_, err := engine.CreateMarket(ctx, &protocol.CreateMarketParams{
+		_, err := submitCreateMarket(ctx, engine, &protocol.CreateMarketParams{
 			CommandID:  "cmd-1",
 			UserID:     1,
 			MarketID:   "BTC-USD",

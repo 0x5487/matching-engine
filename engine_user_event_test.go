@@ -17,7 +17,7 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 	marketID := "EVENT-TEST"
 	ctx := context.Background()
 
-	future, err := engine.CreateMarket(ctx, &protocol.CreateMarketParams{
+	future, err := submitCreateMarket(ctx, engine, &protocol.CreateMarketParams{
 		CommandID:  "event-market-create",
 		UserID:     1,
 		MarketID:   marketID,
@@ -32,7 +32,7 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 	require.NoError(t, err)
 
 	// 1. Place Order
-	err = engine.PlaceOrder(ctx, &protocol.PlaceOrderParams{
+	err = submitPlaceOrder(ctx, engine, &protocol.PlaceOrderParams{
 		CommandID: "event-order-1",
 		MarketID:  marketID,
 		OrderID:   "order-1",
@@ -47,7 +47,7 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 
 	// 2. Send User Event (e.g. EndOfBlock)
 	eventData := []byte("block-hash-0x123456")
-	err = engine.SendUserEvent(ctx, &protocol.UserEventParams{
+	err = submitUserEvent(ctx, engine, &protocol.UserEventParams{
 		CommandID: "event-user-1",
 		UserID:    999,
 		EventType: "EndOfBlock",
@@ -58,7 +58,7 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 	require.NoError(t, err)
 
 	// 3. Place Another Order
-	err = engine.PlaceOrder(ctx, &protocol.PlaceOrderParams{
+	err = submitPlaceOrder(ctx, engine, &protocol.PlaceOrderParams{
 		CommandID: "event-order-2",
 		MarketID:  marketID,
 		OrderID:   "order-2",
@@ -145,7 +145,7 @@ func TestUserEvent_RequiresPositiveTimestamp(t *testing.T) {
 
 	go engine.Run()
 
-	err := engine.SendUserEvent(ctx, &protocol.UserEventParams{
+	err := submitUserEvent(ctx, engine, &protocol.UserEventParams{
 		CommandID: "event-user-bad-ts",
 		UserID:    999,
 		EventType: "EndOfBlock",
@@ -170,7 +170,7 @@ func TestUserEvent_RequiresPositiveTimestamp(t *testing.T) {
 
 func TestUserEvent_RequiresCommandID(t *testing.T) {
 	engine := NewMatchingEngine("event-test-engine", NewMemoryPublishLog())
-	err := engine.SendUserEvent(context.Background(), &protocol.UserEventParams{
+	err := submitUserEvent(context.Background(), engine, &protocol.UserEventParams{
 		CommandID: "",
 		UserID:    999,
 		EventType: "EndOfBlock",

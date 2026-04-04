@@ -23,7 +23,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 
 	ctx := context.Background()
 	marketID := marketBTC
-	future, _ := engine.CreateMarket(ctx, &protocol.CreateMarketParams{
+	future, _ := submitCreateMarket(ctx, engine, &protocol.CreateMarketParams{
 		CommandID:  "bench-market-create-1",
 		UserID:     1,
 		MarketID:   marketID,
@@ -146,7 +146,7 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 
 	ctx := context.Background()
 	marketID := marketBTC
-	future, _ := engine.CreateMarket(ctx, &protocol.CreateMarketParams{
+	future, _ := submitCreateMarket(ctx, engine, &protocol.CreateMarketParams{
 		CommandID:  "bench-market-create-2",
 		UserID:     1,
 		MarketID:   marketID,
@@ -257,7 +257,7 @@ func BenchmarkMatching(b *testing.B) {
 	engine := NewMatchingEngine("bench-engine", publishTrader)
 	ctx := context.Background()
 	marketID := marketBTC
-	future, _ := engine.CreateMarket(ctx, &protocol.CreateMarketParams{
+	future, _ := submitCreateMarket(ctx, engine, &protocol.CreateMarketParams{
 		CommandID:  "bench-market-create-3",
 		UserID:     1,
 		MarketID:   marketID,
