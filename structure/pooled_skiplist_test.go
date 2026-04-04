@@ -348,7 +348,12 @@ func FuzzPooledSkiplist(f *testing.F) {
 		slice := sl.InOrderSlice()
 		for i := 1; i < len(slice); i++ {
 			if !slice[i-1].LessThan(slice[i]) {
-				t.Errorf("Not sorted at index %d: %s >= %s", i, slice[i-1].String(), slice[i].String())
+				t.Errorf(
+					"Not sorted at index %d: %s >= %s",
+					i,
+					slice[i-1].String(),
+					slice[i].String(),
+				)
 			}
 		}
 

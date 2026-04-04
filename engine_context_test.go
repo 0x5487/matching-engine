@@ -40,6 +40,9 @@ func TestMatchingEngine_ContextAwareSubmission(t *testing.T) {
 		// For TDD, I'll use the new signature here.
 		err := engine.SubmitAsync(ctx, &protocol.Command{
 			CommandID: "blocking-command",
+			UserID:    0,
+			MarketID:  "",
+			Timestamp: 0,
 		})
 
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
@@ -54,6 +57,9 @@ func TestMatchingEngine_ContextAwareSubmission(t *testing.T) {
 		for i := range defaultRingBufferSize {
 			err := engine.SubmitAsync(context.Background(), &protocol.Command{
 				CommandID: fmt.Sprintf("fill-%d", i),
+				UserID:    0,
+				MarketID:  "",
+				Timestamp: 0,
 			})
 			require.NoError(t, err)
 		}
@@ -62,13 +68,17 @@ func TestMatchingEngine_ContextAwareSubmission(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 
-		_, err := submitCreateMarket(ctx, engine, &protocol.CreateMarketParams{
-			CommandID:  "cmd-1",
-			UserID:     1,
-			MarketID:   "BTC-USD",
-			MinLotSize: "0.01",
-			Timestamp:  time.Now().UnixNano(),
-		})
+		_, err := submitCreateMarket(
+			ctx,
+			engine,
+			1,
+			"BTC-USD",
+			"cmd-1",
+			time.Now().UnixNano(),
+			&protocol.CreateMarketParams{
+				MinLotSize: "0.01",
+			},
+		)
 
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	})

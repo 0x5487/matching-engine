@@ -69,7 +69,11 @@ func NewPooledSkiplist(capacity int32, seed int64) *PooledSkiplist {
 }
 
 // NewPooledSkiplistWithOptions creates a new pooled skiplist with custom options.
-func NewPooledSkiplistWithOptions(capacity int32, seed int64, opts SkiplistOptions) *PooledSkiplist {
+func NewPooledSkiplistWithOptions(
+	capacity int32,
+	seed int64,
+	opts SkiplistOptions,
+) *PooledSkiplist {
 	// +1 for head sentinel
 	totalCap := capacity + 1
 	sl := &PooledSkiplist{

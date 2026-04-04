@@ -12,6 +12,7 @@ func TestCommand_MarshalUnmarshalBinary(t *testing.T) {
 		Version:   1,
 		Type:      CmdPlaceOrder,
 		SeqID:     123,
+		UserID:    789,
 		MarketID:  "BTC-USDT",
 		CommandID: "cmd-456",
 		Timestamp: 1678901234,
@@ -28,6 +29,7 @@ func TestCommand_MarshalUnmarshalBinary(t *testing.T) {
 	assert.Equal(t, cmd.Version, decoded.Version)
 	assert.Equal(t, cmd.Type, decoded.Type)
 	assert.Equal(t, cmd.SeqID, decoded.SeqID)
+	assert.Equal(t, cmd.UserID, decoded.UserID)
 	assert.Equal(t, cmd.MarketID, decoded.MarketID)
 	assert.Equal(t, cmd.CommandID, decoded.CommandID)
 	assert.Equal(t, cmd.Timestamp, decoded.Timestamp)
@@ -43,8 +45,6 @@ func TestPlaceOrderParams_MarshalUnmarshalBinary(t *testing.T) {
 		Size:        "10",
 		VisibleSize: "5",
 		QuoteSize:   "0",
-		UserID:      123,
-		Timestamp:   1678901234,
 	}
 
 	data, err := params.MarshalBinary()
@@ -61,7 +61,6 @@ func TestPlaceOrderParams_MarshalUnmarshalBinary(t *testing.T) {
 	assert.Equal(t, params.Size, decoded.Size)
 	assert.Equal(t, params.VisibleSize, decoded.VisibleSize)
 	assert.Equal(t, params.QuoteSize, decoded.QuoteSize)
-	assert.Equal(t, params.UserID, decoded.UserID)
 }
 
 // TestPlaceOrderParams_UnmarshalBinaryRejectsTruncatedPayload verifies malformed binary input is rejected.
@@ -74,8 +73,6 @@ func TestPlaceOrderParams_UnmarshalBinaryRejectsTruncatedPayload(t *testing.T) {
 		Size:        "1",
 		VisibleSize: "0.5",
 		QuoteSize:   "0",
-		UserID:      1,
-		Timestamp:   42,
 	}
 
 	data, err := cmd.MarshalBinary()
@@ -88,9 +85,7 @@ func TestPlaceOrderParams_UnmarshalBinaryRejectsTruncatedPayload(t *testing.T) {
 
 func TestCancelOrderParams_MarshalUnmarshalBinary(t *testing.T) {
 	params := &CancelOrderParams{
-		OrderID:   "order-123",
-		UserID:    456,
-		Timestamp: 1678901234,
+		OrderID: "order-123",
 	}
 
 	data, err := params.MarshalBinary()
@@ -101,16 +96,13 @@ func TestCancelOrderParams_MarshalUnmarshalBinary(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, params.OrderID, decoded.OrderID)
-	assert.Equal(t, params.UserID, decoded.UserID)
 }
 
 func TestAmendOrderParams_MarshalUnmarshalBinary(t *testing.T) {
 	params := &AmendOrderParams{
-		OrderID:   "order-123",
-		UserID:    456,
-		Timestamp: 1678901234,
-		NewPrice:  "100.5",
-		NewSize:   "10",
+		OrderID:  "order-123",
+		NewPrice: "100.5",
+		NewSize:  "10",
 	}
 
 	data, err := params.MarshalBinary()
@@ -121,15 +113,12 @@ func TestAmendOrderParams_MarshalUnmarshalBinary(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, params.OrderID, decoded.OrderID)
-	assert.Equal(t, params.UserID, decoded.UserID)
 	assert.Equal(t, params.NewPrice, decoded.NewPrice)
 	assert.Equal(t, params.NewSize, decoded.NewSize)
 }
 
 func TestCreateMarketParams_MarshalUnmarshalBinary(t *testing.T) {
 	params := &CreateMarketParams{
-		UserID:     1,
-		Timestamp:  1678901234,
 		MinLotSize: "0.01",
 	}
 
@@ -140,16 +129,12 @@ func TestCreateMarketParams_MarshalUnmarshalBinary(t *testing.T) {
 	err = decoded.UnmarshalBinary(data)
 	require.NoError(t, err)
 
-	assert.Equal(t, params.UserID, decoded.UserID)
 	assert.Equal(t, params.MinLotSize, decoded.MinLotSize)
 }
 
 func TestSuspendMarketParams_MarshalUnmarshalBinary(t *testing.T) {
 	params := &SuspendMarketParams{
-		UserID:    1,
-		Timestamp: 1678901234,
-		MarketID:  "BTC-USDT",
-		Reason:    "maintenance",
+		Reason: "maintenance",
 	}
 
 	data, err := params.MarshalBinary()
@@ -159,16 +144,11 @@ func TestSuspendMarketParams_MarshalUnmarshalBinary(t *testing.T) {
 	err = decoded.UnmarshalBinary(data)
 	require.NoError(t, err)
 
-	assert.Equal(t, params.UserID, decoded.UserID)
 	assert.Equal(t, params.Reason, decoded.Reason)
 }
 
 func TestResumeMarketParams_MarshalUnmarshalBinary(t *testing.T) {
-	params := &ResumeMarketParams{
-		UserID:    1,
-		Timestamp: 1678901234,
-		MarketID:  "BTC-USDT",
-	}
+	params := &ResumeMarketParams{}
 
 	data, err := params.MarshalBinary()
 	require.NoError(t, err)
@@ -176,15 +156,10 @@ func TestResumeMarketParams_MarshalUnmarshalBinary(t *testing.T) {
 	var decoded ResumeMarketParams
 	err = decoded.UnmarshalBinary(data)
 	require.NoError(t, err)
-
-	assert.Equal(t, params.UserID, decoded.UserID)
 }
 
 func TestUpdateConfigParams_MarshalUnmarshalBinary(t *testing.T) {
 	params := &UpdateConfigParams{
-		UserID:     1,
-		Timestamp:  1678901234,
-		MarketID:   "BTC-USDT",
 		MinLotSize: "0.001",
 	}
 
@@ -195,14 +170,11 @@ func TestUpdateConfigParams_MarshalUnmarshalBinary(t *testing.T) {
 	err = decoded.UnmarshalBinary(data)
 	require.NoError(t, err)
 
-	assert.Equal(t, params.UserID, decoded.UserID)
 	assert.Equal(t, params.MinLotSize, decoded.MinLotSize)
 }
 
 func TestUserEventParams_MarshalUnmarshalBinary(t *testing.T) {
 	params := &UserEventParams{
-		UserID:    1,
-		Timestamp: 1678901234,
 		EventType: "Audit",
 		Key:       "key-1",
 		Data:      []byte("some-data"),
@@ -215,8 +187,47 @@ func TestUserEventParams_MarshalUnmarshalBinary(t *testing.T) {
 	err = decoded.UnmarshalBinary(data)
 	require.NoError(t, err)
 
-	assert.Equal(t, params.UserID, decoded.UserID)
 	assert.Equal(t, params.EventType, decoded.EventType)
 	assert.Equal(t, params.Key, decoded.Key)
 	assert.Equal(t, params.Data, decoded.Data)
+}
+
+func TestCommand_SetAndUnmarshalPayload(t *testing.T) {
+	cmd := &Command{
+		Type:      CmdPlaceOrder,
+		UserID:    123,
+		MarketID:  "BTC-USDT",
+		CommandID: "cmd-456",
+		Timestamp: 1678901234,
+	}
+
+	params := &PlaceOrderParams{
+		OrderID:   "order-1",
+		Side:      SideBuy,
+		OrderType: OrderTypeLimit,
+		Price:     "100.5",
+		Size:      "10",
+	}
+
+	err := cmd.SetPayload(params)
+	require.NoError(t, err)
+
+	// Marshal and unmarshal the whole command
+	data, err := cmd.MarshalBinary()
+	require.NoError(t, err)
+
+	var decodedCmd Command
+	err = decodedCmd.UnmarshalBinary(data)
+	require.NoError(t, err)
+
+	assert.Equal(t, cmd.UserID, decodedCmd.UserID)
+	assert.Equal(t, cmd.CommandID, decodedCmd.CommandID)
+
+	// Unmarshal the payload manually as in the engine
+	var p PlaceOrderParams
+	err = p.UnmarshalBinary(decodedCmd.Payload)
+	require.NoError(t, err)
+
+	assert.Equal(t, params.OrderID, p.OrderID)
+	assert.Equal(t, params.Price, p.Price)
 }

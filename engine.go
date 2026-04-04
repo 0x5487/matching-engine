@@ -67,7 +67,10 @@ func (h *engineEventHandler) OnEvent(ev *InputEvent) {
 }
 
 // Submit sends a command to the engine and returns a Future for the result.
-func (engine *MatchingEngine) Submit(ctx context.Context, cmd *protocol.Command) (*Future[any], error) {
+func (engine *MatchingEngine) Submit(
+	ctx context.Context,
+	cmd *protocol.Command,
+) (*Future[any], error) {
 	if ctx == nil || cmd == nil {
 		return nil, ErrInvalidParam
 	}
@@ -179,7 +182,10 @@ func requireCommandID(commandID string) error {
 // This is the fastest way to insert multiple commands (e.g., placing/canceling multiple orders)
 // into the queue atomically. It guarantees "all or nothing" semantics: if any command
 // fails validation, an error is returned immediately and NOTHING is inserted into the queue.
-func (engine *MatchingEngine) SubmitAsyncBatch(ctx context.Context, cmds []*protocol.Command) error {
+func (engine *MatchingEngine) SubmitAsyncBatch(
+	ctx context.Context,
+	cmds []*protocol.Command,
+) error {
 	if len(cmds) == 0 {
 		return nil
 	}
@@ -302,7 +308,10 @@ type snapshotResult struct {
 // TakeSnapshot captures a consistent snapshot of all order books and writes them to the specified directory.
 // It generates two files: `snapshot.bin` (binary data) and `metadata.json` (metadata).
 // Returns the metadata object or an error.
-func (engine *MatchingEngine) TakeSnapshot(ctx context.Context, outputDir string) (*SnapshotMetadata, error) {
+func (engine *MatchingEngine) TakeSnapshot(
+	ctx context.Context,
+	outputDir string,
+) (*SnapshotMetadata, error) {
 	if engine.isShutdown.Load() {
 		return nil, ErrShutdown
 	}
@@ -621,7 +630,14 @@ func (engine *MatchingEngine) processCommand(ev *InputEvent) {
 			engine.respondQueryError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
 			return
 		}
-		engine.handleCreateMarket(cmd.CommandID, cmd.Timestamp, cmd.MarketID, params, ev.Resp)
+		engine.handleCreateMarket(
+			cmd.CommandID,
+			cmd.Timestamp,
+			cmd.MarketID,
+			cmd.UserID,
+			params,
+			ev.Resp,
+		)
 		return
 	}
 
@@ -697,11 +713,12 @@ func (engine *MatchingEngine) handleCreateMarket(
 	cmdID string,
 	ts int64,
 	marketID string,
+	userID uint64,
 	params *protocol.CreateMarketParams,
 	resp chan<- any,
 ) {
 	if ts <= 0 {
-		engine.rejectLog(cmdID, marketID, params.UserID, protocol.RejectReasonInvalidPayload, ts)
+		engine.rejectLog(cmdID, marketID, userID, protocol.RejectReasonInvalidPayload, ts)
 		if resp != nil {
 			resp <- errors.New(string(protocol.RejectReasonInvalidPayload))
 		}
@@ -709,7 +726,7 @@ func (engine *MatchingEngine) handleCreateMarket(
 	}
 
 	if _, exists := engine.orderbooks[marketID]; exists {
-		engine.rejectLog(cmdID, marketID, params.UserID, protocol.RejectReasonMarketAlreadyExists, ts)
+		engine.rejectLog(cmdID, marketID, userID, protocol.RejectReasonMarketAlreadyExists, ts)
 		if resp != nil {
 			resp <- errors.New(string(protocol.RejectReasonMarketAlreadyExists))
 		}
@@ -721,7 +738,7 @@ func (engine *MatchingEngine) handleCreateMarket(
 	if params.MinLotSize != "" {
 		size, err := udecimal.Parse(params.MinLotSize)
 		if err != nil {
-			engine.rejectLog(cmdID, marketID, params.UserID, protocol.RejectReasonInvalidPayload, ts)
+			engine.rejectLog(cmdID, marketID, userID, protocol.RejectReasonInvalidPayload, ts)
 			if resp != nil {
 				resp <- err
 			}
@@ -738,7 +755,7 @@ func (engine *MatchingEngine) handleCreateMarket(
 		cmdID,
 		engine.engineID,
 		marketID,
-		params.UserID,
+		userID,
 		"market_created",
 		ts,
 	)
@@ -773,7 +790,7 @@ func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
 		cmd.SeqID,
 		cmd.CommandID,
 		engine.engineID,
-		payload.UserID,
+		cmd.UserID,
 		payload.EventType,
 		payload.Key,
 		payload.Data,
@@ -788,7 +805,12 @@ func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
 	batch.Release()
 }
 
-func (engine *MatchingEngine) rejectLog(cmdID, marketID string, userID uint64, reason protocol.RejectReason, ts int64) {
+func (engine *MatchingEngine) rejectLog(
+	cmdID, marketID string,
+	userID uint64,
+	reason protocol.RejectReason,
+	ts int64,
+) {
 	log := NewRejectLog(
 		0,
 		cmdID,
@@ -825,7 +847,7 @@ func (engine *MatchingEngine) rejectCommand(cmd *protocol.Command, reason protoc
 		engine.engineID,
 		cmd.MarketID,
 		engine.commandOrderID(cmd),
-		engine.commandUserID(cmd),
+		cmd.UserID,
 		reason,
 		cmd.Timestamp,
 	)
@@ -863,55 +885,6 @@ func (engine *MatchingEngine) commandOrderID(cmd *protocol.Command) string {
 		return "unknown"
 	}
 	return "unknown"
-}
-
-// commandUserID extracts the actor identifier used for reject logs.
-func (engine *MatchingEngine) commandUserID(cmd *protocol.Command) uint64 {
-	switch cmd.Type {
-	case protocol.CmdPlaceOrder:
-		payload := &protocol.PlaceOrderParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.UserID
-		}
-	case protocol.CmdCancelOrder:
-		payload := &protocol.CancelOrderParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.UserID
-		}
-	case protocol.CmdAmendOrder:
-		payload := &protocol.AmendOrderParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.UserID
-		}
-	case protocol.CmdUserEvent:
-		payload := &protocol.UserEventParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.UserID
-		}
-	case protocol.CmdCreateMarket:
-		payload := &protocol.CreateMarketParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.UserID
-		}
-	case protocol.CmdSuspendMarket:
-		payload := &protocol.SuspendMarketParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.UserID
-		}
-	case protocol.CmdResumeMarket:
-		payload := &protocol.ResumeMarketParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.UserID
-		}
-	case protocol.CmdUpdateConfig:
-		payload := &protocol.UpdateConfigParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.UserID
-		}
-	default:
-		return 0
-	}
-	return 0
 }
 
 func (engine *MatchingEngine) acquireResponseChannel() chan any {

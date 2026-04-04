@@ -41,12 +41,16 @@ type AggregatedBook struct {
 // NewAggregatedBook creates a new AggregatedBook instance with empty ask and bid sides.
 func NewAggregatedBook() *AggregatedBook {
 	return &AggregatedBook{
-		ask: treemap.NewWithKeyCompare[udecimal.Decimal, udecimal.Decimal](func(a, b udecimal.Decimal) bool {
-			return a.LessThan(b) // Ascending: lowest price first (best ask)
-		}),
-		bid: treemap.NewWithKeyCompare[udecimal.Decimal, udecimal.Decimal](func(a, b udecimal.Decimal) bool {
-			return a.GreaterThan(b) // Descending: highest price first (best bid)
-		}),
+		ask: treemap.NewWithKeyCompare[udecimal.Decimal, udecimal.Decimal](
+			func(a, b udecimal.Decimal) bool {
+				return a.LessThan(b) // Ascending: lowest price first (best ask)
+			},
+		),
+		bid: treemap.NewWithKeyCompare[udecimal.Decimal, udecimal.Decimal](
+			func(a, b udecimal.Decimal) bool {
+				return a.GreaterThan(b) // Descending: highest price first (best bid)
+			},
+		),
 	}
 }
 

@@ -17,13 +17,17 @@ func TestManagement_UpdateConfig_MalformedPayload(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Create market first
-	future, err := submitCreateMarket(ctx, engine, &protocol.CreateMarketParams{
-		CommandID:  "config-market-create",
-		UserID:     1,
-		MarketID:   marketID,
-		MinLotSize: "1.0",
-		Timestamp:  time.Now().UnixNano(),
-	})
+	future, err := submitCreateMarket(
+		ctx,
+		engine,
+		1,
+		marketID,
+		"config-market-create",
+		time.Now().UnixNano(),
+		&protocol.CreateMarketParams{
+			MinLotSize: "1.0",
+		},
+	)
 	require.NoError(t, err)
 
 	// Start engine event loop
@@ -57,13 +61,17 @@ func TestManagement_SuspendMarket_MalformedPayload(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Create market first
-	future, err := submitCreateMarket(ctx, engine, &protocol.CreateMarketParams{
-		CommandID:  "config-market-create",
-		UserID:     1,
-		MarketID:   marketID,
-		MinLotSize: "1.0",
-		Timestamp:  time.Now().UnixNano(),
-	})
+	future, err := submitCreateMarket(
+		ctx,
+		engine,
+		1,
+		marketID,
+		"config-market-create",
+		time.Now().UnixNano(),
+		&protocol.CreateMarketParams{
+			MinLotSize: "1.0",
+		},
+	)
 	require.NoError(t, err)
 
 	// Start engine event loop
@@ -96,13 +104,17 @@ func TestManagement_ResumeMarket_MalformedPayload(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Create market first
-	future, err := submitCreateMarket(ctx, engine, &protocol.CreateMarketParams{
-		CommandID:  "config-market-create",
-		UserID:     1,
-		MarketID:   marketID,
-		MinLotSize: "1.0",
-		Timestamp:  time.Now().UnixNano(),
-	})
+	future, err := submitCreateMarket(
+		ctx,
+		engine,
+		1,
+		marketID,
+		"config-market-create",
+		time.Now().UnixNano(),
+		&protocol.CreateMarketParams{
+			MinLotSize: "1.0",
+		},
+	)
 	require.NoError(t, err)
 
 	// Start engine event loop

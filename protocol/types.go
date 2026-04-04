@@ -50,6 +50,18 @@ const (
 	OrderTypeCancel OrderType = "cancel" // The order has been canceled
 )
 
+// OrderBookState represents the operational status of a market.
+type OrderBookState uint8
+
+const (
+	// OrderBookStateRunning indicates the order book is running.
+	OrderBookStateRunning OrderBookState = 1
+	// OrderBookStateSuspended indicates the order book is suspended.
+	OrderBookStateSuspended OrderBookState = 2
+	// OrderBookStateHalted indicates the order book is halted.
+	OrderBookStateHalted OrderBookState = 3
+)
+
 const (
 	// OrderTypeUnknownUint8 represents an unknown order type in binary format.
 	OrderTypeUnknownUint8 uint8 = 0

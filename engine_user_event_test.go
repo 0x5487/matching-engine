@@ -17,13 +17,17 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 	marketID := "EVENT-TEST"
 	ctx := context.Background()
 
-	future, err := submitCreateMarket(ctx, engine, &protocol.CreateMarketParams{
-		CommandID:  "event-market-create",
-		UserID:     1,
-		MarketID:   marketID,
-		MinLotSize: "1.0",
-		Timestamp:  time.Now().UnixNano(),
-	})
+	future, err := submitCreateMarket(
+		ctx,
+		engine,
+		1,
+		marketID,
+		"event-market-create",
+		time.Now().UnixNano(),
+		&protocol.CreateMarketParams{
+			MinLotSize: "1.0",
+		},
+	)
 	require.NoError(t, err)
 
 	go engine.Run()
@@ -32,42 +36,39 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 	require.NoError(t, err)
 
 	// 1. Place Order
-	err = submitPlaceOrder(ctx, engine, &protocol.PlaceOrderParams{
-		CommandID: "event-order-1",
-		MarketID:  marketID,
+	err = submitPlaceOrder(ctx, engine, 1, marketID, "event-order-1", 1, &protocol.PlaceOrderParams{
 		OrderID:   "order-1",
 		Side:      Buy,
 		OrderType: Limit,
 		Price:     "100",
 		Size:      "1",
-		UserID:    1,
-		Timestamp: 1,
 	})
 	require.NoError(t, err)
 
 	// 2. Send User Event (e.g. EndOfBlock)
 	eventData := []byte("block-hash-0x123456")
-	err = submitUserEvent(ctx, engine, &protocol.UserEventParams{
-		CommandID: "event-user-1",
-		UserID:    999,
-		EventType: "EndOfBlock",
-		Key:       "blk-1",
-		Data:      eventData,
-		Timestamp: 123456789,
-	})
+	err = submitUserEvent(
+		ctx,
+		engine,
+		999,
+		"",
+		"event-user-1",
+		123456789,
+		&protocol.UserEventParams{
+			EventType: "EndOfBlock",
+			Key:       "blk-1",
+			Data:      eventData,
+		},
+	)
 	require.NoError(t, err)
 
 	// 3. Place Another Order
-	err = submitPlaceOrder(ctx, engine, &protocol.PlaceOrderParams{
-		CommandID: "event-order-2",
-		MarketID:  marketID,
+	err = submitPlaceOrder(ctx, engine, 2, marketID, "event-order-2", 2, &protocol.PlaceOrderParams{
 		OrderID:   "order-2",
 		Side:      Buy,
 		OrderType: Limit,
 		Price:     "101",
 		Size:      "1",
-		UserID:    2,
-		Timestamp: 2,
 	})
 	require.NoError(t, err)
 
@@ -120,6 +121,9 @@ func TestUserEvent_InvalidPayloadEmitsReject(t *testing.T) {
 	err := engine.SubmitAsync(ctx, &protocol.Command{
 		Type:      protocol.CmdUserEvent,
 		CommandID: "bad-user-event",
+		UserID:    0,
+		MarketID:  "",
+		Timestamp: 0,
 		Payload:   []byte("{"),
 	})
 	require.NoError(t, err)
@@ -145,13 +149,10 @@ func TestUserEvent_RequiresPositiveTimestamp(t *testing.T) {
 
 	go engine.Run()
 
-	err := submitUserEvent(ctx, engine, &protocol.UserEventParams{
-		CommandID: "event-user-bad-ts",
-		UserID:    999,
+	err := submitUserEvent(ctx, engine, 999, "", "event-user-bad-ts", 0, &protocol.UserEventParams{
 		EventType: "EndOfBlock",
 		Key:       "blk-0",
 		Data:      []byte("x"),
-		Timestamp: 0,
 	})
 	require.NoError(t, err)
 
@@ -173,13 +174,10 @@ func TestUserEvent_RequiresPositiveTimestamp(t *testing.T) {
 
 func TestUserEvent_RequiresCommandID(t *testing.T) {
 	engine := NewMatchingEngine("event-test-engine", NewMemoryPublishLog())
-	err := submitUserEvent(context.Background(), engine, &protocol.UserEventParams{
-		CommandID: "",
-		UserID:    999,
+	err := submitUserEvent(context.Background(), engine, 999, "", "", 1, &protocol.UserEventParams{
 		EventType: "EndOfBlock",
 		Key:       "blk-0",
 		Data:      []byte("x"),
-		Timestamp: 1,
 	})
 	require.ErrorIs(t, err, ErrInvalidParam)
 }
