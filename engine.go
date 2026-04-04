@@ -903,7 +903,7 @@ func (engine *MatchingEngine) handleCreateMarket(ev *InputEvent) {
 		if err != nil {
 			engine.rejectCommandWithMarket(
 				cmd,
-				payload.MarketID,
+cmd.MarketID,
 				protocol.RejectReasonInvalidPayload,
 				cmd.Timestamp,
 			)
