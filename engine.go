@@ -643,7 +643,6 @@ func (engine *MatchingEngine) handleCreateMarket(
 func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
 	payload := &protocol.UserEventParams{}
 	if err := payload.UnmarshalBinary(cmd.Payload); err != nil {
-		logger.Warn("failed to unmarshal UserEvent command", "error", err)
 		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
 		return
 	}
