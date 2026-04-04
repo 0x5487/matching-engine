@@ -142,7 +142,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				protocol.RejectReasonInvalidPayload,
 				cmd.Timestamp,
 			)
-			book.respondError(ev, err)
+			book.sendResponse(ev.Resp, err)
 			return
 		}
 		book.handleSuspendMarket(cmd.CommandID, cmd.Timestamp, payload, ev.Resp)
@@ -158,7 +158,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				protocol.RejectReasonInvalidPayload,
 				cmd.Timestamp,
 			)
-			book.respondError(ev, err)
+			book.sendResponse(ev.Resp, err)
 			return
 		}
 		book.handleResumeMarket(cmd.CommandID, cmd.Timestamp, payload, ev.Resp)
@@ -174,7 +174,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				protocol.RejectReasonInvalidPayload,
 				cmd.Timestamp,
 			)
-			book.respondError(ev, err)
+			book.sendResponse(ev.Resp, err)
 			return
 		}
 		book.handleUpdateConfig(cmd.CommandID, cmd.Timestamp, payload, ev.Resp)
@@ -191,7 +191,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				protocol.RejectReasonInvalidPayload,
 				cmd.Timestamp,
 			)
-			book.respondError(ev, errors.New("failed to acquire place order params from pool"))
+			book.sendResponse(ev.Resp, errors.New("failed to acquire place order params from pool"))
 			return
 		}
 		*payload = protocol.PlaceOrderParams{} // Reset before use
@@ -205,7 +205,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				protocol.RejectReasonInvalidPayload,
 				cmd.Timestamp,
 			)
-			book.respondError(ev, err)
+			book.sendResponse(ev.Resp, err)
 			return
 		}
 		book.handlePlaceOrder(cmd.CommandID, cmd.Timestamp, payload, ev.Resp)
@@ -222,7 +222,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				protocol.RejectReasonInvalidPayload,
 				cmd.Timestamp,
 			)
-			book.respondError(ev, errors.New("failed to acquire cancel order params from pool"))
+			book.sendResponse(ev.Resp, errors.New("failed to acquire cancel order params from pool"))
 			return
 		}
 		*payload = protocol.CancelOrderParams{} // Reset before use
@@ -236,7 +236,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				protocol.RejectReasonInvalidPayload,
 				cmd.Timestamp,
 			)
-			book.respondError(ev, err)
+			book.sendResponse(ev.Resp, err)
 			return
 		}
 		book.handleCancelOrder(cmd.CommandID, cmd.Timestamp, payload, ev.Resp)
@@ -252,7 +252,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 				protocol.RejectReasonInvalidPayload,
 				cmd.Timestamp,
 			)
-			book.respondError(ev, err)
+			book.sendResponse(ev.Resp, err)
 			return
 		}
 		book.handleAmendOrder(cmd.CommandID, cmd.Timestamp, &payload, ev.Resp)
@@ -283,7 +283,7 @@ func (book *OrderBook) processQuery(ev *InputEvent) {
 		book.sendResponse(ev.Resp, snap)
 	default:
 		// Unsupported query type
-		book.respondError(ev, ErrInvalidParam)
+		book.sendResponse(ev.Resp, ErrInvalidParam)
 	}
 }
 
@@ -295,10 +295,6 @@ func (book *OrderBook) sendResponse(resp chan<- any, val any) {
 		default:
 		}
 	}
-}
-
-func (book *OrderBook) respondError(ev *InputEvent, err error) {
-	book.sendResponse(ev.Resp, err)
 }
 
 func (book *OrderBook) rejectInvalidPayload(

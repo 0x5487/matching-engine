@@ -35,9 +35,6 @@ func TestManagement_UpdateConfig_MalformedPayload(t *testing.T) {
 
 	// 2. Send malformed UpdateConfig
 	// We manually construct a command with a malformed payload
-	respChan := engine.acquireResponseChannel()
-	defer engine.releaseResponseChannel(respChan)
-
 	protoCmd := &protocol.Command{
 		Type:      protocol.CmdUpdateConfig,
 		MarketID:  marketID,
@@ -45,18 +42,12 @@ func TestManagement_UpdateConfig_MalformedPayload(t *testing.T) {
 		Payload:   []byte("this-is-not-json-or-binary"),
 	}
 
-	err = engine.enqueueCommandWithResponse(ctx, protoCmd, respChan)
+	futureCmd, err := engine.Submit(ctx, protoCmd)
 	require.NoError(t, err)
 
-	malformedFuture := &Future[bool]{
-		engine:   engine,
-		respChan: respChan,
-	}
-
 	// 3. Wait for response - should not hang and should return an error
-	res, err := malformedFuture.Wait(ctx)
+	_, err = futureCmd.Wait(ctx)
 	require.Error(t, err, "Should return error for malformed payload")
-	require.False(t, res, "Result should be false on error")
 }
 
 func TestManagement_SuspendMarket_MalformedPayload(t *testing.T) {
@@ -83,9 +74,6 @@ func TestManagement_SuspendMarket_MalformedPayload(t *testing.T) {
 	require.NoError(t, err)
 
 	// 2. Send malformed SuspendMarket
-	respChan := engine.acquireResponseChannel()
-	defer engine.releaseResponseChannel(respChan)
-
 	protoCmd := &protocol.Command{
 		Type:      protocol.CmdSuspendMarket,
 		MarketID:  marketID,
@@ -93,16 +81,11 @@ func TestManagement_SuspendMarket_MalformedPayload(t *testing.T) {
 		Payload:   []byte("this-is-not-json-or-binary"),
 	}
 
-	err = engine.enqueueCommandWithResponse(ctx, protoCmd, respChan)
+	futureCmd, err := engine.Submit(ctx, protoCmd)
 	require.NoError(t, err)
 
-	malformedFuture := &Future[bool]{
-		engine:   engine,
-		respChan: respChan,
-	}
-
 	// 3. Wait for response - should not hang
-	_, err = malformedFuture.Wait(ctx)
+	_, err = futureCmd.Wait(ctx)
 	require.Error(t, err)
 }
 
@@ -130,9 +113,6 @@ func TestManagement_ResumeMarket_MalformedPayload(t *testing.T) {
 	require.NoError(t, err)
 
 	// 2. Send malformed ResumeMarket
-	respChan := engine.acquireResponseChannel()
-	defer engine.releaseResponseChannel(respChan)
-
 	protoCmd := &protocol.Command{
 		Type:      protocol.CmdResumeMarket,
 		MarketID:  marketID,
@@ -140,15 +120,10 @@ func TestManagement_ResumeMarket_MalformedPayload(t *testing.T) {
 		Payload:   []byte("this-is-not-json-or-binary"),
 	}
 
-	err = engine.enqueueCommandWithResponse(ctx, protoCmd, respChan)
+	futureCmd, err := engine.Submit(ctx, protoCmd)
 	require.NoError(t, err)
 
-	malformedFuture := &Future[bool]{
-		engine:   engine,
-		respChan: respChan,
-	}
-
 	// 3. Wait for response - should not hang
-	_, err = malformedFuture.Wait(ctx)
+	_, err = futureCmd.Wait(ctx)
 	require.Error(t, err)
 }

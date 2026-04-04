@@ -79,9 +79,30 @@ func (engine *MatchingEngine) Submit(ctx context.Context, cmd *protocol.Command)
 	}
 
 	respChan := engine.acquireResponseChannel()
-	if err := engine.enqueueCommandWithResponse(ctx, cmd, respChan); err != nil {
-		engine.releaseResponseChannel(respChan)
-		return nil, err
+
+	strategy := YieldingIdleStrategy{}
+	for {
+		seq, ev := engine.ring.TryClaim()
+		if seq != -1 {
+			ev.Cmd = cmd
+			ev.Query = nil
+			ev.Resp = respChan
+
+			engine.ring.Commit(seq)
+			break
+		}
+
+		if engine.isShutdown.Load() {
+			engine.releaseResponseChannel(respChan)
+			return nil, ErrShutdown
+		}
+
+		if err := ctx.Err(); err != nil {
+			engine.releaseResponseChannel(respChan)
+			return nil, err
+		}
+
+		strategy.Idle()
 	}
 
 	return &Future[any]{
@@ -233,9 +254,29 @@ func (engine *MatchingEngine) Query(
 
 	respChan := engine.acquireResponseChannel()
 
-	if err := engine.enqueueQueryWithResponse(ctx, req, respChan); err != nil {
-		engine.releaseResponseChannel(respChan)
-		return nil, err
+	strategy := YieldingIdleStrategy{}
+	for {
+		seq, ev := engine.ring.TryClaim()
+		if seq != -1 {
+			ev.Cmd = nil
+			ev.Query = req
+			ev.Resp = respChan
+
+			engine.ring.Commit(seq)
+			break
+		}
+
+		if engine.isShutdown.Load() {
+			engine.releaseResponseChannel(respChan)
+			return nil, ErrShutdown
+		}
+
+		if err := ctx.Err(); err != nil {
+			engine.releaseResponseChannel(respChan)
+			return nil, err
+		}
+
+		strategy.Idle()
 	}
 
 	return &Future[any]{
@@ -276,8 +317,29 @@ func (engine *MatchingEngine) TakeSnapshot(ctx context.Context, outputDir string
 		}
 	}()
 
-	if err := engine.enqueueQueryWithResponse(ctx, &engineSnapshotQuery{}, respChan); err != nil {
-		return nil, err
+	strategy := YieldingIdleStrategy{}
+	for {
+		seq, ev := engine.ring.TryClaim()
+		if seq != -1 {
+			ev.Cmd = nil
+			ev.Query = &engineSnapshotQuery{}
+			ev.Resp = respChan
+
+			engine.ring.Commit(seq)
+			break
+		}
+
+		if engine.isShutdown.Load() {
+			engine.releaseResponseChannel(respChan)
+			return nil, ErrShutdown
+		}
+
+		if err := ctx.Err(); err != nil {
+			engine.releaseResponseChannel(respChan)
+			return nil, err
+		}
+
+		strategy.Idle()
 	}
 
 	var results []snapshotResult
@@ -762,7 +824,21 @@ func (engine *MatchingEngine) respondQueryError(ev *InputEvent, err error) {
 
 // rejectCommand emits a standardized reject log for engine-level command failures.
 func (engine *MatchingEngine) rejectCommand(cmd *protocol.Command, reason protocol.RejectReason) {
-	engine.rejectCommandWithMarket(cmd, cmd.MarketID, reason, cmd.Timestamp)
+	log := NewRejectLog(
+		0,
+		cmd.CommandID,
+		engine.engineID,
+		cmd.MarketID,
+		engine.commandOrderID(cmd),
+		engine.commandUserID(cmd),
+		reason,
+		cmd.Timestamp,
+	)
+	batch := acquireLogBatch()
+	batch.Logs = append(batch.Logs, log)
+	engine.publishTrader.Publish(batch.Logs)
+	releaseBookLog(log)
+	batch.Release()
 }
 
 // commandOrderID extracts the business identifier used for reject logs.
@@ -843,30 +919,6 @@ func (engine *MatchingEngine) commandUserID(cmd *protocol.Command) uint64 {
 	return 0
 }
 
-// rejectCommandWithMarket emits a standardized reject log for engine-level command failures.
-func (engine *MatchingEngine) rejectCommandWithMarket(
-	cmd *protocol.Command,
-	marketID string,
-	reason protocol.RejectReason,
-	timestamp int64,
-) {
-	log := NewRejectLog(
-		0,
-		cmd.CommandID,
-		engine.engineID,
-		marketID,
-		engine.commandOrderID(cmd),
-		engine.commandUserID(cmd),
-		reason,
-		timestamp,
-	)
-	batch := acquireLogBatch()
-	batch.Logs = append(batch.Logs, log)
-	engine.publishTrader.Publish(batch.Logs)
-	releaseBookLog(log)
-	batch.Release()
-}
-
 func (engine *MatchingEngine) acquireResponseChannel() chan any {
 	val := engine.responsePool.Get()
 	ch, ok := val.(chan any)
@@ -884,68 +936,6 @@ func (engine *MatchingEngine) releaseResponseChannel(ch chan any) {
 	default:
 	}
 	engine.responsePool.Put(ch)
-}
-
-func (engine *MatchingEngine) enqueueCommandWithResponse(
-	ctx context.Context,
-	cmd *protocol.Command,
-	resp chan any,
-) error {
-	if engine.isShutdown.Load() {
-		return ErrShutdown
-	}
-
-	strategy := YieldingIdleStrategy{}
-	for {
-		seq, ev := engine.ring.TryClaim()
-		if seq != -1 {
-			ev.Cmd = cmd
-			ev.Query = nil
-			ev.Resp = resp // Essential: Pass the response channel into the event
-
-			engine.ring.Commit(seq)
-			return nil
-		}
-
-		if engine.isShutdown.Load() {
-			return ErrShutdown
-		}
-
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		strategy.Idle()
-	}
-}
-
-func (engine *MatchingEngine) enqueueQueryWithResponse(ctx context.Context, query any, resp chan any) error {
-	if engine.isShutdown.Load() {
-		return ErrShutdown
-	}
-
-	strategy := YieldingIdleStrategy{}
-	for {
-		seq, ev := engine.ring.TryClaim()
-		if seq != -1 {
-			ev.Cmd = nil
-			ev.Query = query
-			ev.Resp = resp // Essential: Pass the response channel into the query
-
-			engine.ring.Commit(seq)
-			return nil
-		}
-
-		if engine.isShutdown.Load() {
-			return ErrShutdown
-		}
-
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		strategy.Idle()
-	}
 }
 
 func (engine *MatchingEngine) onEvent(ev *InputEvent) {
