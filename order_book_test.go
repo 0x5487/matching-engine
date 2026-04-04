@@ -607,7 +607,7 @@ func TestFOKOrder(t *testing.T) {
 					Sell,
 					110,
 					1,
-					uint64(200+i), //nolint:gosec // G115: test code
+					uint64(200+i), //nolint:gosec // test data
 				),
 			)
 		}

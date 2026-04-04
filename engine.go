@@ -119,101 +119,6 @@ func (engine *MatchingEngine) Run() error {
 
 // onEvent implements EventHandler[InputEvent] for the Engine's shared RingBuffer.
 // It routes events to the appropriate OrderBook based on MarketID.
-func (engine *MatchingEngine) onEvent(ev *InputEvent) {
-	if ev.Cmd != nil {
-		engine.processCommand(ev)
-		return
-	}
-
-	if ev.Query != nil {
-		engine.processQuery(ev)
-		return
-	}
-}
-
-// enqueueCommand routes the command to the Engine's shared RingBuffer.
-// Create market commands are handled synchronously so the OrderBook is immediately available.
-func (engine *MatchingEngine) enqueueCommand(ctx context.Context, cmd *protocol.Command) error {
-	if engine.isShutdown.Load() {
-		return ErrShutdown
-	}
-
-	strategy := YieldingIdleStrategy{}
-	for {
-		// All commands go through the shared RingBuffer
-		seq, ev := engine.ring.TryClaim()
-		if seq != -1 {
-			ev.Cmd = cmd
-			ev.Query = nil
-			ev.Resp = nil
-
-			engine.ring.Commit(seq)
-			return nil
-		}
-
-		if engine.isShutdown.Load() {
-			return ErrShutdown
-		}
-
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		strategy.Idle()
-	}
-}
-
-// enqueueCommandBatch routes a batch of commands to the Engine's shared RingBuffer.
-// It claims n contiguous slots in the RingBuffer to amortize synchronization overhead.
-func (engine *MatchingEngine) enqueueCommandBatch(ctx context.Context, cmds []*protocol.Command) error {
-	if len(cmds) == 0 {
-		return nil
-	}
-
-	if engine.isShutdown.Load() {
-		return ErrShutdown
-	}
-
-	n := int64(len(cmds))
-
-	// Handle case where batch size exceeds ring buffer capacity limit
-	if n > engine.ring.capacity {
-		// Fallback to individual enqueues if batch is larger than capacity
-		for _, cmd := range cmds {
-			if err := engine.enqueueCommand(ctx, cmd); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	strategy := YieldingIdleStrategy{}
-	for {
-		startSeq, endSeq := engine.ring.TryClaimN(n)
-		if startSeq != -1 {
-			for i, cmd := range cmds {
-				seq := startSeq + int64(i)
-				slot := &engine.ring.buffer[seq&engine.ring.bufferMask]
-				slot.Cmd = cmd
-				slot.Query = nil
-				slot.Resp = nil
-			}
-
-			engine.ring.CommitN(startSeq, endSeq)
-			return nil
-		}
-
-		if engine.isShutdown.Load() {
-			return ErrShutdown
-		}
-
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		strategy.Idle()
-	}
-}
 
 func requireCommandID(commandID string) error {
 	if commandID == "" {
@@ -646,6 +551,9 @@ func (engine *MatchingEngine) processQuery(ev *InputEvent) {
 		}
 	case *engineSnapshotQuery:
 		engine.handleSnapshotQuery(ev)
+	default:
+		// Unsupported query type
+		engine.respondQueryError(ev, ErrInvalidParam)
 	}
 }
 
@@ -971,6 +879,102 @@ func (engine *MatchingEngine) enqueueQueryWithResponse(ctx context.Context, quer
 			ev.Resp = resp // Essential: Pass the response channel into the query
 
 			engine.ring.Commit(seq)
+			return nil
+		}
+
+		if engine.isShutdown.Load() {
+			return ErrShutdown
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		strategy.Idle()
+	}
+}
+
+func (engine *MatchingEngine) onEvent(ev *InputEvent) {
+	if ev.Cmd != nil {
+		engine.processCommand(ev)
+		return
+	}
+
+	if ev.Query != nil {
+		engine.processQuery(ev)
+		return
+	}
+}
+
+// enqueueCommand routes the command to the Engine's shared RingBuffer.
+// Create market commands are handled synchronously so the OrderBook is immediately available.
+func (engine *MatchingEngine) enqueueCommand(ctx context.Context, cmd *protocol.Command) error {
+	if engine.isShutdown.Load() {
+		return ErrShutdown
+	}
+
+	strategy := YieldingIdleStrategy{}
+	for {
+		// All commands go through the shared RingBuffer
+		seq, ev := engine.ring.TryClaim()
+		if seq != -1 {
+			ev.Cmd = cmd
+			ev.Query = nil
+			ev.Resp = nil
+
+			engine.ring.Commit(seq)
+			return nil
+		}
+
+		if engine.isShutdown.Load() {
+			return ErrShutdown
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		strategy.Idle()
+	}
+}
+
+// enqueueCommandBatch routes a batch of commands to the Engine's shared RingBuffer.
+// It claims n contiguous slots in the RingBuffer to amortize synchronization overhead.
+func (engine *MatchingEngine) enqueueCommandBatch(ctx context.Context, cmds []*protocol.Command) error {
+	if len(cmds) == 0 {
+		return nil
+	}
+
+	if engine.isShutdown.Load() {
+		return ErrShutdown
+	}
+
+	n := int64(len(cmds))
+
+	// Handle case where batch size exceeds ring buffer capacity limit
+	if n > engine.ring.capacity {
+		// Fallback to individual enqueues if batch is larger than capacity
+		for _, cmd := range cmds {
+			if err := engine.enqueueCommand(ctx, cmd); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	strategy := YieldingIdleStrategy{}
+	for {
+		startSeq, endSeq := engine.ring.TryClaimN(n)
+		if startSeq != -1 {
+			for i, cmd := range cmds {
+				seq := startSeq + int64(i)
+				slot := &engine.ring.buffer[seq&engine.ring.bufferMask]
+				slot.Cmd = cmd
+				slot.Query = nil
+				slot.Resp = nil
+			}
+
+			engine.ring.CommitN(startSeq, endSeq)
 			return nil
 		}
 

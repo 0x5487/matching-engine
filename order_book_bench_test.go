@@ -118,12 +118,13 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	// Report final state of the order book
 	if f, err := engine.Query(ctx, &protocol.GetStatsRequest{MarketID: marketID}); err == nil {
 		if res, err := f.Wait(context.Background()); err == nil {
-			stats := res.(*protocol.GetStatsResponse)
-			b.Logf(
-				"\nFinal Order Book State: Bids=%d levels, Asks=%d levels\n",
-				stats.BidDepthCount,
-				stats.AskDepthCount,
-			)
+			if stats, ok := res.(*protocol.GetStatsResponse); ok {
+				b.Logf(
+					"\nFinal Order Book State: Bids=%d levels, Asks=%d levels\n",
+					stats.BidDepthCount,
+					stats.AskDepthCount,
+				)
+			}
 		}
 	}
 

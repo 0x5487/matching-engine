@@ -96,7 +96,8 @@ func TestMatchingEngineInitialization(t *testing.T) {
 				return false
 			}
 			res, e := future.Wait(ctx)
-			return e == nil && res.(*protocol.GetStatsResponse).BidOrderCount == 1
+			stats, ok := res.(*protocol.GetStatsResponse)
+			return e == nil && ok && stats.BidOrderCount == 1
 		}, 1*time.Second, 10*time.Millisecond)
 
 		order2 := &protocol.PlaceOrderParams{
@@ -119,7 +120,8 @@ func TestMatchingEngineInitialization(t *testing.T) {
 				return false
 			}
 			res, e := future.Wait(ctx)
-			return e == nil && res.(*protocol.GetStatsResponse).AskOrderCount == 1
+			stats, ok := res.(*protocol.GetStatsResponse)
+			return e == nil && ok && stats.AskOrderCount == 1
 		}, 1*time.Second, 10*time.Millisecond)
 
 		_ = engine.Shutdown(ctx)
@@ -169,7 +171,8 @@ func TestMatchingEngineInitialization(t *testing.T) {
 				return false
 			}
 			res, e := future.Wait(ctx)
-			return e == nil && res.(*protocol.GetStatsResponse).BidOrderCount == 1
+			stats, ok := res.(*protocol.GetStatsResponse)
+			return e == nil && ok && stats.BidOrderCount == 1
 		}, 1*time.Second, 10*time.Millisecond)
 
 		err = submitCancelOrder(
@@ -191,7 +194,8 @@ func TestMatchingEngineInitialization(t *testing.T) {
 				return false
 			}
 			res, err := future.Wait(ctx)
-			return err == nil && res.(*protocol.GetStatsResponse).BidOrderCount == 0
+			stats, ok := res.(*protocol.GetStatsResponse)
+			return err == nil && ok && stats.BidOrderCount == 0
 		}, 1*time.Second, 10*time.Millisecond)
 
 		_ = engine.Shutdown(ctx)
@@ -519,7 +523,8 @@ func TestManagement_SuspendResume(t *testing.T) {
 			return false
 		}
 		res, e := f.Wait(ctx)
-		return e == nil && res.(*protocol.GetStatsResponse).BidOrderCount == 1
+		stats, ok := res.(*protocol.GetStatsResponse)
+		return e == nil && ok && stats.BidOrderCount == 1
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 2. Suspend Market
