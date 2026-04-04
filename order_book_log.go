@@ -17,7 +17,7 @@ import (
 // The caller recycles BookLog objects to a sync.Pool after Publish returns,
 // so any asynchronous processing must work with cloned data.
 type Publisher interface {
-	// Publish publishes order book logs. The slice comes from logSlicePool.
+	// Publish publishes order book logs. The slice comes from a pooled LogBatch.
 	Publish(logs []*OrderBookLog)
 }
 
@@ -160,20 +160,11 @@ var logBatchPool = sync.Pool{
 
 // acquireLogBatch gets a LogBatch from the pool.
 func acquireLogBatch() *LogBatch {
-	val := logBatchPool.Get()
-	batch, ok := val.(*LogBatch)
-	if !ok {
-		return &LogBatch{
-			Logs: make([]*OrderBookLog, 0, defaultLogSliceCap),
-		}
-	}
-	return batch
+	return logBatchPool.Get().(*LogBatch) //nolint
 }
 
 // NewOpenLog creates a new OrderBookLog for an open order event.
-//
-
-func NewOpenLog( //nolint:revive
+func NewOpenLog( //nolint:revive // argument-limit: many parameters needed for log creation
 	seqID uint64,
 	commandID, engineID, marketID string,
 	orderID string,
