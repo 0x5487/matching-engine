@@ -162,7 +162,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 "unknown",
 				payload.UserID,
 				protocol.RejectReasonInvalidPayload,
-				payload.Timestamp,
+cmd.Timestamp,
 			)
 			book.respondError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
 			return
