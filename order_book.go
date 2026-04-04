@@ -159,7 +159,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 		if payload.Timestamp <= 0 {
 			book.rejectInvalidPayload(
 				cmd.CommandID,
-				cmd.MarketID,
+"unknown",
 				payload.UserID,
 				protocol.RejectReasonInvalidPayload,
 				payload.Timestamp,
