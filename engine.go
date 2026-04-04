@@ -252,55 +252,24 @@ func (engine *MatchingEngine) PlaceOrderBatch(
 	return engine.EnqueueCommandBatch(ctx, protoCmds)
 }
 
-// GetStats returns usage statistics for the specified market.
-func (engine *MatchingEngine) GetStats(
+// Query executes a read-only request against the matching engine.
+// Supported requests include *protocol.GetDepthRequest and *protocol.GetStatsRequest.
+func (engine *MatchingEngine) Query(
 	ctx context.Context,
-	marketID string,
-) (*Future[*protocol.GetStatsResponse], error) {
+	req any,
+) (*Future[any], error) {
 	if engine.isShutdown.Load() {
 		return nil, ErrShutdown
 	}
 
 	respChan := engine.acquireResponseChannel()
 
-	if err := engine.enqueueQueryWithResponse(ctx, &protocol.GetStatsRequest{
-		MarketID: marketID,
-	}, respChan); err != nil {
+	if err := engine.enqueueQueryWithResponse(ctx, req, respChan); err != nil {
 		engine.releaseResponseChannel(respChan)
 		return nil, err
 	}
 
-	return &Future[*protocol.GetStatsResponse]{
-		engine:   engine,
-		respChan: respChan,
-	}, nil
-}
-
-// Depth returns the current depth of the order book for the specified market.
-func (engine *MatchingEngine) Depth(
-	ctx context.Context,
-	marketID string,
-	limit uint32,
-) (*Future[*protocol.GetDepthResponse], error) {
-	if engine.isShutdown.Load() {
-		return nil, ErrShutdown
-	}
-
-	if limit == 0 {
-		return nil, ErrInvalidParam
-	}
-
-	respChan := engine.acquireResponseChannel()
-
-	if err := engine.enqueueQueryWithResponse(ctx, &protocol.GetDepthRequest{
-		MarketID: marketID,
-		Limit:    limit,
-	}, respChan); err != nil {
-		engine.releaseResponseChannel(respChan)
-		return nil, err
-	}
-
-	return &Future[*protocol.GetDepthResponse]{
+	return &Future[any]{
 		engine:   engine,
 		respChan: respChan,
 	}, nil
