@@ -116,7 +116,7 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	b.StopTimer()
 
 	// Report final state of the order book
-	if f, err := engine.GetStats(ctx, marketID); err == nil {
+	if f, err := engine.Query(ctx, &protocol.GetStatsRequest{MarketID: marketID}); err == nil {
 		if stats, err := f.Wait(context.Background()); err == nil {
 			b.Logf(
 				"\nFinal Order Book State: Bids=%d levels, Asks=%d levels\n",

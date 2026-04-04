@@ -91,7 +91,7 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
-			future, e := engine.GetStats(ctx, market1)
+			future, e := engine.Query(ctx, &protocol.GetStatsRequest{MarketID: market1})
 			if e != nil {
 				return false
 			}
@@ -114,7 +114,7 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
-			future, e := engine.GetStats(ctx, market2)
+			future, e := engine.Query(ctx, &protocol.GetStatsRequest{MarketID: market2})
 			if e != nil {
 				return false
 			}
@@ -164,7 +164,7 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		// Wait for order to be in book
 		assert.Eventually(t, func() bool {
-			future, e := engine.GetStats(ctx, market1)
+			future, e := engine.Query(ctx, &protocol.GetStatsRequest{MarketID: market1})
 			if e != nil {
 				return false
 			}
@@ -186,7 +186,7 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		// validate
 		assert.Eventually(t, func() bool {
-			future, err := engine.GetStats(ctx, market1)
+			future, err := engine.Query(ctx, &protocol.GetStatsRequest{MarketID: market1})
 			if err != nil {
 				return false
 			}
@@ -264,14 +264,14 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		go engine.Run()
 
 		start := time.Now()
-		future, err := engine.GetStats(ctx, "NON-EXISTENT")
+		future, err := engine.Query(ctx, &protocol.GetStatsRequest{MarketID: "NON-EXISTENT"})
 		require.NoError(t, err)
 		stats, err := future.Wait(ctx)
 		assert.Nil(t, stats)
 		require.ErrorIs(t, err, ErrNotFound)
 		assert.Less(t, time.Since(start), 200*time.Millisecond)
 
-		futureDepth, err := engine.Depth(ctx, "NON-EXISTENT", 10)
+		futureDepth, err := engine.Query(ctx, &protocol.GetDepthRequest{MarketID: "NON-EXISTENT", Limit: 10})
 		require.NoError(t, err)
 		depth, err := futureDepth.Wait(ctx)
 		assert.Nil(t, depth)
@@ -356,7 +356,7 @@ func TestMatchingEngineInitialization(t *testing.T) {
 				log.Timestamp == 0
 		}, time.Second, 10*time.Millisecond)
 
-		statsFuture, err := engine.GetStats(ctx, marketID)
+		statsFuture, err := engine.Query(ctx, &protocol.GetStatsRequest{MarketID: marketID})
 		require.NoError(t, err)
 		_, statsErr := statsFuture.Wait(ctx)
 		require.ErrorIs(t, statsErr, ErrNotFound)
@@ -514,7 +514,7 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 	// Wait for Order-1
 	assert.Eventually(t, func() bool {
-		f, e := engine.GetStats(ctx, marketID)
+		f, e := engine.Query(ctx, &protocol.GetStatsRequest{MarketID: marketID})
 		if e != nil {
 			return false
 		}
