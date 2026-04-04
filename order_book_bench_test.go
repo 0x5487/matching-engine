@@ -23,17 +23,17 @@ func BenchmarkPlaceOrders(b *testing.B) {
 
 	ctx := context.Background()
 	marketID := marketBTC
-	future, _ := submitCreateMarket(
-		ctx,
-		engine,
-		1,
-		marketID,
-		"bench-market-create-1",
-		time.Now().UnixNano(),
-		&protocol.CreateMarketParams{
-			MinLotSize: "",
-		},
-	)
+	cmd := &protocol.Command{
+		Type:      protocol.CmdCreateMarket,
+		UserID:    1,
+		MarketID:  marketID,
+		CommandID: "bench-market-create-1",
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = cmd.SetPayload(&protocol.CreateMarketParams{
+		MinLotSize: "",
+	})
+	future, _ := engine.Submit(ctx, cmd)
 
 	// Start engine event loop
 	go engine.Run()
@@ -152,17 +152,17 @@ func BenchmarkSubmitAsyncBatch(b *testing.B) {
 
 	ctx := context.Background()
 	marketID := marketBTC
-	future, _ := submitCreateMarket(
-		ctx,
-		engine,
-		1,
-		marketID,
-		"bench-market-create-2",
-		time.Now().UnixNano(),
-		&protocol.CreateMarketParams{
-			MinLotSize: "",
-		},
-	)
+	cmd := &protocol.Command{
+		Type:      protocol.CmdCreateMarket,
+		UserID:    1,
+		MarketID:  marketID,
+		CommandID: "bench-market-create-2",
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = cmd.SetPayload(&protocol.CreateMarketParams{
+		MinLotSize: "",
+	})
+	future, _ := engine.Submit(ctx, cmd)
 
 	// Start engine event loop
 	go engine.Run()
@@ -265,17 +265,17 @@ func BenchmarkMatching(b *testing.B) {
 	engine := NewMatchingEngine("bench-engine", publishTrader)
 	ctx := context.Background()
 	marketID := marketBTC
-	future, _ := submitCreateMarket(
-		ctx,
-		engine,
-		1,
-		marketID,
-		"bench-market-create-3",
-		time.Now().UnixNano(),
-		&protocol.CreateMarketParams{
-			MinLotSize: "",
-		},
-	)
+	cmd := &protocol.Command{
+		Type:      protocol.CmdCreateMarket,
+		UserID:    1,
+		MarketID:  marketID,
+		CommandID: "bench-market-create-3",
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = cmd.SetPayload(&protocol.CreateMarketParams{
+		MinLotSize: "",
+	})
+	future, _ := engine.Submit(ctx, cmd)
 
 	// Start engine event loop
 	go engine.Run()

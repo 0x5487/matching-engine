@@ -2,6 +2,7 @@ package match
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -14,7 +15,6 @@ import (
 
 const (
 	marketBTC    = "BTC-USDT"
-	marketETH    = "ETH-USDT"
 	testEngineID = "test-engine-1"
 )
 
@@ -30,17 +30,17 @@ func TestMatchingEngineInitialization(t *testing.T) {
 	t.Run("CreateMarketRequiresCommandID", func(t *testing.T) {
 		engine := NewMatchingEngine("test-engine-"+t.Name(), NewMemoryPublishLog())
 		marketID := "BTC-USDT--" + "CreateMarketRequiresCommandID" + t.Name()
-		_, err := submitCreateMarket(
-			context.Background(),
-			engine,
-			1,
-			marketID,
-			"",
-			1,
-			&protocol.CreateMarketParams{
-				MinLotSize: "0.01",
-			},
-		)
+		cmd := &protocol.Command{
+			Type:      protocol.CmdCreateMarket,
+			UserID:    1,
+			MarketID:  marketID,
+			CommandID: "",
+			Timestamp: 1,
+		}
+		_ = cmd.SetPayload(&protocol.CreateMarketParams{
+			MinLotSize: "0.01",
+		})
+		_, err := engine.Submit(context.Background(), cmd)
 		require.ErrorIs(t, err, ErrInvalidParam)
 	})
 
@@ -53,33 +53,33 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		// market1
 		market1 := "BTC-USDT-" + t.Name() + "-1"
 		now := time.Now().UnixNano()
-		future1, err := submitCreateMarket(
-			ctx,
-			engine,
-			1,
-			market1,
-			"place-orders-market-1",
-			now,
-			&protocol.CreateMarketParams{
-				MinLotSize: "",
-			},
-		)
+		cmd1 := &protocol.Command{
+			Type:      protocol.CmdCreateMarket,
+			UserID:    1,
+			MarketID:  market1,
+			CommandID: "place-orders-market-1",
+			Timestamp: now,
+		}
+		_ = cmd1.SetPayload(&protocol.CreateMarketParams{
+			MinLotSize: "",
+		})
+		future1, err := engine.Submit(ctx, cmd1)
 		require.NoError(t, err)
 
 		// market2
 		market2 := "ETH-USDT-" + t.Name() + "-2"
 		now2 := time.Now().UnixNano()
-		future2, err := submitCreateMarket(
-			ctx,
-			engine,
-			1,
-			market2,
-			"place-orders-market-2",
-			now2,
-			&protocol.CreateMarketParams{
-				MinLotSize: "",
-			},
-		)
+		cmd2 := &protocol.Command{
+			Type:      protocol.CmdCreateMarket,
+			UserID:    1,
+			MarketID:  market2,
+			CommandID: "place-orders-market-2",
+			Timestamp: now2,
+		}
+		_ = cmd2.SetPayload(&protocol.CreateMarketParams{
+			MinLotSize: "",
+		})
+		future2, err := engine.Submit(ctx, cmd2)
 		require.NoError(t, err)
 
 		// Start engine event loop
@@ -98,7 +98,15 @@ func TestMatchingEngineInitialization(t *testing.T) {
 			Size:      udecimal.MustFromInt64(2, 0).String(),
 		}
 
-		err = submitPlaceOrder(ctx, engine, 0, market1, "place-orders-order-1", 1, order1)
+		cmdOrder1 := &protocol.Command{
+			Type:      protocol.CmdPlaceOrder,
+			UserID:    0,
+			MarketID:  market1,
+			CommandID: "place-orders-order-1",
+			Timestamp: 1,
+		}
+		_ = cmdOrder1.SetPayload(order1)
+		err = engine.SubmitAsync(ctx, cmdOrder1)
 		require.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
@@ -119,7 +127,15 @@ func TestMatchingEngineInitialization(t *testing.T) {
 			Size:      udecimal.MustFromInt64(2, 0).String(),
 		}
 
-		err = submitPlaceOrder(ctx, engine, 0, market2, "place-orders-order-2", 2, order2)
+		cmdOrder2 := &protocol.Command{
+			Type:      protocol.CmdPlaceOrder,
+			UserID:    0,
+			MarketID:  market2,
+			CommandID: "place-orders-order-2",
+			Timestamp: 2,
+		}
+		_ = cmdOrder2.SetPayload(order2)
+		err = engine.SubmitAsync(ctx, cmdOrder2)
 		require.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
@@ -142,17 +158,17 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		ctx := context.Background()
 
 		market1 := "BTC-USDT-" + t.Name()
-		future, err := submitCreateMarket(
-			ctx,
-			engine,
-			1,
-			market1,
-			"cancel-order-market-1",
-			time.Now().UnixNano(),
-			&protocol.CreateMarketParams{
-				MinLotSize: "",
-			},
-		)
+		cmdMarket1 := &protocol.Command{
+			Type:      protocol.CmdCreateMarket,
+			UserID:    1,
+			MarketID:  market1,
+			CommandID: "cancel-order-market-1",
+			Timestamp: time.Now().UnixNano(),
+		}
+		_ = cmdMarket1.SetPayload(&protocol.CreateMarketParams{
+			MinLotSize: "",
+		})
+		future, err := engine.Submit(ctx, cmdMarket1)
 		require.NoError(t, err)
 
 		// Start engine event loop
@@ -169,7 +185,15 @@ func TestMatchingEngineInitialization(t *testing.T) {
 			Size:      udecimal.MustFromInt64(2, 0).String(),
 		}
 
-		err = submitPlaceOrder(ctx, engine, 1, market1, "cancel-order-1", 1, order1)
+		cmdPlace1 := &protocol.Command{
+			Type:      protocol.CmdPlaceOrder,
+			UserID:    1,
+			MarketID:  market1,
+			CommandID: "cancel-order-1",
+			Timestamp: 1,
+		}
+		_ = cmdPlace1.SetPayload(order1)
+		err = engine.SubmitAsync(ctx, cmdPlace1)
 		require.NoError(t, err)
 
 		// Wait for order to be in book
@@ -183,12 +207,17 @@ func TestMatchingEngineInitialization(t *testing.T) {
 			return e == nil && ok && stats.BidOrderCount == 1
 		}, 1*time.Second, 10*time.Millisecond)
 
-		err = submitCancelOrder(
-			ctx, engine, 1, market1, "cancel-order-1-cancel", 2,
-			&protocol.CancelOrderParams{
-				OrderID: order1.OrderID,
-			},
-		)
+		cmdCancel1 := &protocol.Command{
+			Type:      protocol.CmdCancelOrder,
+			UserID:    1,
+			MarketID:  market1,
+			CommandID: "cancel-order-1-cancel",
+			Timestamp: 2,
+		}
+		_ = cmdCancel1.SetPayload(&protocol.CancelOrderParams{
+			OrderID: order1.OrderID,
+		})
+		err = engine.SubmitAsync(ctx, cmdCancel1)
 		require.NoError(t, err)
 
 		// validate
@@ -216,17 +245,17 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		// PlaceOrder should still enqueue (market check happens on consumer side)
 		ctx := context.Background()
-		err := submitPlaceOrder(
-			ctx,
-			engine,
-			0,
-			market,
-			"missing-market-o1",
-			1,
-			&protocol.PlaceOrderParams{
-				OrderID: "o1",
-			},
-		)
+		cmdPlace2 := &protocol.Command{
+			Type:      protocol.CmdPlaceOrder,
+			UserID:    0,
+			MarketID:  market,
+			CommandID: "missing-market-o1",
+			Timestamp: 1,
+		}
+		_ = cmdPlace2.SetPayload(&protocol.PlaceOrderParams{
+			OrderID: "o1",
+		})
+		err := engine.SubmitAsync(ctx, cmdPlace2)
 		require.NoError(t, err) // Enqueue succeeds
 
 		// Get OrderBook
@@ -243,21 +272,21 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		go engine.Run()
 
-		err := submitPlaceOrder(
-			ctx,
-			engine,
-			7,
-			"NON-EXISTENT",
-			"missing-market-order-cmd",
-			123456789,
-			&protocol.PlaceOrderParams{
-				OrderID:   "missing-market-order",
-				OrderType: Limit,
-				Side:      Buy,
-				Price:     "100",
-				Size:      "1",
-			},
-		)
+		cmdPlace3 := &protocol.Command{
+			Type:      protocol.CmdPlaceOrder,
+			UserID:    7,
+			MarketID:  "NON-EXISTENT",
+			CommandID: "missing-market-order-cmd",
+			Timestamp: 123456789,
+		}
+		_ = cmdPlace3.SetPayload(&protocol.PlaceOrderParams{
+			OrderID:   "missing-market-order",
+			OrderType: Limit,
+			Side:      Buy,
+			Price:     "100",
+			Size:      "1",
+		})
+		err := engine.SubmitAsync(ctx, cmdPlace3)
 		require.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
@@ -308,32 +337,32 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		go engine.Run()
 
-		future1, err := submitCreateMarket(
-			ctx,
-			engine,
-			42,
-			marketID,
-			"create-market-existing-1",
-			1001,
-			&protocol.CreateMarketParams{
-				MinLotSize: "0.01",
-			},
-		)
+		cmd1 := &protocol.Command{
+			Type:      protocol.CmdCreateMarket,
+			UserID:    42,
+			MarketID:  marketID,
+			CommandID: "create-market-existing-1",
+			Timestamp: 1001,
+		}
+		_ = cmd1.SetPayload(&protocol.CreateMarketParams{
+			MinLotSize: "0.01",
+		})
+		future1, err := engine.Submit(ctx, cmd1)
 		require.NoError(t, err)
 		_, err = future1.Wait(ctx)
 		require.NoError(t, err)
 
-		future2, err := submitCreateMarket(
-			ctx,
-			engine,
-			42,
-			marketID,
-			"create-market-existing-2",
-			1002,
-			&protocol.CreateMarketParams{
-				MinLotSize: "0.01",
-			},
-		)
+		cmd2 := &protocol.Command{
+			Type:      protocol.CmdCreateMarket,
+			UserID:    42,
+			MarketID:  marketID,
+			CommandID: "create-market-existing-2",
+			Timestamp: 1002,
+		}
+		_ = cmd2.SetPayload(&protocol.CreateMarketParams{
+			MinLotSize: "0.01",
+		})
+		future2, err := engine.Submit(ctx, cmd2)
 		require.NoError(t, err)
 		_, err = future2.Wait(ctx)
 		require.Error(t, err)
@@ -360,17 +389,17 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		go engine.Run()
 
-		future, err := submitCreateMarket(
-			ctx,
-			engine,
-			77,
-			marketID,
-			"create-market-zero-ts",
-			0,
-			&protocol.CreateMarketParams{
-				MinLotSize: "0.01",
-			},
-		)
+		cmd := &protocol.Command{
+			Type:      protocol.CmdCreateMarket,
+			UserID:    77,
+			MarketID:  marketID,
+			CommandID: "create-market-zero-ts",
+			Timestamp: 0,
+		}
+		_ = cmd.SetPayload(&protocol.CreateMarketParams{
+			MinLotSize: "0.01",
+		})
+		future, err := engine.Submit(ctx, cmd)
 		require.NoError(t, err)
 		_, err = future.Wait(ctx)
 		require.Error(t, err)
@@ -403,17 +432,17 @@ func TestCommandAndEngineIDPropagation(t *testing.T) {
 	engine := NewMatchingEngine(testEngineID, publishTrader)
 	marketID := "BTC-USDT--" + "CreateMarketRequiresPositiveTimestamp" + t.Name()
 
-	future, err := submitCreateMarket(
-		ctx,
-		engine,
-		1,
-		marketID,
-		"prop-market-create",
-		time.Now().UnixNano(),
-		&protocol.CreateMarketParams{
-			MinLotSize: "",
-		},
-	)
+	cmdMarket := &protocol.Command{
+		Type:      protocol.CmdCreateMarket,
+		UserID:    1,
+		MarketID:  marketID,
+		CommandID: "prop-market-create",
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = cmdMarket.SetPayload(&protocol.CreateMarketParams{
+		MinLotSize: "",
+	})
+	future, err := engine.Submit(ctx, cmdMarket)
 	require.NoError(t, err)
 
 	go engine.Run()
@@ -422,21 +451,21 @@ func TestCommandAndEngineIDPropagation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Single submit: explicit CommandID should be propagated to emitted logs.
-	err = submitPlaceOrder(
-		ctx,
-		engine,
-		1,
-		marketID,
-		"single-oid-cmd",
-		1,
-		&protocol.PlaceOrderParams{
-			OrderID:   "single-oid",
-			OrderType: Limit,
-			Side:      Buy,
-			Price:     "100",
-			Size:      "1",
-		},
-	)
+	cmdPlace := &protocol.Command{
+		Type:      protocol.CmdPlaceOrder,
+		UserID:    1,
+		MarketID:  marketID,
+		CommandID: "single-oid-cmd",
+		Timestamp: 1,
+	}
+	_ = cmdPlace.SetPayload(&protocol.PlaceOrderParams{
+		OrderID:   "single-oid",
+		OrderType: Limit,
+		Side:      Buy,
+		Price:     "100",
+		Size:      "1",
+	})
+	err = engine.SubmitAsync(ctx, cmdPlace)
 	require.NoError(t, err)
 
 	assert.Eventually(t, func() bool {
@@ -462,17 +491,17 @@ func TestMatchingEngineShutdown(t *testing.T) {
 		markets := []string{"BTC-USDT-" + t.Name(), "ETH-USDT-" + t.Name(), "SOL-USDT-" + t.Name()}
 		futures := make([]*Future[any], 0, len(markets))
 		for _, market := range markets {
-			future, err := submitCreateMarket(
-				ctx,
-				engine,
-				1,
-				market,
-				"shutdown-market-"+market,
-				time.Now().UnixNano(),
-				&protocol.CreateMarketParams{
-					MinLotSize: "",
-				},
-			)
+			cmd := &protocol.Command{
+				Type:      protocol.CmdCreateMarket,
+				UserID:    1,
+				MarketID:  market,
+				CommandID: "shutdown-market-" + market,
+				Timestamp: time.Now().UnixNano(),
+			}
+			_ = cmd.SetPayload(&protocol.CreateMarketParams{
+				MinLotSize: "",
+			})
+			future, err := engine.Submit(ctx, cmd)
 			require.NoError(t, err)
 			futures = append(futures, future)
 		}
@@ -493,15 +522,15 @@ func TestMatchingEngineShutdown(t *testing.T) {
 				Price:     udecimal.MustFromInt64(int64(100+i*10), 0).String(),
 				Size:      udecimal.MustFromInt64(1, 0).String(),
 			}
-			err := submitPlaceOrder(
-				ctx,
-				engine,
-				0,
-				market,
-				"shutdown-order-"+market,
-				int64(i+1),
-				order,
-			)
+			cmd := &protocol.Command{
+				Type:      protocol.CmdPlaceOrder,
+				UserID:    0,
+				MarketID:  market,
+				CommandID: "shutdown-order-" + market,
+				Timestamp: int64(i + 1),
+			}
+			_ = cmd.SetPayload(order)
+			err := engine.SubmitAsync(ctx, cmd)
 			require.NoError(t, err)
 		}
 
@@ -517,7 +546,15 @@ func TestMatchingEngineShutdown(t *testing.T) {
 			Price:     udecimal.MustFromInt64(100, 0).String(),
 			Size:      udecimal.MustFromInt64(1, 0).String(),
 		}
-		err = submitPlaceOrder(ctx, engine, 0, markets[0], "after-shutdown-order", 1, order)
+		cmdAfter := &protocol.Command{
+			Type:      protocol.CmdPlaceOrder,
+			UserID:    0,
+			MarketID:  markets[0],
+			CommandID: "after-shutdown-order",
+			Timestamp: 1,
+		}
+		_ = cmdAfter.SetPayload(order)
+		err = engine.SubmitAsync(ctx, cmdAfter)
 		assert.Equal(t, ErrShutdown, err)
 	})
 }
@@ -528,17 +565,17 @@ func TestManagement_SuspendResume(t *testing.T) {
 	marketID := "ETH-USDT--" + "ShutdownMultipleMarkets" + t.Name()
 	ctx := context.Background()
 
-	future, err := submitCreateMarket(
-		ctx,
-		engine,
-		1,
-		marketID,
-		"suspend-market-create",
-		time.Now().UnixNano(),
-		&protocol.CreateMarketParams{
-			MinLotSize: "0.0001",
-		},
-	)
+	cmdCreate := &protocol.Command{
+		Type:      protocol.CmdCreateMarket,
+		UserID:    1,
+		MarketID:  marketID,
+		CommandID: "suspend-market-create",
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = cmdCreate.SetPayload(&protocol.CreateMarketParams{
+		MinLotSize: "0.0001",
+	})
+	future, err := engine.Submit(ctx, cmdCreate)
 	require.NoError(t, err)
 
 	// Start engine event loop
@@ -555,7 +592,15 @@ func TestManagement_SuspendResume(t *testing.T) {
 		Price:     "3000",
 		Size:      "1",
 	}
-	err = submitPlaceOrder(ctx, engine, 1, marketID, "suspend-order-1", 1, order1)
+	cmdPlace1 := &protocol.Command{
+		Type:      protocol.CmdPlaceOrder,
+		UserID:    1,
+		MarketID:  marketID,
+		CommandID: "suspend-order-1",
+		Timestamp: 1,
+	}
+	_ = cmdPlace1.SetPayload(order1)
+	err = engine.SubmitAsync(ctx, cmdPlace1)
 	require.NoError(t, err)
 
 	// Wait for Order-1
@@ -570,14 +615,17 @@ func TestManagement_SuspendResume(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 2. Suspend Market
-	futureSuspend, err := submitSuspendMarket(
+	cmdSuspend := &protocol.Command{
+		Type:      protocol.CmdSuspendMarket,
+		UserID:    1,
+		MarketID:  marketID,
+		CommandID: "suspend-market-1",
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = cmdSuspend.SetPayload(&protocol.SuspendMarketParams{})
+	futureSuspend, err := engine.Submit(
 		ctx,
-		engine,
-		1,
-		marketID,
-		"suspend-market-1",
-		time.Now().UnixNano(),
-		&protocol.SuspendMarketParams{},
+		cmdSuspend,
 	)
 	require.NoError(t, err)
 	_, err = futureSuspend.Wait(ctx)
@@ -591,7 +639,15 @@ func TestManagement_SuspendResume(t *testing.T) {
 		Price:     "3000",
 		Size:      "1",
 	}
-	err = submitPlaceOrder(ctx, engine, 2, marketID, "suspend-order-2", 2, order2)
+	cmdPlace2 := &protocol.Command{
+		Type:      protocol.CmdPlaceOrder,
+		UserID:    2,
+		MarketID:  marketID,
+		CommandID: "suspend-order-2",
+		Timestamp: 2,
+	}
+	_ = cmdPlace2.SetPayload(order2)
+	err = engine.SubmitAsync(ctx, cmdPlace2)
 	require.NoError(t, err)
 
 	// Verify Reject Log
@@ -608,14 +664,17 @@ func TestManagement_SuspendResume(t *testing.T) {
 	}, 1*time.Second, 10*time.Millisecond)
 
 	// 4. Resume Market
-	futureResume, err := submitResumeMarket(
+	cmdResume := &protocol.Command{
+		Type:      protocol.CmdResumeMarket,
+		UserID:    1,
+		MarketID:  marketID,
+		CommandID: "resume-market-1",
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = cmdResume.SetPayload(&protocol.ResumeMarketParams{})
+	futureResume, err := engine.Submit(
 		ctx,
-		engine,
-		1,
-		marketID,
-		"resume-market-1",
-		time.Now().UnixNano(),
-		&protocol.ResumeMarketParams{},
+		cmdResume,
 	)
 	require.NoError(t, err)
 	res, err := futureResume.Wait(ctx)
@@ -636,17 +695,17 @@ func TestManagement_LateResponsePollution(t *testing.T) {
 	ctxShort, cancelShort := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancelShort()
 
-	future1, err := submitCreateMarket(
-		context.Background(),
-		engine,
-		1,
-		marketID1,
-		"cmd-1",
-		time.Now().UnixNano(),
-		&protocol.CreateMarketParams{
-			MinLotSize: "0.01",
-		},
-	)
+	cmd1 := &protocol.Command{
+		Type:      protocol.CmdCreateMarket,
+		UserID:    1,
+		MarketID:  marketID1,
+		CommandID: "cmd-1",
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = cmd1.SetPayload(&protocol.CreateMarketParams{
+		MinLotSize: "0.01",
+	})
+	future1, err := engine.Submit(context.Background(), cmd1)
 	require.NoError(t, err)
 
 	_, err = future1.Wait(ctxShort)
@@ -663,17 +722,17 @@ func TestManagement_LateResponsePollution(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 
 	ctxLong := context.Background()
-	future2, err := submitCreateMarket(
-		ctxLong,
-		engine,
-		1,
-		marketID2,
-		"cmd-2",
-		time.Now().UnixNano(),
-		&protocol.CreateMarketParams{
-			MinLotSize: "0.01",
-		},
-	)
+	cmd2 := &protocol.Command{
+		Type:      protocol.CmdCreateMarket,
+		UserID:    1,
+		MarketID:  marketID2,
+		CommandID: "cmd-2",
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = cmd2.SetPayload(&protocol.CreateMarketParams{
+		MinLotSize: "0.01",
+	})
+	future2, err := engine.Submit(ctxLong, cmd2)
 	require.NoError(t, err)
 
 	res, err := future2.Wait(ctxLong)
@@ -696,16 +755,19 @@ func TestManagement_UnknownMarketFuture(t *testing.T) {
 	defer cancel()
 
 	// Try to suspend a non-existent market using the Submit API helper
-	future, err := submitSuspendMarket(
+	cmdUnknown := &protocol.Command{
+		Type:      protocol.CmdSuspendMarket,
+		UserID:    1,
+		MarketID:  "UNKNOWN-MARKET",
+		CommandID: "cmd-unknown",
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = cmdUnknown.SetPayload(&protocol.SuspendMarketParams{
+		Reason: "test",
+	})
+	future, err := engine.Submit(
 		ctx,
-		engine,
-		1,
-		"UNKNOWN-MARKET",
-		"cmd-unknown",
-		time.Now().UnixNano(),
-		&protocol.SuspendMarketParams{
-			Reason: "test",
-		},
+		cmdUnknown,
 	)
 	require.NoError(t, err)
 
@@ -726,4 +788,409 @@ func TestManagement_UnknownMarketFuture(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 
 	_ = engine.Shutdown(ctx)
+}
+
+func TestMatchingEngine_ContextAwareSubmission(t *testing.T) {
+	t.Run("EnqueueCommand_ContextCanceled", func(t *testing.T) {
+		// Create engine but don't start it, so the ring buffer will fill up
+		publishTrader := NewMemoryPublishLog()
+		engine := NewMatchingEngine("test-engine", publishTrader)
+
+		// Fill the ring buffer
+		// defaultRingBufferSize is 32768.
+		// We need to fill all 32768 slots.
+		for i := range defaultRingBufferSize {
+			err := engine.SubmitAsync(context.Background(), &protocol.Command{
+				CommandID: fmt.Sprintf("fill-%d", i),
+			})
+			require.NoError(t, err)
+		}
+
+		// Now it should be full. Next EnqueueCommand should block.
+		// We use a short timeout.
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		// This call is expected to fail to compile initially once I change the signature,
+		// OR I can call it as is and see it block forever (well, until the test times out).
+		// But I want to test the NEW signature.
+
+		// For TDD, I'll use the new signature here.
+		err := engine.SubmitAsync(ctx, &protocol.Command{
+			CommandID: "blocking-command",
+			UserID:    0,
+			MarketID:  "",
+			Timestamp: 0,
+		})
+
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	})
+
+	t.Run("CreateMarket_SubmissionTimeout", func(t *testing.T) {
+		// Create engine but don't start it, so the ring buffer will fill up
+		publishTrader := NewMemoryPublishLog()
+		engine := NewMatchingEngine("test-engine", publishTrader)
+
+		// Fill the ring buffer
+		for i := range defaultRingBufferSize {
+			err := engine.SubmitAsync(context.Background(), &protocol.Command{
+				CommandID: fmt.Sprintf("fill-%d", i),
+				UserID:    0,
+				MarketID:  "",
+				Timestamp: 0,
+			})
+			require.NoError(t, err)
+		}
+
+		// Now it should be full. Next submission should block.
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		cmd := &protocol.Command{
+			Type:      protocol.CmdCreateMarket,
+			UserID:    1,
+			MarketID:  "BTC-USD",
+			CommandID: "cmd-1",
+			Timestamp: time.Now().UnixNano(),
+		}
+		_ = cmd.SetPayload(&protocol.CreateMarketParams{
+			MinLotSize: "0.01",
+		})
+		_, err := engine.Submit(ctx, cmd)
+
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	})
+}
+
+func TestManagement_UpdateConfig_MalformedPayload(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("test-engine", publish)
+	marketID := "MALFORMED-TEST"
+	ctx := context.Background()
+
+	// 1. Create market first
+	cmd := &protocol.Command{
+		Type:      protocol.CmdCreateMarket,
+		UserID:    1,
+		MarketID:  marketID,
+		CommandID: "config-market-create",
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = cmd.SetPayload(&protocol.CreateMarketParams{
+		MinLotSize: "1.0",
+	})
+	future, err := engine.Submit(ctx, cmd)
+	require.NoError(t, err)
+
+	// Start engine event loop
+	go engine.Run()
+	defer engine.Shutdown(ctx)
+
+	_, err = future.Wait(ctx)
+	require.NoError(t, err)
+
+	// 2. Send malformed UpdateConfig
+	// We manually construct a command with a malformed payload
+	protoCmd := &protocol.Command{
+		Type:      protocol.CmdUpdateConfig,
+		MarketID:  marketID,
+		CommandID: "malformed-config",
+		Payload:   []byte("this-is-not-json-or-binary"),
+	}
+
+	futureCmd, err := engine.Submit(ctx, protoCmd)
+	require.NoError(t, err)
+
+	// 3. Wait for response - should not hang and should return an error
+	_, err = futureCmd.Wait(ctx)
+	require.Error(t, err, "Should return error for malformed payload")
+}
+
+func TestManagement_SuspendMarket_MalformedPayload(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("test-engine", publish)
+	marketID := "MALFORMED-SUSPEND"
+	ctx := context.Background()
+
+	// 1. Create market first
+	cmd := &protocol.Command{
+		Type:      protocol.CmdCreateMarket,
+		UserID:    1,
+		MarketID:  marketID,
+		CommandID: "config-market-create",
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = cmd.SetPayload(&protocol.CreateMarketParams{
+		MinLotSize: "1.0",
+	})
+	future, err := engine.Submit(ctx, cmd)
+	require.NoError(t, err)
+
+	// Start engine event loop
+	go engine.Run()
+	defer engine.Shutdown(ctx)
+
+	_, err = future.Wait(ctx)
+	require.NoError(t, err)
+
+	// 2. Send malformed SuspendMarket
+	protoCmd := &protocol.Command{
+		Type:      protocol.CmdSuspendMarket,
+		MarketID:  marketID,
+		CommandID: "malformed-suspend",
+		Payload:   []byte("this-is-not-json-or-binary"),
+	}
+
+	futureCmd, err := engine.Submit(ctx, protoCmd)
+	require.NoError(t, err)
+
+	// 3. Wait for response - should not hang
+	_, err = futureCmd.Wait(ctx)
+	require.Error(t, err)
+}
+
+func TestManagement_ResumeMarket_MalformedPayload(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("test-engine", publish)
+	marketID := "MALFORMED-RESUME"
+	ctx := context.Background()
+
+	// 1. Create market first
+	cmd := &protocol.Command{
+		Type:      protocol.CmdCreateMarket,
+		UserID:    1,
+		MarketID:  marketID,
+		CommandID: "config-market-create",
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = cmd.SetPayload(&protocol.CreateMarketParams{
+		MinLotSize: "1.0",
+	})
+	future, err := engine.Submit(ctx, cmd)
+	require.NoError(t, err)
+
+	// Start engine event loop
+	go engine.Run()
+	defer engine.Shutdown(ctx)
+
+	_, err = future.Wait(ctx)
+	require.NoError(t, err)
+
+	// 2. Send malformed ResumeMarket
+	protoCmd := &protocol.Command{
+		Type:      protocol.CmdResumeMarket,
+		MarketID:  marketID,
+		CommandID: "malformed-resume",
+		Payload:   []byte("this-is-not-json-or-binary"),
+	}
+
+	futureCmd, err := engine.Submit(ctx, protoCmd)
+	require.NoError(t, err)
+
+	// 3. Wait for response - should not hang
+	_, err = futureCmd.Wait(ctx)
+	require.Error(t, err)
+}
+
+func TestUserEvent_GenericPayload(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("event-test-engine", publish)
+	marketID := "EVENT-TEST"
+	ctx := context.Background()
+
+	cmdMarket := &protocol.Command{
+		Type:      protocol.CmdCreateMarket,
+		UserID:    1,
+		MarketID:  marketID,
+		CommandID: "event-market-create",
+		Timestamp: time.Now().UnixNano(),
+	}
+	_ = cmdMarket.SetPayload(&protocol.CreateMarketParams{
+		MinLotSize: "1.0",
+	})
+	future, err := engine.Submit(ctx, cmdMarket)
+	require.NoError(t, err)
+
+	go engine.Run()
+
+	_, err = future.Wait(ctx)
+	require.NoError(t, err)
+
+	// 1. Place Order
+	cmdOrder1 := &protocol.Command{
+		Type:      protocol.CmdPlaceOrder,
+		UserID:    1,
+		MarketID:  marketID,
+		CommandID: "event-order-1",
+		Timestamp: 1,
+	}
+	_ = cmdOrder1.SetPayload(&protocol.PlaceOrderParams{
+		OrderID:   "order-1",
+		Side:      Buy,
+		OrderType: Limit,
+		Price:     "100",
+		Size:      "1",
+	})
+	err = engine.SubmitAsync(ctx, cmdOrder1)
+	require.NoError(t, err)
+
+	// 2. Send User Event (e.g. EndOfBlock)
+	eventData := []byte("block-hash-0x123456")
+	cmdUser1 := &protocol.Command{
+		Type:      protocol.CmdUserEvent,
+		UserID:    999,
+		MarketID:  "",
+		CommandID: "event-user-1",
+		Timestamp: 123456789,
+	}
+	_ = cmdUser1.SetPayload(&protocol.UserEventParams{
+		EventType: "EndOfBlock",
+		Key:       "blk-1",
+		Data:      eventData,
+	})
+	err = engine.SubmitAsync(ctx, cmdUser1)
+	require.NoError(t, err)
+
+	// 3. Place Another Order
+	cmdOrder2 := &protocol.Command{
+		Type:      protocol.CmdPlaceOrder,
+		UserID:    2,
+		MarketID:  marketID,
+		CommandID: "event-order-2",
+		Timestamp: 2,
+	}
+	_ = cmdOrder2.SetPayload(&protocol.PlaceOrderParams{
+		OrderID:   "order-2",
+		Side:      Buy,
+		OrderType: Limit,
+		Price:     "101",
+		Size:      "1",
+	})
+	err = engine.SubmitAsync(ctx, cmdOrder2)
+	require.NoError(t, err)
+
+	// 4. Verify Log Order: Order-1 -> UserEvent -> Order-2
+	assert.Eventually(t, func() bool {
+		logs := publish.Logs()
+		if len(logs) < 3 {
+			return false
+		}
+
+		// Find indices
+		idx1, idxEvent, idx2 := -1, -1, -1
+		for i, l := range logs {
+			switch {
+			case l.OrderID == "order-1":
+				idx1 = i
+			case l.Type == protocol.LogTypeUser && l.EventType == "EndOfBlock":
+				idxEvent = i
+				// Verify Payload
+				if string(l.Data) != "block-hash-0x123456" {
+					return false
+				}
+				if l.UserID != 999 {
+					return false
+				}
+				if l.Timestamp != 123456789 {
+					return false
+				}
+			case l.OrderID == "order-2":
+				idx2 = i
+			default:
+				// other logs
+			}
+		}
+
+		return idx1 != -1 && idxEvent != -1 && idx2 != -1 &&
+			idx1 < idxEvent && idxEvent < idx2
+	}, 1*time.Second, 10*time.Millisecond)
+
+	_ = engine.Shutdown(ctx)
+}
+
+func TestUserEvent_InvalidPayloadEmitsReject(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("event-test-engine", publish)
+	ctx := context.Background()
+
+	go engine.Run()
+
+	err := engine.SubmitAsync(ctx, &protocol.Command{
+		Type:      protocol.CmdUserEvent,
+		CommandID: "bad-user-event",
+		UserID:    0,
+		MarketID:  "",
+		Timestamp: 0,
+		Payload:   []byte("{"),
+	})
+	require.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		logs := publish.Logs()
+		if len(logs) != 1 {
+			return false
+		}
+		log := logs[0]
+		return log.Type == protocol.LogTypeReject &&
+			log.CommandID == "bad-user-event" &&
+			log.RejectReason == protocol.RejectReasonInvalidPayload
+	}, time.Second, 10*time.Millisecond)
+
+	_ = engine.Shutdown(ctx)
+}
+
+func TestUserEvent_RequiresPositiveTimestamp(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("event-test-engine", publish)
+	ctx := context.Background()
+
+	go engine.Run()
+
+	cmdUser := &protocol.Command{
+		Type:      protocol.CmdUserEvent,
+		UserID:    999,
+		MarketID:  "",
+		CommandID: "event-user-bad-ts",
+		Timestamp: 0,
+	}
+	_ = cmdUser.SetPayload(&protocol.UserEventParams{
+		EventType: "EndOfBlock",
+		Key:       "blk-0",
+		Data:      []byte("x"),
+	})
+	err := engine.SubmitAsync(ctx, cmdUser)
+	require.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		logs := publish.Logs()
+		if len(logs) != 1 {
+			return false
+		}
+		log := logs[0]
+		return log.Type == protocol.LogTypeReject &&
+			log.OrderID == "blk-0" &&
+			log.UserID == 999 &&
+			log.RejectReason == protocol.RejectReasonInvalidPayload &&
+			log.Timestamp == 0
+	}, time.Second, 10*time.Millisecond)
+
+	_ = engine.Shutdown(ctx)
+}
+
+func TestUserEvent_RequiresCommandID(t *testing.T) {
+	engine := NewMatchingEngine("event-test-engine", NewMemoryPublishLog())
+	cmd := &protocol.Command{
+		Type:      protocol.CmdUserEvent,
+		UserID:    999,
+		MarketID:  "",
+		CommandID: "",
+		Timestamp: 1,
+	}
+	_ = cmd.SetPayload(&protocol.UserEventParams{
+		EventType: "EndOfBlock",
+		Key:       "blk-0",
+		Data:      []byte("x"),
+	})
+	err := engine.SubmitAsync(context.Background(), cmd)
+	require.ErrorIs(t, err, ErrInvalidParam)
 }
