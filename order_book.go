@@ -243,6 +243,9 @@ func (book *OrderBook) processQuery(ev *InputEvent) {
 	case *OrderBookSnapshot: // Snapshot query
 		snap := book.createSnapshot()
 		book.sendResponse(ev.Resp, snap)
+	default:
+		// Unsupported query type
+		book.respondError(ev, ErrInvalidParam)
 	}
 }
 
@@ -713,7 +716,21 @@ func (book *OrderBook) amendOrder(
 			}
 		}
 
-		log := NewAmendLog(book.seqID.Add(1), commandID, book.engineID, book.marketID, order.ID, order.UserID, order.Side, order.Price, newSize, oldPrice, oldTotalSize, order.Type, timestamp)
+		log := NewAmendLog(
+			book.seqID.Add(1),
+			commandID,
+			book.engineID,
+			book.marketID,
+			order.ID,
+			order.UserID,
+			order.Side,
+			order.Price,
+			newSize,
+			oldPrice,
+			oldTotalSize,
+			order.Type,
+			timestamp,
+		)
 		amendBatch := acquireLogBatch()
 		amendBatch.Logs = append(amendBatch.Logs, log)
 		book.publisher.Publish(amendBatch.Logs)
