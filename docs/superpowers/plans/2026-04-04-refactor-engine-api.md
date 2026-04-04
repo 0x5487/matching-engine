@@ -1,358 +1,218 @@
-# Refactor MatchingEngine API Signatures Implementation Plan
+# Matching Engine API Refactoring Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Refactor the public API of MatchingEngine to use `xxxParams` structs for consolidated arguments and switch to binary serialization for all command payloads.
+**Goal:** Simplify the `MatchingEngine` API by replacing `GetStats`/`Depth` with a unified `Query` method and hiding low-level implementation details like `OnEvent` and `EnqueueCommand`.
 
-**Architecture:** Update `engine.go` to match the new API signatures and ensure that internal command routing uses `protocol.Command` envelopes constructed from the parameters.
+**Architecture:** We are adopting a strict CQRS separation at the engine API layer. `Submit`/`SubmitAsync` will handle state-mutating commands, while `Query` will handle non-mutating reads. Internal RingBuffer event handlers and enqueueing methods will be privatized to prevent public API misuse.
 
-**Tech Stack:** Go (Matching Engine)
+**Tech Stack:** Go
 
 ---
 
-### Task 1: Refactor CreateMarket
+### Task 1: Migrate Tests to use Unified `Query` Method
 
 **Files:**
-- Modify: `/home/jason/_repository/public/matching-engine/engine.go`
+- Modify: `engine_test.go`
+- Modify: `order_book_bench_test.go`
 
-- [ ] **Step 1: Update CreateMarket signature and implementation**
-```go
-func (engine *MatchingEngine) CreateMarket(ctx context.Context, params *protocol.CreateMarketParams) (*Future[bool], error) {
-	if err := requireCommandID(params.CommandID); err != nil {
-		return nil, err
-	}
-	bytes, err := params.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
+- [ ] **Step 1: Update `engine_test.go` to use `Query`**
 
-	respChan := engine.acquireResponseChannel()
-	protoCmd := &protocol.Command{
-		Type:      protocol.CmdCreateMarket,
-		MarketID:  params.MarketID,
-		CommandID: params.CommandID,
-		Timestamp: params.Timestamp,
-		Payload:   bytes,
-	}
+Replace all instances of `GetStats(ctx, marketID)` and `Depth(ctx, marketID, limit)` with the new `Query` signature.
 
-	if err := engine.enqueueCommandWithResponse(ctx, protoCmd, respChan); err != nil {
-		engine.releaseResponseChannel(respChan)
-		return nil, err
-	}
-
-	return &Future[bool]{
-		engine:   engine,
-		respChan: respChan,
-	}, nil
-}
+```bash
+sed -i 's/future, e := engine.GetStats/future, e := engine.Query/g' engine_test.go
+sed -i 's/future, err := engine.GetStats(ctx, market1)/future, err := engine.Query(ctx, \&protocol.GetStatsRequest{MarketID: market1})/g' engine_test.go
+sed -i 's/future, err := engine.GetStats(ctx, "NON-EXISTENT")/future, err := engine.Query(ctx, \&protocol.GetStatsRequest{MarketID: "NON-EXISTENT"})/g' engine_test.go
+sed -i 's/statsFuture, err := engine.GetStats(ctx, marketID)/statsFuture, err := engine.Query(ctx, \&protocol.GetStatsRequest{MarketID: marketID})/g' engine_test.go
+sed -i 's/f, e := engine.GetStats(ctx, marketID)/f, e := engine.Query(ctx, \&protocol.GetStatsRequest{MarketID: marketID})/g' engine_test.go
+sed -i 's/futureDepth, err := engine.Depth(ctx, "NON-EXISTENT", 10)/futureDepth, err := engine.Query(ctx, \&protocol.GetDepthRequest{MarketID: "NON-EXISTENT", Limit: 10})/g' engine_test.go
+# Catch the ones that just did s/future, e := engine.Query/g without replacing args:
+sed -i 's/future, e := engine.Query(ctx, market1)/future, e := engine.Query(ctx, \&protocol.GetStatsRequest{MarketID: market1})/g' engine_test.go
+sed -i 's/future, e := engine.Query(ctx, market2)/future, e := engine.Query(ctx, \&protocol.GetStatsRequest{MarketID: market2})/g' engine_test.go
 ```
 
-### Task 2: Refactor SuspendMarket
+- [ ] **Step 2: Update `order_book_bench_test.go` to use `Query`**
+
+```bash
+sed -i 's/if f, err := engine.GetStats(ctx, marketID); err == nil/if f, err := engine.Query(ctx, \&protocol.GetStatsRequest{MarketID: marketID}); err == nil/g' order_book_bench_test.go
+```
+
+- [ ] **Step 3: Run test to verify it fails (Compile Error)**
+
+Run: `go test -v ./...`
+Expected: FAIL with "engine.Query undefined" and "engine.GetStats undefined".
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add engine_test.go order_book_bench_test.go
+git commit -m "test: migrate tests to use unified Query method"
+```
+
+### Task 2: Implement Unified `Query` Method in Engine
 
 **Files:**
-- Modify: `/home/jason/_repository/public/matching-engine/engine.go`
+- Modify: `engine.go`
 
-- [ ] **Step 1: Update SuspendMarket signature and implementation**
+- [ ] **Step 1: Replace `GetStats` and `Depth` with `Query` in `engine.go`**
+
+Delete the `GetStats` and `Depth` methods in `engine.go` and replace them with:
+
 ```go
-func (engine *MatchingEngine) SuspendMarket(ctx context.Context, params *protocol.SuspendMarketParams) (*Future[bool], error) {
-	if err := requireCommandID(params.CommandID); err != nil {
-		return nil, err
-	}
-	bytes, err := params.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-
-	respChan := engine.acquireResponseChannel()
-	protoCmd := &protocol.Command{
-		Type:      protocol.CmdSuspendMarket,
-		MarketID:  params.MarketID,
-		CommandID: params.CommandID,
-		Timestamp: params.Timestamp,
-		Payload:   bytes,
-	}
-
-	if err := engine.enqueueCommandWithResponse(ctx, protoCmd, respChan); err != nil {
-		engine.releaseResponseChannel(respChan)
-		return nil, err
-	}
-
-	return &Future[bool]{
-		engine:   engine,
-		respChan: respChan,
-	}, nil
-}
-```
-
-### Task 3: Refactor ResumeMarket
-
-**Files:**
-- Modify: `/home/jason/_repository/public/matching-engine/engine.go`
-
-- [ ] **Step 1: Update ResumeMarket signature and implementation**
-```go
-func (engine *MatchingEngine) ResumeMarket(ctx context.Context, params *protocol.ResumeMarketParams) (*Future[bool], error) {
-	if err := requireCommandID(params.CommandID); err != nil {
-		return nil, err
-	}
-	bytes, err := params.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-
-	respChan := engine.acquireResponseChannel()
-	protoCmd := &protocol.Command{
-		Type:      protocol.CmdResumeMarket,
-		MarketID:  params.MarketID,
-		CommandID: params.CommandID,
-		Timestamp: params.Timestamp,
-		Payload:   bytes,
-	}
-
-	if err := engine.enqueueCommandWithResponse(ctx, protoCmd, respChan); err != nil {
-		engine.releaseResponseChannel(respChan)
-		return nil, err
-	}
-
-	return &Future[bool]{
-		engine:   engine,
-		respChan: respChan,
-	}, nil
-}
-```
-
-### Task 4: Refactor UpdateConfig
-
-**Files:**
-- Modify: `/home/jason/_repository/public/matching-engine/engine.go`
-
-- [ ] **Step 1: Update UpdateConfig signature and implementation**
-```go
-func (engine *MatchingEngine) UpdateConfig(ctx context.Context, params *protocol.UpdateConfigParams) (*Future[bool], error) {
-	if err := requireCommandID(params.CommandID); err != nil {
-		return nil, err
-	}
-	bytes, err := params.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-
-	respChan := engine.acquireResponseChannel()
-	protoCmd := &protocol.Command{
-		Type:      protocol.CmdUpdateConfig,
-		MarketID:  params.MarketID,
-		CommandID: params.CommandID,
-		Timestamp: params.Timestamp,
-		Payload:   bytes,
-	}
-
-	if err := engine.enqueueCommandWithResponse(ctx, protoCmd, respChan); err != nil {
-		engine.releaseResponseChannel(respChan)
-		return nil, err
-	}
-
-	return &Future[bool]{
-		engine:   engine,
-		respChan: respChan,
-	}, nil
-}
-```
-
-### Task 5: Refactor PlaceOrder
-
-**Files:**
-- Modify: `/home/jason/_repository/public/matching-engine/engine.go`
-
-- [ ] **Step 1: Update PlaceOrder signature and implementation**
-```go
-func (engine *MatchingEngine) PlaceOrder(ctx context.Context, params *protocol.PlaceOrderParams) error {
-	if err := requireCommandID(params.CommandID); err != nil {
-		return err
-	}
-	bytes, err := params.MarshalBinary()
-	if err != nil {
-		return err
-	}
-	protoCmd := &protocol.Command{
-		MarketID:  params.MarketID,
-		Type:      protocol.CmdPlaceOrder,
-		CommandID: params.CommandID,
-		Timestamp: params.Timestamp,
-		Payload:   bytes,
-	}
-	return engine.EnqueueCommand(ctx, protoCmd)
-}
-```
-
-### Task 6: Refactor AmendOrder
-
-**Files:**
-- Modify: `/home/jason/_repository/public/matching-engine/engine.go`
-
-- [ ] **Step 1: Update AmendOrder signature and implementation**
-```go
-func (engine *MatchingEngine) AmendOrder(ctx context.Context, params *protocol.AmendOrderParams) error {
-	if err := requireCommandID(params.CommandID); err != nil {
-		return err
-	}
-	bytes, err := params.MarshalBinary()
-	if err != nil {
-		return err
-	}
-	protoCmd := &protocol.Command{
-		MarketID:  params.MarketID,
-		Type:      protocol.CmdAmendOrder,
-		CommandID: params.CommandID,
-		Timestamp: params.Timestamp,
-		Payload:   bytes,
-	}
-	return engine.EnqueueCommand(ctx, protoCmd)
-}
-```
-
-### Task 7: Refactor CancelOrder
-
-**Files:**
-- Modify: `/home/jason/_repository/public/matching-engine/engine.go`
-
-- [ ] **Step 1: Update CancelOrder signature and implementation**
-```go
-func (engine *MatchingEngine) CancelOrder(ctx context.Context, params *protocol.CancelOrderParams) error {
-	if err := requireCommandID(params.CommandID); err != nil {
-		return err
-	}
-	bytes, err := params.MarshalBinary()
-	if err != nil {
-		return err
-	}
-	protoCmd := &protocol.Command{
-		MarketID:  params.MarketID,
-		Type:      protocol.CmdCancelOrder,
-		CommandID: params.CommandID,
-		Timestamp: params.Timestamp,
-		Payload:   bytes,
-	}
-	return engine.EnqueueCommand(ctx, protoCmd)
-}
-```
-
-### Task 8: Refactor SendUserEvent
-
-**Files:**
-- Modify: `/home/jason/_repository/public/matching-engine/engine.go`
-
-- [ ] **Step 1: Update SendUserEvent signature and implementation**
-```go
-func (engine *MatchingEngine) SendUserEvent(ctx context.Context, params *protocol.UserEventParams) error {
-	if err := requireCommandID(params.CommandID); err != nil {
-		return err
-	}
-	bytes, err := params.MarshalBinary()
-	if err != nil {
-		return err
-	}
-	return engine.EnqueueCommand(ctx, &protocol.Command{
-		Type:      protocol.CmdUserEvent,
-		MarketID:  params.MarketID,
-		CommandID: params.CommandID,
-		Timestamp: params.Timestamp,
-		Payload:   bytes,
-	})
-}
-```
-
-### Task 9: Verification
-
-- [ ] **Step 1: Build engine**
-Run: `go build ./...`
-Expected: SUCCESS
-
-- [ ] **Step 2: Check for any other callers in engine.go**
-Ensure that `PlaceOrderBatch` still compiles and works as intended (it was excluded from signature refactoring but might need internal adjustments).
-
-Wait, `PlaceOrderBatch` still uses `engine.serializer.Marshal(cmd)`. I should update it to use `cmd.MarshalBinary()` for consistency.
-Instruction says: `Call params.MarshalBinary() to get the payload.` - This might apply to `PlaceOrderBatch` internal implementation as well, even if signature is unchanged.
-
-Let's review `PlaceOrderBatch` in `engine.go`:
-```go
-func (engine *MatchingEngine) PlaceOrderBatch(
+// Query executes a read-only request against the matching engine.
+// Supported requests include *protocol.GetDepthRequest and *protocol.GetStatsRequest.
+func (engine *MatchingEngine) Query(
 	ctx context.Context,
-	marketID string,
-	cmds []*protocol.PlaceOrderParams,
-) error {
-    ...
-	for _, cmd := range cmds {
-		if err := requireCommandID(cmd.CommandID); err != nil {
-			return err
-		}
-		bytes, err := engine.serializer.Marshal(cmd)
-        ...
-```
-I'll update it to use `cmd.MarshalBinary()`.
-
-- [ ] **Step 3: Update PlaceOrderBatch internal implementation**
-```go
-func (engine *MatchingEngine) PlaceOrderBatch(
-	ctx context.Context,
-	marketID string,
-	cmds []*protocol.PlaceOrderParams,
-) error {
-	if len(cmds) == 0 {
-		return nil
-	}
-
+	req any,
+) (*Future[any], error) {
 	if engine.isShutdown.Load() {
-		return ErrShutdown
+		return nil, ErrShutdown
 	}
 
-	protoCmds := make([]*protocol.Command, 0, len(cmds))
-	for _, cmd := range cmds {
-		if err := requireCommandID(cmd.CommandID); err != nil {
-			return err
-		}
-		bytes, err := cmd.MarshalBinary()
-		if err != nil {
-			// Early return on serialization error - nothing has been inserted into the queue yet.
-			return err
-		}
-		protoCmds = append(protoCmds, &protocol.Command{
-			MarketID:  marketID,
-			Type:      protocol.CmdPlaceOrder,
-			CommandID: cmd.CommandID,
-			Timestamp: cmd.Timestamp,
-			Payload:   bytes,
-		})
+	respChan := engine.acquireResponseChannel()
+
+	if err := engine.enqueueQueryWithResponse(ctx, req, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
 	}
 
-	return engine.EnqueueCommandBatch(ctx, protoCmds)
+	return &Future[any]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
 }
 ```
 
-Wait, I should also check `handleCreateMarket` etc. in `engine.go` because they use `engine.serializer.Unmarshal`.
-The instruction didn't mention updating handlers, but it said "Update internal implementation".
-However, `Unmarshal` might still be needed since `payload.UnmarshalBinary` is also available.
-Actually, the instruction specifically mentioned `params.MarshalBinary()`.
-For `Unmarshal`, `engine.serializer` is still okay, but `UnmarshalBinary` is more direct.
-Let's see if I should update handlers too.
-Instruction 3 says:
-> Update internal implementation:
-> - Extract `CommandID`, `MarketID`, `Timestamp` from `params`.
-> - Call `params.MarshalBinary()` to get the payload.
-> - Create `protocol.Command` (the envelope) using the extracted metadata and payload.
-> - Ensure `requireCommandID(params.CommandID)` is checked.
-> - Call `engine.enqueueCommandWithResponse` or `engine.EnqueueCommand`.
+- [ ] **Step 2: Update type assertions in `engine_test.go` and `order_book_bench_test.go`**
 
-This clearly refers to the PUBLIC methods where `params` are passed in.
-The `handlexxx` methods are private and they process `protocol.Command` from the ring buffer.
+Since `Query` returns `*Future[any]`, tests must cast the result after waiting.
 
-Wait, I should also check if `engine.serializer` field in `MatchingEngine` struct is still needed.
-If all commands now use `MarshalBinary()`, `engine.serializer` might be used only for `Unmarshal`.
-But `protocol.PlaceOrderParams` etc also have `UnmarshalBinary()`.
-Wait, `protocol.Serializer` interface might be used elsewhere.
-`MatchingEngine` has:
-```go
-	serializer    protocol.Serializer
+In `engine_test.go`:
+```bash
+sed -i 's/stats, err := statsFuture.Wait(ctx)/res, err := statsFuture.Wait(ctx)\n\t\trequire.NoError(t, err)\n\t\tstats := res.(\*protocol.GetStatsResponse)/g' engine_test.go
+```
+*Note: Depending on exact usage, manually ensure `Wait(ctx)` results are cast to `(*protocol.GetStatsResponse)` or `(*protocol.GetDepthResponse)`.*
+
+In `order_book_bench_test.go`:
+```bash
+sed -i 's/if _, err := f.Wait(ctx); err != nil/if res, err := f.Wait(ctx); err != nil {\n\t\t\t\t\treturn\n\t\t\t\t}\n\t\t\t\t_ = res.(\*protocol.GetStatsResponse)/g' order_book_bench_test.go
 ```
 
-Let's check `protocol/types.go` or where `Serializer` is defined.
-I'll grep for `Serializer`.
+- [ ] **Step 3: Run test to verify it passes**
+
+Run: `go test -v ./...`
+Expected: PASS
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add engine.go engine_test.go order_book_bench_test.go
+git commit -m "feat: implement unified Query method and remove GetStats/Depth"
+```
+
+### Task 3: Privatize `EnqueueCommand` and `EnqueueCommandBatch`
+
+**Files:**
+- Modify: `engine.go`
+- Modify: `engine_context_test.go`
+- Modify: `engine_user_event_test.go`
+- Modify: `order_book_bench_test.go`
+
+- [ ] **Step 1: Update Tests to use private methods**
+
+Update the tests to call `enqueueCommand` and `enqueueCommandBatch`.
+
+```bash
+sed -i 's/\.EnqueueCommand(/.enqueueCommand(/g' engine_context_test.go engine_user_event_test.go order_book_bench_test.go
+sed -i 's/\.EnqueueCommandBatch(/.enqueueCommandBatch(/g' order_book_bench_test.go
+```
+
+- [ ] **Step 2: Run test to verify it fails (Compile Error)**
+
+Run: `go test -v ./...`
+Expected: FAIL with "engine.enqueueCommand undefined"
+
+- [ ] **Step 3: Rename methods in `engine.go`**
+
+Rename `EnqueueCommand` to `enqueueCommand` and `EnqueueCommandBatch` to `enqueueCommandBatch`. 
+Update all internal usages within `engine.go`:
+- Update `SubmitAsync` to call `engine.enqueueCommand(ctx, cmd)`
+- Update `PlaceOrderBatch` to call `engine.enqueueCommandBatch(ctx, protoCmds)`
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `go test -v ./...`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add engine.go engine_context_test.go engine_user_event_test.go order_book_bench_test.go
+git commit -m "refactor: privatize enqueue methods"
+```
+
+### Task 4: Hide `OnEvent` via internal handler struct
+
+**Files:**
+- Modify: `engine.go`
+
+- [ ] **Step 1: Create `engineEventHandler` in `engine.go`**
+
+In `engine.go`, define a private struct to satisfy the `EventHandler` interface and rename `engine.OnEvent` to `engine.onEvent`.
+
+```go
+// engineEventHandler is a private wrapper to hide the OnEvent method from the public API.
+type engineEventHandler struct {
+	engine *MatchingEngine
+}
+
+func (h *engineEventHandler) OnEvent(ev *InputEvent) {
+	h.engine.onEvent(ev)
+}
+```
+
+- [ ] **Step 2: Update `NewMatchingEngine` and rename `OnEvent`**
+
+In `engine.go` inside `NewMatchingEngine`:
+```go
+	engine.ring = NewRingBuffer(defaultRingBufferSize, &engineEventHandler{engine})
+```
+
+Rename `func (engine *MatchingEngine) OnEvent(ev *InputEvent)` to `func (engine *MatchingEngine) onEvent(ev *InputEvent)`.
+
+- [ ] **Step 3: Run test to verify and fix if tests break**
+
+Run: `go test -v ./...`
+If any tests are calling `engine.OnEvent` directly, update them to call `engine.onEvent`.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add engine.go
+git commit -m "refactor: hide OnEvent from public engine interface"
+```
+
+### Task 5: Update `README.md` Documentation
+
+**Files:**
+- Modify: `README.md`
+
+- [ ] **Step 1: Update Command Semantics in `README.md`**
+
+Replace the bullet point regarding `GetStats` and `Depth`:
+
+```markdown
+- `GetStats()` and `Depth()` return `ErrNotFound` immediately when the market does not exist.
+```
+With:
+```markdown
+- The `Query()` method (e.g., for `protocol.GetStatsRequest` or `protocol.GetDepthRequest`) returns `ErrNotFound` immediately when the market does not exist.
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add README.md
+git commit -m "docs: update README for unified Query API"
+```
