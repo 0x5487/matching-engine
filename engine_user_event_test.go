@@ -117,7 +117,7 @@ func TestUserEvent_InvalidPayloadEmitsReject(t *testing.T) {
 
 	go engine.Run()
 
-	err := engine.EnqueueCommand(ctx, &protocol.Command{
+	err := engine.enqueueCommand(ctx, &protocol.Command{
 		Type:      protocol.CmdUserEvent,
 		CommandID: "bad-user-event",
 		Payload:   []byte("{"),

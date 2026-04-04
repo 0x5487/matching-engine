@@ -22,7 +22,7 @@ func TestMatchingEngine_ContextAwareSubmission(t *testing.T) {
 		// defaultRingBufferSize is 32768.
 		// We need to fill all 32768 slots.
 		for i := range defaultRingBufferSize {
-			err := engine.EnqueueCommand(context.Background(), &protocol.Command{
+			err := engine.enqueueCommand(context.Background(), &protocol.Command{
 				CommandID: fmt.Sprintf("fill-%d", i),
 			})
 			require.NoError(t, err)
@@ -38,7 +38,7 @@ func TestMatchingEngine_ContextAwareSubmission(t *testing.T) {
 		// But I want to test the NEW signature.
 
 		// For TDD, I'll use the new signature here.
-		err := engine.EnqueueCommand(ctx, &protocol.Command{
+		err := engine.enqueueCommand(ctx, &protocol.Command{
 			CommandID: "blocking-command",
 		})
 
@@ -52,7 +52,7 @@ func TestMatchingEngine_ContextAwareSubmission(t *testing.T) {
 
 		// Fill the ring buffer
 		for i := range defaultRingBufferSize {
-			err := engine.EnqueueCommand(context.Background(), &protocol.Command{
+			err := engine.enqueueCommand(context.Background(), &protocol.Command{
 				CommandID: fmt.Sprintf("fill-%d", i),
 			})
 			require.NoError(t, err)

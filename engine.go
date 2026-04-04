@@ -89,7 +89,7 @@ func (engine *MatchingEngine) SubmitAsync(ctx context.Context, cmd *protocol.Com
 	if err := requireCommandID(cmd.CommandID); err != nil {
 		return err
 	}
-	return engine.EnqueueCommand(ctx, cmd)
+	return engine.enqueueCommand(ctx, cmd)
 }
 
 // Run starts the engine's event loop. This is a blocking call.
@@ -122,9 +122,9 @@ func (engine *MatchingEngine) OnEvent(ev *InputEvent) {
 	}
 }
 
-// EnqueueCommand routes the command to the Engine's shared RingBuffer.
-// CreateMarket is handled synchronously so the OrderBook is immediately available.
-func (engine *MatchingEngine) EnqueueCommand(ctx context.Context, cmd *protocol.Command) error {
+// enqueueCommand routes the command to the Engine's shared RingBuffer.
+// Create market commands are handled synchronously so the OrderBook is immediately available.
+func (engine *MatchingEngine) enqueueCommand(ctx context.Context, cmd *protocol.Command) error {
 	if engine.isShutdown.Load() {
 		return ErrShutdown
 	}
@@ -154,9 +154,9 @@ func (engine *MatchingEngine) EnqueueCommand(ctx context.Context, cmd *protocol.
 	}
 }
 
-// EnqueueCommandBatch routes a batch of commands to the Engine's shared RingBuffer.
+// enqueueCommandBatch routes a batch of commands to the Engine's shared RingBuffer.
 // It claims n contiguous slots in the RingBuffer to amortize synchronization overhead.
-func (engine *MatchingEngine) EnqueueCommandBatch(ctx context.Context, cmds []*protocol.Command) error {
+func (engine *MatchingEngine) enqueueCommandBatch(ctx context.Context, cmds []*protocol.Command) error {
 	if len(cmds) == 0 {
 		return nil
 	}
@@ -171,7 +171,7 @@ func (engine *MatchingEngine) EnqueueCommandBatch(ctx context.Context, cmds []*p
 	if n > engine.ring.capacity {
 		// Fallback to individual enqueues if batch is larger than capacity
 		for _, cmd := range cmds {
-			if err := engine.EnqueueCommand(ctx, cmd); err != nil {
+			if err := engine.enqueueCommand(ctx, cmd); err != nil {
 				return err
 			}
 		}
@@ -249,7 +249,7 @@ func (engine *MatchingEngine) PlaceOrderBatch(
 		})
 	}
 
-	return engine.EnqueueCommandBatch(ctx, protoCmds)
+	return engine.enqueueCommandBatch(ctx, protoCmds)
 }
 
 // Query executes a read-only request against the matching engine.
