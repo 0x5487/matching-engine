@@ -137,6 +137,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 			book.rejectInvalidPayload(
 				cmd.CommandID,
 				book.marketID,
+				"",
 				0,
 				protocol.RejectReasonInvalidPayload,
 				cmd.Timestamp,
@@ -152,6 +153,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 			book.rejectInvalidPayload(
 				cmd.CommandID,
 				book.marketID,
+				"",
 				0,
 				protocol.RejectReasonInvalidPayload,
 				cmd.Timestamp,
@@ -167,6 +169,7 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 			book.rejectInvalidPayload(
 				cmd.CommandID,
 				book.marketID,
+				"",
 				0,
 				protocol.RejectReasonInvalidPayload,
 				cmd.Timestamp,
@@ -180,14 +183,28 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 		val := placeOrderCmdPool.Get()
 		payload, ok := val.(*protocol.PlaceOrderParams)
 		if !ok {
-			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Timestamp)
+			book.rejectInvalidPayload(
+				cmd.CommandID,
+				book.marketID,
+				"unknown",
+				0,
+				protocol.RejectReasonInvalidPayload,
+				cmd.Timestamp,
+			)
 			book.respondError(ev, errors.New("failed to acquire place order params from pool"))
 			return
 		}
 		*payload = protocol.PlaceOrderParams{} // Reset before use
 		if err := payload.UnmarshalBinary(cmd.Payload); err != nil {
 			placeOrderCmdPool.Put(payload)
-			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Timestamp)
+			book.rejectInvalidPayload(
+				cmd.CommandID,
+				book.marketID,
+				"unknown",
+				0,
+				protocol.RejectReasonInvalidPayload,
+				cmd.Timestamp,
+			)
 			book.respondError(ev, err)
 			return
 		}
@@ -197,14 +214,28 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 		val := cancelOrderCmdPool.Get()
 		payload, ok := val.(*protocol.CancelOrderParams)
 		if !ok {
-			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Timestamp)
+			book.rejectInvalidPayload(
+				cmd.CommandID,
+				book.marketID,
+				"unknown",
+				0,
+				protocol.RejectReasonInvalidPayload,
+				cmd.Timestamp,
+			)
 			book.respondError(ev, errors.New("failed to acquire cancel order params from pool"))
 			return
 		}
 		*payload = protocol.CancelOrderParams{} // Reset before use
 		if err := payload.UnmarshalBinary(cmd.Payload); err != nil {
 			cancelOrderCmdPool.Put(payload)
-			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Timestamp)
+			book.rejectInvalidPayload(
+				cmd.CommandID,
+				book.marketID,
+				"unknown",
+				0,
+				protocol.RejectReasonInvalidPayload,
+				cmd.Timestamp,
+			)
 			book.respondError(ev, err)
 			return
 		}
@@ -213,7 +244,14 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 	case protocol.CmdAmendOrder:
 		var payload protocol.AmendOrderParams
 		if err := payload.UnmarshalBinary(cmd.Payload); err != nil {
-			book.rejectInvalidPayload(cmd.CommandID, "unknown", 0, protocol.RejectReasonInvalidPayload, cmd.Timestamp)
+			book.rejectInvalidPayload(
+				cmd.CommandID,
+				book.marketID,
+				"unknown",
+				0,
+				protocol.RejectReasonInvalidPayload,
+				cmd.Timestamp,
+			)
 			book.respondError(ev, err)
 			return
 		}
@@ -265,6 +303,7 @@ func (book *OrderBook) respondError(ev *InputEvent, err error) {
 
 func (book *OrderBook) rejectInvalidPayload(
 	commandID string,
+	marketID string,
 	orderID string,
 	userID uint64,
 	reason protocol.RejectReason,
@@ -275,7 +314,7 @@ func (book *OrderBook) rejectInvalidPayload(
 		book.seqID.Add(1),
 		commandID,
 		book.engineID,
-		book.marketID,
+		marketID,
 		orderID,
 		userID,
 		reason,
@@ -297,6 +336,7 @@ func (book *OrderBook) handlePlaceOrder(
 	if timestamp <= 0 {
 		book.rejectInvalidPayload(
 			commandID,
+			book.marketID,
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonInvalidPayload,
@@ -309,6 +349,7 @@ func (book *OrderBook) handlePlaceOrder(
 	if book.state == protocol.OrderBookStateHalted {
 		book.rejectInvalidPayload(
 			commandID,
+			book.marketID,
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonMarketHalted,
@@ -320,6 +361,7 @@ func (book *OrderBook) handlePlaceOrder(
 	if book.state == protocol.OrderBookStateSuspended {
 		book.rejectInvalidPayload(
 			commandID,
+			book.marketID,
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonMarketSuspended,
@@ -334,6 +376,7 @@ func (book *OrderBook) handlePlaceOrder(
 	if err != nil {
 		book.rejectInvalidPayload(
 			commandID,
+			book.marketID,
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonInvalidPayload,
@@ -346,6 +389,7 @@ func (book *OrderBook) handlePlaceOrder(
 	if err != nil {
 		book.rejectInvalidPayload(
 			commandID,
+			book.marketID,
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonInvalidPayload,
@@ -361,6 +405,7 @@ func (book *OrderBook) handlePlaceOrder(
 		if err != nil {
 			book.rejectInvalidPayload(
 				commandID,
+				book.marketID,
 				cmd.OrderID,
 				cmd.UserID,
 				protocol.RejectReasonInvalidPayload,
@@ -376,6 +421,7 @@ func (book *OrderBook) handlePlaceOrder(
 		if err != nil {
 			book.rejectInvalidPayload(
 				commandID,
+				book.marketID,
 				cmd.OrderID,
 				cmd.UserID,
 				protocol.RejectReasonInvalidPayload,
@@ -414,6 +460,7 @@ func (book *OrderBook) handleCancelOrder(
 	if timestamp <= 0 {
 		book.rejectInvalidPayload(
 			commandID,
+			book.marketID,
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonInvalidPayload,
@@ -427,6 +474,7 @@ func (book *OrderBook) handleCancelOrder(
 	if book.state == protocol.OrderBookStateHalted {
 		book.rejectInvalidPayload(
 			commandID,
+			book.marketID,
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonMarketHalted,
@@ -453,6 +501,7 @@ func (book *OrderBook) handleAmendOrder(
 	if timestamp <= 0 {
 		book.rejectInvalidPayload(
 			commandID,
+			book.marketID,
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonInvalidPayload,
@@ -465,6 +514,7 @@ func (book *OrderBook) handleAmendOrder(
 	if book.state == protocol.OrderBookStateHalted {
 		book.rejectInvalidPayload(
 			commandID,
+			book.marketID,
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonMarketHalted,
@@ -476,6 +526,7 @@ func (book *OrderBook) handleAmendOrder(
 	if book.state == protocol.OrderBookStateSuspended {
 		book.rejectInvalidPayload(
 			commandID,
+			book.marketID,
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonMarketSuspended,
@@ -489,6 +540,7 @@ func (book *OrderBook) handleAmendOrder(
 	if err != nil {
 		book.rejectInvalidPayload(
 			commandID,
+			book.marketID,
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonInvalidPayload,
@@ -501,6 +553,7 @@ func (book *OrderBook) handleAmendOrder(
 	if err != nil {
 		book.rejectInvalidPayload(
 			commandID,
+			book.marketID,
 			cmd.OrderID,
 			cmd.UserID,
 			protocol.RejectReasonInvalidPayload,
@@ -1310,6 +1363,7 @@ func (book *OrderBook) handleSuspendMarket(
 		book.rejectInvalidPayload(
 			commandID,
 			book.marketID,
+			"",
 			payload.UserID,
 			protocol.RejectReasonInvalidPayload,
 			timestamp,
@@ -1323,6 +1377,7 @@ func (book *OrderBook) handleSuspendMarket(
 		book.rejectInvalidPayload(
 			commandID,
 			book.marketID,
+			"",
 			payload.UserID,
 			protocol.RejectReasonMarketHalted,
 			timestamp,
@@ -1360,6 +1415,7 @@ func (book *OrderBook) handleResumeMarket(
 		book.rejectInvalidPayload(
 			commandID,
 			book.marketID,
+			"",
 			payload.UserID,
 			protocol.RejectReasonInvalidPayload,
 			timestamp,
@@ -1372,6 +1428,7 @@ func (book *OrderBook) handleResumeMarket(
 		book.rejectInvalidPayload(
 			commandID,
 			book.marketID,
+			"",
 			payload.UserID,
 			protocol.RejectReasonMarketHalted,
 			timestamp,
@@ -1409,6 +1466,7 @@ func (book *OrderBook) handleUpdateConfig(
 		book.rejectInvalidPayload(
 			commandID,
 			book.marketID,
+			"",
 			payload.UserID,
 			protocol.RejectReasonInvalidPayload,
 			timestamp,
@@ -1440,6 +1498,7 @@ func (book *OrderBook) handleUpdateConfig(
 			book.rejectInvalidPayload(
 				commandID,
 				book.marketID,
+				"",
 				payload.UserID,
 				protocol.RejectReasonInvalidPayload,
 				timestamp,

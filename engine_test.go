@@ -605,7 +605,14 @@ func TestManagement_LateResponsePollution(t *testing.T) {
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 
 	go engine.Run()
-	time.Sleep(50 * time.Millisecond)
+	assert.Eventually(t, func() bool {
+		f, e := engine.Query(context.Background(), &protocol.GetStatsRequest{MarketID: marketID1})
+		if e != nil {
+			return false
+		}
+		_, waitErr := f.Wait(context.Background())
+		return waitErr == nil
+	}, time.Second, 10*time.Millisecond)
 
 	ctxLong := context.Background()
 	future2, err := submitCreateMarket(ctxLong, engine, &protocol.CreateMarketParams{
