@@ -137,7 +137,7 @@ func main() {
 - Every state-changing command must carry an upstream-assigned logical `Timestamp`. `Timestamp <= 0` is rejected as `invalid_payload`. For engine helper methods such as `CreateMarket`, `SuspendMarket`, `ResumeMarket`, `UpdateConfig`, and `SendUserEvent`, pass the timestamp explicitly from your Gateway / Sequencer / OMS.
 - Business-level failures are emitted as `OrderBookLog` entries with `Type == protocol.LogTypeReject`.
 - Commands sent to a missing market generate a reject event with `RejectReasonMarketNotFound`.
-- `GetStats()` and `Depth()` return `ErrNotFound` immediately when the market does not exist.
+- The `Query()` method (e.g., for `protocol.GetStatsRequest` or `protocol.GetDepthRequest`) returns `ErrNotFound` immediately when the market does not exist.
 
 ### Management Commands
 
