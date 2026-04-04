@@ -2,6 +2,7 @@
 
 ## [unreleased]
 
+- breaking: refactor `MatchingEngine` API to a unified "Full-Struct" pattern and implement high-performance manual binary serialization for all command parameters.
 - feature: extend **Future Pattern** to all management commands (`CreateMarket`, `SuspendMarket`, `ResumeMarket`, `UpdateConfig`) and query commands (`Depth`, `GetStats`) for synchronous-like waiting and consistent API experience.
 - feature: introduce **IdleStrategy** (BusySpin, Yielding) for the RingBuffer to allow flexible waiting behaviors and move waiting logic out of the core Disruptor.
 - feature: implement **Context-Aware Command Submission** in `MatchingEngine`, allowing `PlaceOrder`, `CancelOrder`, etc., to respect context deadlines or cancellations during the RingBuffer submission phase.

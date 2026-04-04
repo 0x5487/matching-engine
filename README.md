@@ -57,7 +57,13 @@ func main() {
 
 	// 4. Create a Market
 	// Management commands return a Future for synchronous-like waiting.
-	future, err := engine.CreateMarket(ctx, "create-btc-usdt", 9001, "BTC-USDT", "0.00000001", time.Now().UnixNano())
+	future, err := engine.CreateMarket(ctx, &protocol.CreateMarketParams{
+		CommandID:  "create-btc-usdt",
+		UserID:     9001,
+		MarketID:   "BTC-USDT",
+		MinLotSize: "0.00000001",
+		Timestamp:  time.Now().UnixNano(),
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -68,8 +74,9 @@ func main() {
 	}
 
 	// 5. Place a Sell Limit Order
-	sellCmd := &protocol.PlaceOrderCommand{
+	sellCmd := &protocol.PlaceOrderParams{
 		CommandID: "sell-1-cmd",
+		MarketID:  "BTC-USDT",
 		OrderID:   "sell-1",
 		OrderType: protocol.OrderTypeLimit,
 		Side:      protocol.SideSell,
@@ -78,13 +85,14 @@ func main() {
 		UserID:    1001,
 		Timestamp: time.Now().UnixNano(),
 	}
-	if err := engine.PlaceOrder(ctx, "BTC-USDT", sellCmd); err != nil {
+	if err := engine.PlaceOrder(ctx, sellCmd); err != nil {
 		fmt.Printf("Error placing sell order: %v\n", err)
 	}
 
 	// 6. Place a Buy Limit Order (Matches immediately)
-	buyCmd := &protocol.PlaceOrderCommand{
+	buyCmd := &protocol.PlaceOrderParams{
 		CommandID: "buy-1-cmd",
+		MarketID:  "BTC-USDT",
 		OrderID:   "buy-1",
 		OrderType: protocol.OrderTypeLimit,
 		Side:      protocol.SideBuy,
@@ -93,7 +101,7 @@ func main() {
 		UserID:    1002,
 		Timestamp: time.Now().UnixNano(),
 	}
-	if err := engine.PlaceOrder(ctx, "BTC-USDT", buyCmd); err != nil {
+	if err := engine.PlaceOrder(ctx, buyCmd); err != nil {
 		fmt.Printf("Error placing buy order: %v\n", err)
 	}
 
@@ -130,16 +138,32 @@ The engine supports dynamic market management:
 
 ```go
 // Suspend a market (rejects new Place/Amend orders)
-future, err := engine.SuspendMarket(ctx, "suspend-btc-usdt", 9001, "BTC-USDT", time.Now().UnixNano())
+future, err := engine.SuspendMarket(ctx, &protocol.SuspendMarketParams{
+	CommandID: "suspend-btc-usdt",
+	UserID:    9001,
+	MarketID:  "BTC-USDT",
+	Timestamp: time.Now().UnixNano(),
+})
 _, err = future.Wait(ctx)
 
 // Resume a market
-future, err = engine.ResumeMarket(ctx, "resume-btc-usdt", 9001, "BTC-USDT", time.Now().UnixNano())
+future, err = engine.ResumeMarket(ctx, &protocol.ResumeMarketParams{
+	CommandID: "resume-btc-usdt",
+	UserID:    9001,
+	MarketID:  "BTC-USDT",
+	Timestamp: time.Now().UnixNano(),
+})
 _, err = future.Wait(ctx)
 
 // Update market configuration (e.g. MinLotSize)
 newLotSize := "0.01"
-future, err = engine.UpdateConfig(ctx, "update-btc-usdt-lot", 9001, "BTC-USDT", newLotSize, time.Now().UnixNano())
+future, err = engine.UpdateConfig(ctx, &protocol.UpdateConfigParams{
+	CommandID:  "update-btc-usdt-lot",
+	UserID:     9001,
+	MarketID:   "BTC-USDT",
+	MinLotSize: newLotSize,
+	Timestamp:  time.Now().UnixNano(),
+})
 _, err = future.Wait(ctx)
 ```
 

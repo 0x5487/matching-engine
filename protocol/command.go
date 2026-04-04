@@ -71,14 +71,107 @@ type Command struct {
 	// CommandID is the original identifier provided by the submitter.
 	CommandID string `json:"command_id"`
 
-	// Payload contains the serialized business data (e.g., JSON bytes of PlaceOrderCommand).
+	// Timestamp is the logical timestamp of the command (UnixNano).
+	Timestamp int64 `json:"timestamp"`
+
+	// Payload contains the serialized business data (e.g., binary bytes of PlaceOrderParams).
 	// We use lazy deserialization to optimize routing performance.
 	Payload []byte `json:"payload"`
 }
 
-// PlaceOrderCommand is the payload for placing a new order.
-type PlaceOrderCommand struct {
+// BinarySize returns the size of the Command in binary format.
+func (c *Command) BinarySize() int {
+	// Version(1) + Type(1) + SeqID(8) + Timestamp(8) + MarketID(2+L) + CommandID(2+L) + Payload(4+L)
+	return 1 + 1 + 8 + 8 + 2 + len(c.MarketID) + 2 + len(c.CommandID) + 4 + len(c.Payload)
+}
+
+// MarshalBinary serializes the Command (envelope) to binary format.
+func (c *Command) MarshalBinary() ([]byte, error) {
+	buf := make([]byte, c.BinarySize())
+	offset := 0
+
+	buf[offset] = c.Version
+	offset++
+	buf[offset] = uint8(c.Type)
+	offset++
+
+	binary.BigEndian.PutUint64(buf[offset:], c.SeqID)
+	offset += 8
+	/* #nosec G115 */
+	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
+	offset += 8
+
+	offset += writeString(buf[offset:], c.MarketID)
+	offset += writeString(buf[offset:], c.CommandID)
+
+	// Payload with 4-byte length prefix
+	/* #nosec G115 */
+	binary.BigEndian.PutUint32(buf[offset:], uint32(len(c.Payload)))
+	offset += 4
+	copy(buf[offset:], c.Payload)
+
+	return buf, nil
+}
+
+// UnmarshalBinary deserializes the Command (envelope) from binary format.
+func (c *Command) UnmarshalBinary(data []byte) error {
+	if len(data) > 0 && data[0] == '{' {
+		return errors.New("looks like JSON")
+	}
+	if len(data) < 18 { //nolint:mnd // Min size: Version(1)+Type(1)+SeqID(8)+Timestamp(8)
+		return io.ErrUnexpectedEOF
+	}
+	offset := 0
+
+	c.Version = data[offset]
+	offset++
+	c.Type = CommandType(data[offset])
+	offset++
+
+	c.SeqID = binary.BigEndian.Uint64(data[offset:])
+	offset += 8
+
+	if len(data[offset:]) < 8 { //nolint:mnd
+		return io.ErrUnexpectedEOF
+	}
+	/* #nosec G115 */
+	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:]))
+	offset += 8
+
+	var n int
+	var err error
+	c.MarketID, n, err = readString(data[offset:])
+	if err != nil {
+		return err
+	}
+	offset += n
+
+	c.CommandID, n, err = readString(data[offset:])
+	if err != nil {
+		return err
+	}
+	offset += n
+
+	if len(data[offset:]) < 4 { //nolint:mnd
+		return io.ErrUnexpectedEOF
+	}
+	payloadLen := int(binary.BigEndian.Uint32(data[offset:]))
+	offset += 4
+
+	if len(data[offset:]) < payloadLen {
+		return io.ErrUnexpectedEOF
+	}
+	c.Payload = make([]byte, payloadLen)
+	copy(c.Payload, data[offset:offset+payloadLen])
+
+	return nil
+}
+
+// PlaceOrderParams is the payload for placing a new order.
+type PlaceOrderParams struct {
 	CommandID   string    `json:"-"`
+	MarketID    string    `json:"-"`
+	Timestamp   int64     `json:"-"`
 	OrderID     string    `json:"order_id"`
 	Side        Side      `json:"side"`
 	OrderType   OrderType `json:"order_type"`
@@ -87,15 +180,13 @@ type PlaceOrderCommand struct {
 	VisibleSize string    `json:"visible_size,omitempty"`
 	QuoteSize   string    `json:"quote_size,omitempty"`
 	UserID      uint64    `json:"user_id"`
-	Timestamp   int64     `json:"timestamp"`
 }
 
-// MarshalBinary serializes the PlaceOrderCommand to binary format.
-func (c *PlaceOrderCommand) MarshalBinary(buf []byte) (int, error) {
+// MarshalBinary serializes the PlaceOrderParams to binary format.
+func (c *PlaceOrderParams) MarshalBinary() ([]byte, error) {
+	buf := make([]byte, c.BinarySize())
 	offset := 0
-	/* #nosec G115 */
-	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
-	offset += 8
+
 	binary.BigEndian.PutUint64(buf[offset:], c.UserID)
 	offset += 8
 	/* #nosec G115 */
@@ -104,31 +195,33 @@ func (c *PlaceOrderCommand) MarshalBinary(buf []byte) (int, error) {
 	buf[offset] = c.OrderType.ToUint8()
 	offset++
 
+	/* #nosec G115 */
+	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
+	offset += 8
+
 	offset += writeString(buf[offset:], c.OrderID)
 	offset += writeString(buf[offset:], c.Price)
 	offset += writeString(buf[offset:], c.Size)
 	offset += writeString(buf[offset:], c.VisibleSize)
-	offset += writeString(buf[offset:], c.QuoteSize)
+	writeString(buf[offset:], c.QuoteSize)
 
-	return offset, nil
+	return buf, nil
 }
 
 // BinarySize returns the size of the command in binary format.
-func (c *PlaceOrderCommand) BinarySize() int {
-	return 8 + 8 + 1 + 1 + 2*5 + len(c.OrderID) + len(c.Price) + len(c.Size) + len(c.VisibleSize) + len(c.QuoteSize)
+func (c *PlaceOrderParams) BinarySize() int {
+	return 8 + 1 + 1 + 8 + 2*5 + len(c.OrderID) + len(c.Price) + len(c.Size) + len(c.VisibleSize) + len(c.QuoteSize)
 }
 
-// UnmarshalBinary deserializes the PlaceOrderCommand from binary format.
-func (c *PlaceOrderCommand) UnmarshalBinary(data []byte) (int, error) {
+// UnmarshalBinary deserializes the PlaceOrderParams from binary format.
+func (c *PlaceOrderParams) UnmarshalBinary(data []byte) error {
 	if len(data) > 0 && data[0] == '{' {
-		return 0, errors.New("looks like JSON")
+		return errors.New("looks like JSON")
 	}
-	if len(data) < minPlaceOrderSize {
-		return 0, io.ErrUnexpectedEOF
+	if len(data) < 18 { //nolint:mnd // UserID(8) + Side(1) + OrderType(1) + Timestamp(8)
+		return io.ErrUnexpectedEOF
 	}
 	offset := 0
-	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:])) //nolint:gosec
-	offset += 8
 	c.UserID = binary.BigEndian.Uint64(data[offset:])
 	offset += 8
 	c.Side = Side(data[offset])
@@ -136,143 +229,166 @@ func (c *PlaceOrderCommand) UnmarshalBinary(data []byte) (int, error) {
 	c.OrderType = OrderTypeFromUint8(data[offset])
 	offset++
 
+	if len(data[offset:]) < 8 { //nolint:mnd
+		return io.ErrUnexpectedEOF
+	}
+	/* #nosec G115 */
+	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:]))
+	offset += 8
+
 	var n int
 	var err error
 	c.OrderID, n, err = readString(data[offset:])
 	if err != nil {
-		return 0, err
+		return err
 	}
 	offset += n
 	c.Price, n, err = readString(data[offset:])
 	if err != nil {
-		return 0, err
+		return err
 	}
 	offset += n
 	c.Size, n, err = readString(data[offset:])
 	if err != nil {
-		return 0, err
+		return err
 	}
 	offset += n
 	c.VisibleSize, n, err = readString(data[offset:])
 	if err != nil {
-		return 0, err
+		return err
 	}
 	offset += n
 	c.QuoteSize, n, err = readString(data[offset:])
 	if err != nil {
-		return 0, err
+		return err
 	}
+	_ = n
 
-	return offset + n, nil
+	return nil
 }
 
-// CancelOrderCommand is the payload for canceling an existing order.
-type CancelOrderCommand struct {
+// CancelOrderParams is the payload for canceling an existing order.
+type CancelOrderParams struct {
 	CommandID string `json:"-"`
+	MarketID  string `json:"-"`
+	Timestamp int64  `json:"-"`
 	OrderID   string `json:"order_id"`
 	UserID    uint64 `json:"user_id"`
-	Timestamp int64  `json:"timestamp"`
 }
 
-// MarshalBinary serializes the CancelOrderCommand to binary format.
-func (c *CancelOrderCommand) MarshalBinary(buf []byte) (int, error) {
+// MarshalBinary serializes the CancelOrderParams to binary format.
+func (c *CancelOrderParams) MarshalBinary() ([]byte, error) {
+	buf := make([]byte, c.BinarySize())
 	offset := 0
+	binary.BigEndian.PutUint64(buf[offset:], c.UserID)
+	offset += 8
 	/* #nosec G115 */
 	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
 	offset += 8
-	binary.BigEndian.PutUint64(buf[offset:], c.UserID)
-	offset += 8
-	offset += writeString(buf[offset:], c.OrderID)
-	return offset, nil
+	writeString(buf[offset:], c.OrderID)
+	return buf, nil
 }
 
 // BinarySize returns the size of the command in binary format.
-func (c *CancelOrderCommand) BinarySize() int {
+func (c *CancelOrderParams) BinarySize() int {
 	return 8 + 8 + 2 + len(c.OrderID)
 }
 
-// UnmarshalBinary deserializes the CancelOrderCommand from binary format.
-func (c *CancelOrderCommand) UnmarshalBinary(data []byte) (int, error) {
+// UnmarshalBinary deserializes the CancelOrderParams from binary format.
+func (c *CancelOrderParams) UnmarshalBinary(data []byte) error {
 	if len(data) > 0 && data[0] == '{' {
-		return 0, errors.New("looks like JSON")
+		return errors.New("looks like JSON")
 	}
-	if len(data) < minCancelOrderSize {
-		return 0, io.ErrUnexpectedEOF
+	if len(data) < 16 { //nolint:mnd // UserID(8) + Timestamp(8)
+		return io.ErrUnexpectedEOF
 	}
 	offset := 0
-	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:])) //nolint:gosec
-	offset += 8
 	c.UserID = binary.BigEndian.Uint64(data[offset:])
 	offset += 8
-	orderID, n, err := readString(data[offset:])
-	if err != nil {
-		return 0, err
+
+	if len(data[offset:]) < 8 { //nolint:mnd
+		return io.ErrUnexpectedEOF
 	}
-	c.OrderID = orderID
-
-	return offset + n, nil
-}
-
-// AmendOrderCommand is the payload for modifying an existing order.
-type AmendOrderCommand struct {
-	CommandID string `json:"-"`
-	OrderID   string `json:"order_id"`
-	UserID    uint64 `json:"user_id"`
-	NewPrice  string `json:"new_price"`
-	NewSize   string `json:"new_size"`
-	Timestamp int64  `json:"timestamp"`
-}
-
-// MarshalBinary serializes the AmendOrderCommand to binary format.
-func (c *AmendOrderCommand) MarshalBinary(buf []byte) (int, error) {
-	offset := 0
 	/* #nosec G115 */
-	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
-	offset += 8
-	binary.BigEndian.PutUint64(buf[offset:], c.UserID)
-	offset += 8
-	offset += writeString(buf[offset:], c.OrderID)
-	offset += writeString(buf[offset:], c.NewPrice)
-	offset += writeString(buf[offset:], c.NewSize)
-	return offset, nil
-}
-
-// BinarySize returns the size of the command in binary format.
-func (c *AmendOrderCommand) BinarySize() int {
-	return 8 + 8 + 2*3 + len(c.OrderID) + len(c.NewPrice) + len(c.NewSize)
-}
-
-// UnmarshalBinary deserializes the AmendOrderCommand from binary format.
-func (c *AmendOrderCommand) UnmarshalBinary(data []byte) (int, error) {
-	if len(data) > 0 && data[0] == '{' {
-		return 0, errors.New("looks like JSON")
-	}
-	if len(data) < minCancelOrderSize {
-		return 0, io.ErrUnexpectedEOF
-	}
-	offset := 0
-	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:])) //nolint:gosec
-	offset += 8
-	c.UserID = binary.BigEndian.Uint64(data[offset:])
+	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:]))
 	offset += 8
 	var n int
 	var err error
 	c.OrderID, n, err = readString(data[offset:])
 	if err != nil {
-		return 0, err
+		return err
+	}
+	_ = n
+	return nil
+}
+
+// AmendOrderParams is the payload for modifying an existing order.
+type AmendOrderParams struct {
+	CommandID string `json:"-"`
+	MarketID  string `json:"-"`
+	Timestamp int64  `json:"-"`
+	OrderID   string `json:"order_id"`
+	UserID    uint64 `json:"user_id"`
+	NewPrice  string `json:"new_price"`
+	NewSize   string `json:"new_size"`
+}
+
+// MarshalBinary serializes the AmendOrderParams to binary format.
+func (c *AmendOrderParams) MarshalBinary() ([]byte, error) {
+	buf := make([]byte, c.BinarySize())
+	offset := 0
+	binary.BigEndian.PutUint64(buf[offset:], c.UserID)
+	offset += 8
+	/* #nosec G115 */
+	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
+	offset += 8
+	offset += writeString(buf[offset:], c.OrderID)
+	offset += writeString(buf[offset:], c.NewPrice)
+	writeString(buf[offset:], c.NewSize)
+	return buf, nil
+}
+
+// BinarySize returns the size of the command in binary format.
+func (c *AmendOrderParams) BinarySize() int {
+	return 8 + 8 + 2*3 + len(c.OrderID) + len(c.NewPrice) + len(c.NewSize)
+}
+
+// UnmarshalBinary deserializes the AmendOrderParams from binary format.
+func (c *AmendOrderParams) UnmarshalBinary(data []byte) error {
+	if len(data) > 0 && data[0] == '{' {
+		return errors.New("looks like JSON")
+	}
+	if len(data) < 16 { //nolint:mnd // UserID(8) + Timestamp(8)
+		return io.ErrUnexpectedEOF
+	}
+	offset := 0
+	c.UserID = binary.BigEndian.Uint64(data[offset:])
+	offset += 8
+
+	if len(data[offset:]) < 8 { //nolint:mnd
+		return io.ErrUnexpectedEOF
+	}
+	/* #nosec G115 */
+	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:]))
+	offset += 8
+	var n int
+	var err error
+	c.OrderID, n, err = readString(data[offset:])
+	if err != nil {
+		return err
 	}
 	offset += n
 	c.NewPrice, n, err = readString(data[offset:])
 	if err != nil {
-		return 0, err
+		return err
 	}
 	offset += n
 	c.NewSize, n, err = readString(data[offset:])
 	if err != nil {
-		return 0, err
+		return err
 	}
-
-	return offset + n, nil
+	_ = n
+	return nil
 }
 
 func writeString(buf []byte, s string) int {
@@ -306,43 +422,315 @@ type GetStatsRequest struct {
 	MarketID string `json:"market_id"`
 }
 
-// CreateMarketCommand is the payload for creating a new market/order book.
-type CreateMarketCommand struct {
+// CreateMarketParams is the payload for creating a new market/order book.
+type CreateMarketParams struct {
+	CommandID  string `json:"-"`
+	MarketID   string `json:"-"`
+	Timestamp  int64  `json:"-"`
 	UserID     uint64 `json:"user_id"`      // Operator ID for audit trail
-	MarketID   string `json:"market_id"`    // Unique market identifier
 	MinLotSize string `json:"min_lot_size"` // Minimum trade unit (e.g., "0.00000001")
-	Timestamp  int64  `json:"timestamp"`
 }
 
-// SuspendMarketCommand is the payload for suspending a market.
-type SuspendMarketCommand struct {
+// MarshalBinary serializes the CreateMarketParams to binary format.
+func (c *CreateMarketParams) MarshalBinary() ([]byte, error) {
+	buf := make([]byte, c.BinarySize())
+	offset := 0
+	binary.BigEndian.PutUint64(buf[offset:], c.UserID)
+	offset += 8
+	/* #nosec G115 */
+	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
+	offset += 8
+	writeString(buf[offset:], c.MinLotSize)
+	return buf, nil
+}
+
+// BinarySize returns the size of the command in binary format.
+func (c *CreateMarketParams) BinarySize() int {
+	return 8 + 8 + 2 + len(c.MinLotSize)
+}
+
+// UnmarshalBinary deserializes the CreateMarketParams from binary format.
+func (c *CreateMarketParams) UnmarshalBinary(data []byte) error {
+	if len(data) > 0 && data[0] == '{' {
+		return errors.New("looks like JSON")
+	}
+	if len(data) < 16 { //nolint:mnd // UserID(8) + Timestamp(8)
+		return io.ErrUnexpectedEOF
+	}
+	offset := 0
+	c.UserID = binary.BigEndian.Uint64(data[offset:])
+	offset += 8
+
+	if len(data[offset:]) < 8 { //nolint:mnd
+		return io.ErrUnexpectedEOF
+	}
+	/* #nosec G115 */
+	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:]))
+	offset += 8
+	var n int
+	var err error
+	c.MinLotSize, n, err = readString(data[offset:])
+	if err != nil {
+		return err
+	}
+	_ = n
+	return nil
+}
+
+// SuspendMarketParams is the payload for suspending a market.
+type SuspendMarketParams struct {
+	CommandID string `json:"-"`
+	Timestamp int64  `json:"-"`
 	UserID    uint64 `json:"user_id"`   // Operator ID for audit trail
 	MarketID  string `json:"market_id"` // Target market to suspend
 	Reason    string `json:"reason"`    // Reason for suspension (for audit)
-	Timestamp int64  `json:"timestamp"`
 }
 
-// ResumeMarketCommand is the payload for resuming a suspended market.
-type ResumeMarketCommand struct {
+// MarshalBinary serializes the SuspendMarketParams to binary format.
+func (c *SuspendMarketParams) MarshalBinary() ([]byte, error) {
+	buf := make([]byte, c.BinarySize())
+	offset := 0
+	binary.BigEndian.PutUint64(buf[offset:], c.UserID)
+	offset += 8
+	/* #nosec G115 */
+	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
+	offset += 8
+	offset += writeString(buf[offset:], c.MarketID)
+	writeString(buf[offset:], c.Reason)
+	return buf, nil
+}
+
+// BinarySize returns the size of the command in binary format.
+func (c *SuspendMarketParams) BinarySize() int {
+	return 8 + 8 + 2*2 + len(c.MarketID) + len(c.Reason)
+}
+
+// UnmarshalBinary deserializes the SuspendMarketParams from binary format.
+func (c *SuspendMarketParams) UnmarshalBinary(data []byte) error {
+	if len(data) > 0 && data[0] == '{' {
+		return errors.New("looks like JSON")
+	}
+	if len(data) < 16 { //nolint:mnd // UserID(8) + Timestamp(8)
+		return io.ErrUnexpectedEOF
+	}
+	offset := 0
+	c.UserID = binary.BigEndian.Uint64(data[offset:])
+	offset += 8
+
+	if len(data[offset:]) < 8 { //nolint:mnd
+		return io.ErrUnexpectedEOF
+	}
+	/* #nosec G115 */
+	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:]))
+	offset += 8
+	var n int
+	var err error
+	c.MarketID, n, err = readString(data[offset:])
+	if err != nil {
+		return err
+	}
+	offset += n
+	c.Reason, n, err = readString(data[offset:])
+	if err != nil {
+		return err
+	}
+	_ = n
+	return nil
+}
+
+// ResumeMarketParams is the payload for resuming a suspended market.
+type ResumeMarketParams struct {
+	CommandID string `json:"-"`
+	Timestamp int64  `json:"-"`
 	UserID    uint64 `json:"user_id"`   // Operator ID for audit trail
 	MarketID  string `json:"market_id"` // Target market to resume
-	Timestamp int64  `json:"timestamp"`
 }
 
-// UpdateConfigCommand is the payload for updating market configuration.
-type UpdateConfigCommand struct {
+// MarshalBinary serializes the ResumeMarketParams to binary format.
+func (c *ResumeMarketParams) MarshalBinary() ([]byte, error) {
+	buf := make([]byte, c.BinarySize())
+	offset := 0
+	binary.BigEndian.PutUint64(buf[offset:], c.UserID)
+	offset += 8
+	/* #nosec G115 */
+	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
+	offset += 8
+	writeString(buf[offset:], c.MarketID)
+	return buf, nil
+}
+
+// BinarySize returns the size of the command in binary format.
+func (c *ResumeMarketParams) BinarySize() int {
+	return 8 + 8 + 2 + len(c.MarketID)
+}
+
+// UnmarshalBinary deserializes the ResumeMarketParams from binary format.
+func (c *ResumeMarketParams) UnmarshalBinary(data []byte) error {
+	if len(data) > 0 && data[0] == '{' {
+		return errors.New("looks like JSON")
+	}
+	if len(data) < 16 { //nolint:mnd // UserID(8) + Timestamp(8)
+		return io.ErrUnexpectedEOF
+	}
+	offset := 0
+	c.UserID = binary.BigEndian.Uint64(data[offset:])
+	offset += 8
+
+	if len(data[offset:]) < 8 { //nolint:mnd
+		return io.ErrUnexpectedEOF
+	}
+	/* #nosec G115 */
+	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:]))
+	offset += 8
+	var n int
+	var err error
+	c.MarketID, n, err = readString(data[offset:])
+	if err != nil {
+		return err
+	}
+	_ = n
+	return nil
+}
+
+// UpdateConfigParams is the payload for updating market configuration.
+type UpdateConfigParams struct {
+	CommandID  string `json:"-"`
+	Timestamp  int64  `json:"-"`
 	UserID     uint64 `json:"user_id"`                // Operator ID for audit trail
 	MarketID   string `json:"market_id"`              // Target market
 	MinLotSize string `json:"min_lot_size,omitempty"` // New minimum lot size (optional)
-	Timestamp  int64  `json:"timestamp"`
 }
 
-// UserEventCommand is the payload for generic user events.
-type UserEventCommand struct {
+// MarshalBinary serializes the UpdateConfigParams to binary format.
+func (c *UpdateConfigParams) MarshalBinary() ([]byte, error) {
+	buf := make([]byte, c.BinarySize())
+	offset := 0
+	binary.BigEndian.PutUint64(buf[offset:], c.UserID)
+	offset += 8
+	/* #nosec G115 */
+	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
+	offset += 8
+	offset += writeString(buf[offset:], c.MarketID)
+	writeString(buf[offset:], c.MinLotSize)
+	return buf, nil
+}
+
+// BinarySize returns the size of the command in binary format.
+func (c *UpdateConfigParams) BinarySize() int {
+	return 8 + 8 + 2*2 + len(c.MarketID) + len(c.MinLotSize)
+}
+
+// UnmarshalBinary deserializes the UpdateConfigParams from binary format.
+func (c *UpdateConfigParams) UnmarshalBinary(data []byte) error {
+	if len(data) > 0 && data[0] == '{' {
+		return errors.New("looks like JSON")
+	}
+	if len(data) < 16 { //nolint:mnd // UserID(8) + Timestamp(8)
+		return io.ErrUnexpectedEOF
+	}
+	offset := 0
+	c.UserID = binary.BigEndian.Uint64(data[offset:])
+	offset += 8
+
+	if len(data[offset:]) < 8 { //nolint:mnd
+		return io.ErrUnexpectedEOF
+	}
+	/* #nosec G115 */
+	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:]))
+	offset += 8
+	var n int
+	var err error
+	c.MarketID, n, err = readString(data[offset:])
+	if err != nil {
+		return err
+	}
+	offset += n
+	c.MinLotSize, n, err = readString(data[offset:])
+	if err != nil {
+		return err
+	}
+	_ = n
+	return nil
+}
+
+// UserEventParams is the payload for generic user events.
+type UserEventParams struct {
 	CommandID string `json:"-"`
+	MarketID  string `json:"-"`
+	Timestamp int64  `json:"-"`
 	UserID    uint64 `json:"user_id"`    // Operator ID for audit trail
 	EventType string `json:"event_type"` // e.g. "EndOfBlock", "AdminMarker"
 	Key       string `json:"key,omitempty"`
 	Data      []byte `json:"data,omitempty"`
-	Timestamp int64  `json:"timestamp"`
+}
+
+// MarshalBinary serializes the UserEventParams to binary format.
+func (c *UserEventParams) MarshalBinary() ([]byte, error) {
+	buf := make([]byte, c.BinarySize())
+	offset := 0
+	binary.BigEndian.PutUint64(buf[offset:], c.UserID)
+	offset += 8
+	/* #nosec G115 */
+	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
+	offset += 8
+	offset += writeString(buf[offset:], c.EventType)
+	offset += writeString(buf[offset:], c.Key)
+
+	/* #nosec G115 */
+	binary.BigEndian.PutUint32(buf[offset:], uint32(len(c.Data)))
+	offset += 4
+	copy(buf[offset:], c.Data)
+
+	return buf, nil
+}
+
+// BinarySize returns the size of the command in binary format.
+func (c *UserEventParams) BinarySize() int {
+	return 8 + 8 + 2*2 + len(c.EventType) + len(c.Key) + 4 + len(c.Data)
+}
+
+// UnmarshalBinary deserializes the UserEventParams from binary format.
+func (c *UserEventParams) UnmarshalBinary(data []byte) error {
+	if len(data) > 0 && data[0] == '{' {
+		return errors.New("looks like JSON")
+	}
+	if len(data) < 16 { //nolint:mnd // UserID(8) + Timestamp(8)
+		return io.ErrUnexpectedEOF
+	}
+	offset := 0
+	c.UserID = binary.BigEndian.Uint64(data[offset:])
+	offset += 8
+
+	if len(data[offset:]) < 8 { //nolint:mnd
+		return io.ErrUnexpectedEOF
+	}
+	/* #nosec G115 */
+	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:]))
+	offset += 8
+	var n int
+	var err error
+	c.EventType, n, err = readString(data[offset:])
+	if err != nil {
+		return err
+	}
+	offset += n
+	c.Key, n, err = readString(data[offset:])
+	if err != nil {
+		return err
+	}
+	offset += n
+
+	if len(data[offset:]) < 4 { //nolint:mnd
+		return io.ErrUnexpectedEOF
+	}
+	dataLen := int(binary.BigEndian.Uint32(data[offset:]))
+	offset += 4
+
+	if len(data[offset:]) < dataLen {
+		return io.ErrUnexpectedEOF
+	}
+	c.Data = make([]byte, dataLen)
+	copy(c.Data, data[offset:offset+dataLen])
+
+	return nil
 }

@@ -62,7 +62,13 @@ func TestMatchingEngine_ContextAwareSubmission(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 
-		_, err := engine.CreateMarket(ctx, "cmd-1", 1, "BTC-USD", "0.01", time.Now().UnixNano())
+		_, err := engine.CreateMarket(ctx, &protocol.CreateMarketParams{
+			CommandID:  "cmd-1",
+			UserID:     1,
+			MarketID:   "BTC-USD",
+			MinLotSize: "0.01",
+			Timestamp:  time.Now().UnixNano(),
+		})
 
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	})

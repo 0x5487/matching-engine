@@ -27,7 +27,6 @@ type MatchingEngine struct {
 	orderbooks    map[string]*OrderBook
 	ring          *RingBuffer[InputEvent]
 	publishTrader Publisher
-	serializer    protocol.Serializer
 	responsePool  *sync.Pool
 }
 
@@ -46,7 +45,6 @@ func NewMatchingEngine(engineID string, publishTrader Publisher) *MatchingEngine
 		engineID:      engineID,
 		orderbooks:    make(map[string]*OrderBook),
 		publishTrader: publishTrader,
-		serializer:    &protocol.FastBinarySerializer{},
 		responsePool: &sync.Pool{
 			New: func() any {
 				return make(chan any, 1)
@@ -182,18 +180,19 @@ func requireCommandID(commandID string) error {
 
 // PlaceOrder adds an order to the appropriate order book based on the market ID.
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
-func (engine *MatchingEngine) PlaceOrder(ctx context.Context, marketID string, cmd *protocol.PlaceOrderCommand) error {
-	if err := requireCommandID(cmd.CommandID); err != nil {
+func (engine *MatchingEngine) PlaceOrder(ctx context.Context, params *protocol.PlaceOrderParams) error {
+	if err := requireCommandID(params.CommandID); err != nil {
 		return err
 	}
-	bytes, err := engine.serializer.Marshal(cmd)
+	bytes, err := params.MarshalBinary()
 	if err != nil {
 		return err
 	}
 	protoCmd := &protocol.Command{
-		MarketID:  marketID,
+		MarketID:  params.MarketID,
 		Type:      protocol.CmdPlaceOrder,
-		CommandID: cmd.CommandID,
+		CommandID: params.CommandID,
+		Timestamp: params.Timestamp,
 		Payload:   bytes,
 	}
 	return engine.EnqueueCommand(ctx, protoCmd)
@@ -205,7 +204,7 @@ func (engine *MatchingEngine) PlaceOrder(ctx context.Context, marketID string, c
 func (engine *MatchingEngine) PlaceOrderBatch(
 	ctx context.Context,
 	marketID string,
-	cmds []*protocol.PlaceOrderCommand,
+	cmds []*protocol.PlaceOrderParams,
 ) error {
 	if len(cmds) == 0 {
 		return nil
@@ -220,7 +219,7 @@ func (engine *MatchingEngine) PlaceOrderBatch(
 		if err := requireCommandID(cmd.CommandID); err != nil {
 			return err
 		}
-		bytes, err := engine.serializer.Marshal(cmd)
+		bytes, err := cmd.MarshalBinary()
 		if err != nil {
 			// Early return on serialization error - nothing has been inserted into the queue yet.
 			return err
@@ -229,6 +228,7 @@ func (engine *MatchingEngine) PlaceOrderBatch(
 			MarketID:  marketID,
 			Type:      protocol.CmdPlaceOrder,
 			CommandID: cmd.CommandID,
+			Timestamp: cmd.Timestamp,
 			Payload:   bytes,
 		})
 	}
@@ -238,18 +238,19 @@ func (engine *MatchingEngine) PlaceOrderBatch(
 
 // AmendOrder modifies an existing order in the appropriate order book.
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
-func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, cmd *protocol.AmendOrderCommand) error {
-	if err := requireCommandID(cmd.CommandID); err != nil {
+func (engine *MatchingEngine) AmendOrder(ctx context.Context, params *protocol.AmendOrderParams) error {
+	if err := requireCommandID(params.CommandID); err != nil {
 		return err
 	}
-	bytes, err := engine.serializer.Marshal(cmd)
+	bytes, err := params.MarshalBinary()
 	if err != nil {
 		return err
 	}
 	protoCmd := &protocol.Command{
-		MarketID:  marketID,
+		MarketID:  params.MarketID,
 		Type:      protocol.CmdAmendOrder,
-		CommandID: cmd.CommandID,
+		CommandID: params.CommandID,
+		Timestamp: params.Timestamp,
 		Payload:   bytes,
 	}
 	return engine.EnqueueCommand(ctx, protoCmd)
@@ -259,20 +260,20 @@ func (engine *MatchingEngine) AmendOrder(ctx context.Context, marketID string, c
 // Returns ErrShutdown if the engine is shutting down or ErrNotFound if market doesn't exist.
 func (engine *MatchingEngine) CancelOrder(
 	ctx context.Context,
-	marketID string,
-	cmd *protocol.CancelOrderCommand,
+	params *protocol.CancelOrderParams,
 ) error {
-	if err := requireCommandID(cmd.CommandID); err != nil {
+	if err := requireCommandID(params.CommandID); err != nil {
 		return err
 	}
-	bytes, err := engine.serializer.Marshal(cmd)
+	bytes, err := params.MarshalBinary()
 	if err != nil {
 		return err
 	}
 	protoCmd := &protocol.Command{
-		MarketID:  marketID,
+		MarketID:  params.MarketID,
 		Type:      protocol.CmdCancelOrder,
-		CommandID: cmd.CommandID,
+		CommandID: params.CommandID,
+		Timestamp: params.Timestamp,
 		Payload:   bytes,
 	}
 	return engine.EnqueueCommand(ctx, protoCmd)
@@ -281,22 +282,12 @@ func (engine *MatchingEngine) CancelOrder(
 // CreateMarket sends a command to create a new market.
 func (engine *MatchingEngine) CreateMarket(
 	ctx context.Context,
-	commandID string,
-	userID uint64,
-	marketID string,
-	minLotSize string,
-	timestamp int64,
+	params *protocol.CreateMarketParams,
 ) (*Future[bool], error) {
-	if err := requireCommandID(commandID); err != nil {
+	if err := requireCommandID(params.CommandID); err != nil {
 		return nil, err
 	}
-	cmd := &protocol.CreateMarketCommand{
-		UserID:     userID,
-		MarketID:   marketID,
-		MinLotSize: minLotSize,
-		Timestamp:  timestamp,
-	}
-	bytes, err := engine.serializer.Marshal(cmd)
+	bytes, err := params.MarshalBinary()
 	if err != nil {
 		return nil, err
 	}
@@ -304,8 +295,9 @@ func (engine *MatchingEngine) CreateMarket(
 	respChan := engine.acquireResponseChannel()
 	protoCmd := &protocol.Command{
 		Type:      protocol.CmdCreateMarket,
-		MarketID:  marketID,
-		CommandID: commandID,
+		MarketID:  params.MarketID,
+		CommandID: params.CommandID,
+		Timestamp: params.Timestamp,
 		Payload:   bytes,
 	}
 
@@ -323,21 +315,12 @@ func (engine *MatchingEngine) CreateMarket(
 // SuspendMarket sends a command to suspend a market.
 func (engine *MatchingEngine) SuspendMarket(
 	ctx context.Context,
-	commandID string,
-	userID uint64,
-	marketID string,
-	timestamp int64,
+	params *protocol.SuspendMarketParams,
 ) (*Future[bool], error) {
-	if err := requireCommandID(commandID); err != nil {
+	if err := requireCommandID(params.CommandID); err != nil {
 		return nil, err
 	}
-	cmd := &protocol.SuspendMarketCommand{
-		UserID:    userID,
-		MarketID:  marketID,
-		Reason:    string(protocol.RejectReasonMarketSuspended),
-		Timestamp: timestamp,
-	}
-	bytes, err := engine.serializer.Marshal(cmd)
+	bytes, err := params.MarshalBinary()
 	if err != nil {
 		return nil, err
 	}
@@ -345,8 +328,9 @@ func (engine *MatchingEngine) SuspendMarket(
 	respChan := engine.acquireResponseChannel()
 	protoCmd := &protocol.Command{
 		Type:      protocol.CmdSuspendMarket,
-		MarketID:  marketID,
-		CommandID: commandID,
+		MarketID:  params.MarketID,
+		CommandID: params.CommandID,
+		Timestamp: params.Timestamp,
 		Payload:   bytes,
 	}
 
@@ -364,20 +348,12 @@ func (engine *MatchingEngine) SuspendMarket(
 // ResumeMarket sends a command to resume a market.
 func (engine *MatchingEngine) ResumeMarket(
 	ctx context.Context,
-	commandID string,
-	userID uint64,
-	marketID string,
-	timestamp int64,
+	params *protocol.ResumeMarketParams,
 ) (*Future[bool], error) {
-	if err := requireCommandID(commandID); err != nil {
+	if err := requireCommandID(params.CommandID); err != nil {
 		return nil, err
 	}
-	cmd := &protocol.ResumeMarketCommand{
-		UserID:    userID,
-		MarketID:  marketID,
-		Timestamp: timestamp,
-	}
-	bytes, err := engine.serializer.Marshal(cmd)
+	bytes, err := params.MarshalBinary()
 	if err != nil {
 		return nil, err
 	}
@@ -385,8 +361,9 @@ func (engine *MatchingEngine) ResumeMarket(
 	respChan := engine.acquireResponseChannel()
 	protoCmd := &protocol.Command{
 		Type:      protocol.CmdResumeMarket,
-		MarketID:  marketID,
-		CommandID: commandID,
+		MarketID:  params.MarketID,
+		CommandID: params.CommandID,
+		Timestamp: params.Timestamp,
 		Payload:   bytes,
 	}
 
@@ -404,22 +381,12 @@ func (engine *MatchingEngine) ResumeMarket(
 // UpdateConfig sends a command to update market configuration.
 func (engine *MatchingEngine) UpdateConfig(
 	ctx context.Context,
-	commandID string,
-	userID uint64,
-	marketID string,
-	minLotSize string,
-	timestamp int64,
+	params *protocol.UpdateConfigParams,
 ) (*Future[bool], error) {
-	if err := requireCommandID(commandID); err != nil {
+	if err := requireCommandID(params.CommandID); err != nil {
 		return nil, err
 	}
-	cmd := &protocol.UpdateConfigCommand{
-		UserID:     userID,
-		MarketID:   marketID,
-		MinLotSize: minLotSize,
-		Timestamp:  timestamp,
-	}
-	bytes, err := engine.serializer.Marshal(cmd)
+	bytes, err := params.MarshalBinary()
 	if err != nil {
 		return nil, err
 	}
@@ -427,8 +394,9 @@ func (engine *MatchingEngine) UpdateConfig(
 	respChan := engine.acquireResponseChannel()
 	protoCmd := &protocol.Command{
 		Type:      protocol.CmdUpdateConfig,
-		MarketID:  marketID,
-		CommandID: commandID,
+		MarketID:  params.MarketID,
+		CommandID: params.CommandID,
+		Timestamp: params.Timestamp,
 		Payload:   bytes,
 	}
 
@@ -447,25 +415,12 @@ func (engine *MatchingEngine) UpdateConfig(
 // These events are processed sequentially with trades and emitted via PublishLog.
 func (engine *MatchingEngine) SendUserEvent(
 	ctx context.Context,
-	commandID string,
-	userID uint64,
-	eventType string,
-	key string,
-	data []byte,
-	timestamp int64,
+	params *protocol.UserEventParams,
 ) error {
-	if err := requireCommandID(commandID); err != nil {
+	if err := requireCommandID(params.CommandID); err != nil {
 		return err
 	}
-	cmd := &protocol.UserEventCommand{
-		CommandID: commandID,
-		UserID:    userID,
-		EventType: eventType,
-		Key:       key,
-		Data:      data,
-		Timestamp: timestamp,
-	}
-	bytes, err := engine.serializer.Marshal(cmd)
+	bytes, err := params.MarshalBinary()
 	if err != nil {
 		return err
 	}
@@ -473,7 +428,9 @@ func (engine *MatchingEngine) SendUserEvent(
 	// For now we treat them as global or engine-level events.
 	return engine.EnqueueCommand(ctx, &protocol.Command{
 		Type:      protocol.CmdUserEvent,
-		CommandID: commandID,
+		MarketID:  params.MarketID,
+		CommandID: params.CommandID,
+		Timestamp: params.Timestamp,
 		Payload:   bytes,
 	})
 }
@@ -911,29 +868,29 @@ func (engine *MatchingEngine) handleSnapshotQuery(ev *InputEvent) {
 // This is handled asynchronously by the RingBuffer consumer.
 func (engine *MatchingEngine) handleCreateMarket(ev *InputEvent) {
 	cmd := ev.Cmd
-	payload := &protocol.CreateMarketCommand{}
-	if err := engine.serializer.Unmarshal(cmd.Payload, payload); err != nil {
+	payload := &protocol.CreateMarketParams{}
+	if err := payload.UnmarshalBinary(cmd.Payload); err != nil {
 		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
 		engine.respondQueryError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
-	if payload.Timestamp <= 0 {
+	if cmd.Timestamp <= 0 {
 		engine.rejectCommandWithMarket(
 			cmd,
-			payload.MarketID,
+			cmd.MarketID,
 			protocol.RejectReasonInvalidPayload,
-			payload.Timestamp,
+			cmd.Timestamp,
 		)
 		engine.respondQueryError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
-	if _, exists := engine.orderbooks[payload.MarketID]; exists {
+	if _, exists := engine.orderbooks[cmd.MarketID]; exists {
 		engine.rejectCommandWithMarket(
 			cmd,
-			payload.MarketID,
+			cmd.MarketID,
 			protocol.RejectReasonMarketAlreadyExists,
-			payload.Timestamp,
+			cmd.Timestamp,
 		)
 		engine.respondQueryError(ev, errors.New(string(protocol.RejectReasonMarketAlreadyExists)))
 		return
@@ -948,7 +905,7 @@ func (engine *MatchingEngine) handleCreateMarket(ev *InputEvent) {
 				cmd,
 				payload.MarketID,
 				protocol.RejectReasonInvalidPayload,
-				payload.Timestamp,
+				cmd.Timestamp,
 			)
 			engine.respondQueryError(ev, err)
 			return
@@ -956,17 +913,17 @@ func (engine *MatchingEngine) handleCreateMarket(ev *InputEvent) {
 		opts = append(opts, WithLotSize(size))
 	}
 
-	newbook := newOrderBook(engine.engineID, payload.MarketID, engine.publishTrader, opts...)
-	engine.orderbooks[payload.MarketID] = newbook
+	newbook := newOrderBook(engine.engineID, cmd.MarketID, engine.publishTrader, opts...)
+	engine.orderbooks[cmd.MarketID] = newbook
 
 	log := NewAdminLog(
 		newbook.seqID.Add(1),
 		cmd.CommandID,
 		engine.engineID,
-		payload.MarketID,
+		cmd.MarketID,
 		payload.UserID,
 		"market_created",
-		payload.Timestamp,
+		cmd.Timestamp,
 	)
 	batch := acquireLogBatch()
 	batch.Logs = append(batch.Logs, log)
@@ -984,8 +941,8 @@ func (engine *MatchingEngine) handleCreateMarket(ev *InputEvent) {
 
 // handleUserEvent processes a generic user event.
 func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
-	payload := &protocol.UserEventCommand{}
-	if err := engine.serializer.Unmarshal(cmd.Payload, payload); err != nil {
+	payload := &protocol.UserEventParams{}
+	if err := payload.UnmarshalBinary(cmd.Payload); err != nil {
 		logger.Warn("failed to unmarshal UserEvent command", "error", err)
 		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
 		return
@@ -1004,7 +961,7 @@ func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
 		payload.EventType,
 		payload.Key,
 		payload.Data,
-		payload.Timestamp,
+		cmd.Timestamp,
 	)
 
 	// Publish via the shared publishTrader
@@ -1061,47 +1018,46 @@ func (engine *MatchingEngine) rejectCommandWithMarket(
 	batch.Release()
 }
 
-// commandTimestamp extracts the command timestamp when available.
 func (engine *MatchingEngine) commandTimestamp(cmd *protocol.Command) int64 {
 	switch cmd.Type {
 	case protocol.CmdPlaceOrder:
-		payload := &protocol.PlaceOrderCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.PlaceOrderParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.Timestamp
 		}
 	case protocol.CmdCancelOrder:
-		payload := &protocol.CancelOrderCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.CancelOrderParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.Timestamp
 		}
 	case protocol.CmdAmendOrder:
-		payload := &protocol.AmendOrderCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.AmendOrderParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.Timestamp
 		}
 	case protocol.CmdUserEvent:
-		payload := &protocol.UserEventCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.UserEventParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.Timestamp
 		}
 	case protocol.CmdCreateMarket:
-		payload := &protocol.CreateMarketCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.CreateMarketParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.Timestamp
 		}
 	case protocol.CmdSuspendMarket:
-		payload := &protocol.SuspendMarketCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.SuspendMarketParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.Timestamp
 		}
 	case protocol.CmdResumeMarket:
-		payload := &protocol.ResumeMarketCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.ResumeMarketParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.Timestamp
 		}
 	case protocol.CmdUpdateConfig:
-		payload := &protocol.UpdateConfigCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.UpdateConfigParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.Timestamp
 		}
 	default:
@@ -1114,23 +1070,23 @@ func (engine *MatchingEngine) commandTimestamp(cmd *protocol.Command) int64 {
 func (engine *MatchingEngine) commandOrderID(cmd *protocol.Command) string {
 	switch cmd.Type {
 	case protocol.CmdPlaceOrder:
-		payload := &protocol.PlaceOrderCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.PlaceOrderParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.OrderID
 		}
 	case protocol.CmdCancelOrder:
-		payload := &protocol.CancelOrderCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.CancelOrderParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.OrderID
 		}
 	case protocol.CmdAmendOrder:
-		payload := &protocol.AmendOrderCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.AmendOrderParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.OrderID
 		}
 	case protocol.CmdUserEvent:
-		payload := &protocol.UserEventCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.UserEventParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.Key
 		}
 	default:
@@ -1143,43 +1099,43 @@ func (engine *MatchingEngine) commandOrderID(cmd *protocol.Command) string {
 func (engine *MatchingEngine) commandUserID(cmd *protocol.Command) uint64 {
 	switch cmd.Type {
 	case protocol.CmdPlaceOrder:
-		payload := &protocol.PlaceOrderCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.PlaceOrderParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.UserID
 		}
 	case protocol.CmdCancelOrder:
-		payload := &protocol.CancelOrderCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.CancelOrderParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.UserID
 		}
 	case protocol.CmdAmendOrder:
-		payload := &protocol.AmendOrderCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.AmendOrderParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.UserID
 		}
 	case protocol.CmdUserEvent:
-		payload := &protocol.UserEventCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.UserEventParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.UserID
 		}
 	case protocol.CmdCreateMarket:
-		payload := &protocol.CreateMarketCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.CreateMarketParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.UserID
 		}
 	case protocol.CmdSuspendMarket:
-		payload := &protocol.SuspendMarketCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.SuspendMarketParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.UserID
 		}
 	case protocol.CmdResumeMarket:
-		payload := &protocol.ResumeMarketCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.ResumeMarketParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.UserID
 		}
 	case protocol.CmdUpdateConfig:
-		payload := &protocol.UpdateConfigCommand{}
-		if err := engine.serializer.Unmarshal(cmd.Payload, payload); err == nil {
+		payload := &protocol.UpdateConfigParams{}
+		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
 			return payload.UserID
 		}
 	default:

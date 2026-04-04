@@ -23,7 +23,13 @@ func BenchmarkPlaceOrders(b *testing.B) {
 
 	ctx := context.Background()
 	marketID := marketBTC
-	future, _ := engine.CreateMarket(ctx, "bench-market-create-1", 1, marketID, "", time.Now().UnixNano())
+	future, _ := engine.CreateMarket(ctx, &protocol.CreateMarketParams{
+		CommandID:  "bench-market-create-1",
+		UserID:     1,
+		MarketID:   marketID,
+		MinLotSize: "",
+		Timestamp:  time.Now().UnixNano(),
+	})
 
 	// Start engine event loop
 	go engine.Run()
@@ -45,7 +51,6 @@ func BenchmarkPlaceOrders(b *testing.B) {
 	// Pre-allocate and pre-serialize Commands to simulate MQ consumer scenario.
 	// In production, Commands arrive already serialized from NATS/Kafka.
 	const poolSize = 65536
-	serializer := &protocol.DefaultJSONSerializer{}
 	cmdPool := make([]*protocol.Command, poolSize)
 
 	for i := range poolSize {
@@ -78,8 +83,9 @@ func BenchmarkPlaceOrders(b *testing.B) {
 			}
 		}
 
-		placeCmd := &protocol.PlaceOrderCommand{
+		placeCmd := &protocol.PlaceOrderParams{
 			CommandID: "bench-place-" + strconv.Itoa(i),
+			MarketID:  marketID,
 			OrderID:   strconv.Itoa(i),
 			OrderType: Limit,
 			Side:      side,
@@ -90,11 +96,12 @@ func BenchmarkPlaceOrders(b *testing.B) {
 		}
 
 		// Pre-serialize payload (simulating MQ message already serialized)
-		payload, _ := serializer.Marshal(placeCmd)
+		payload, _ := placeCmd.MarshalBinary()
 		cmdPool[i] = &protocol.Command{
 			MarketID:  marketID,
 			Type:      protocol.CmdPlaceOrder,
 			CommandID: placeCmd.CommandID,
+			Timestamp: placeCmd.Timestamp,
 			Payload:   payload,
 		}
 	}
@@ -139,7 +146,13 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 
 	ctx := context.Background()
 	marketID := marketBTC
-	future, _ := engine.CreateMarket(ctx, "bench-market-create-2", 1, marketID, "", time.Now().UnixNano())
+	future, _ := engine.CreateMarket(ctx, &protocol.CreateMarketParams{
+		CommandID:  "bench-market-create-2",
+		UserID:     1,
+		MarketID:   marketID,
+		MinLotSize: "",
+		Timestamp:  time.Now().UnixNano(),
+	})
 
 	// Start engine event loop
 	go engine.Run()
@@ -160,7 +173,6 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 	const poolSize = 65536
 	const batchSize = 100 // Size of each batch
 
-	serializer := &protocol.DefaultJSONSerializer{}
 	cmdPool := make([]*protocol.Command, poolSize)
 
 	for i := range poolSize {
@@ -190,7 +202,7 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 			}
 		}
 
-		placeCmd := &protocol.PlaceOrderCommand{
+		placeCmd := &protocol.PlaceOrderParams{
 			CommandID: "bench-batch-place-" + strconv.Itoa(i),
 			OrderID:   strconv.Itoa(i),
 			OrderType: Limit,
@@ -201,11 +213,12 @@ func BenchmarkPlaceOrderBatch(b *testing.B) {
 			Timestamp: time.Now().UnixNano(),
 		}
 
-		payload, _ := serializer.Marshal(placeCmd)
+		payload, _ := placeCmd.MarshalBinary()
 		cmdPool[i] = &protocol.Command{
 			MarketID:  marketID,
 			Type:      protocol.CmdPlaceOrder,
 			CommandID: placeCmd.CommandID,
+			Timestamp: placeCmd.Timestamp,
 			Payload:   payload,
 		}
 	}
@@ -243,8 +256,14 @@ func BenchmarkMatching(b *testing.B) {
 	publishTrader := NewDiscardPublishLog()
 	engine := NewMatchingEngine("bench-engine", publishTrader)
 	ctx := context.Background()
-	marketID := "MATCH-USDT"
-	future, _ := engine.CreateMarket(ctx, "bench-market-create-3", 1, marketID, "", time.Now().UnixNano())
+	marketID := marketBTC
+	future, _ := engine.CreateMarket(ctx, &protocol.CreateMarketParams{
+		CommandID:  "bench-market-create-3",
+		UserID:     1,
+		MarketID:   marketID,
+		MinLotSize: "",
+		Timestamp:  time.Now().UnixNano(),
+	})
 
 	// Start engine event loop
 	go engine.Run()
@@ -253,7 +272,6 @@ func BenchmarkMatching(b *testing.B) {
 
 	price := udecimal.MustFromInt64(10000, 0)
 	size := udecimal.MustFromInt64(1, 0)
-	serializer := &protocol.DefaultJSONSerializer{}
 
 	// Pre-allocate and pre-serialize command pool
 	// We need 2 commands per loop (Sell + Buy that matches)
@@ -262,7 +280,7 @@ func BenchmarkMatching(b *testing.B) {
 
 	for i := 0; i < poolSize; i += 2 {
 		// Sell order (will rest in book)
-		sellCmd := &protocol.PlaceOrderCommand{
+		sellCmd := &protocol.PlaceOrderParams{
 			CommandID: "bench-match-sell-" + strconv.Itoa(i),
 			OrderID:   "sell-" + strconv.Itoa(i),
 			UserID:    1,
@@ -272,17 +290,19 @@ func BenchmarkMatching(b *testing.B) {
 			OrderType: Limit,
 			Timestamp: int64(i + 1),
 		}
-		sellPayload, _ := serializer.Marshal(sellCmd)
+		sellPayload, _ := sellCmd.MarshalBinary()
 		cmdPool[i] = &protocol.Command{
 			MarketID:  marketID,
 			Type:      protocol.CmdPlaceOrder,
 			CommandID: sellCmd.CommandID,
+			Timestamp: sellCmd.Timestamp,
 			Payload:   sellPayload,
 		}
 
 		// Buy order (matches the Sell immediately)
-		buyCmd := &protocol.PlaceOrderCommand{
+		buyCmd := &protocol.PlaceOrderParams{
 			CommandID: "bench-match-buy-" + strconv.Itoa(i+1),
+			MarketID:  marketID,
 			OrderID:   "buy-" + strconv.Itoa(i+1),
 			UserID:    2,
 			Side:      Buy,
@@ -291,11 +311,12 @@ func BenchmarkMatching(b *testing.B) {
 			OrderType: Limit,
 			Timestamp: int64(i + 2),
 		}
-		buyPayload, _ := serializer.Marshal(buyCmd)
+		buyPayload, _ := buyCmd.MarshalBinary()
 		cmdPool[i+1] = &protocol.Command{
 			MarketID:  marketID,
 			Type:      protocol.CmdPlaceOrder,
 			CommandID: buyCmd.CommandID,
+			Timestamp: buyCmd.Timestamp,
 			Payload:   buyPayload,
 		}
 	}
