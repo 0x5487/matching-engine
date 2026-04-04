@@ -130,10 +130,12 @@ func TestLimitOrders(t *testing.T) {
 		bytes, _ := (payload).MarshalBinary()
 		testOrderBook.processCommand(&InputEvent{
 			Cmd: &protocol.Command{
-				MarketID: testOrderBook.marketID,
-				SeqID:    100,
-				Type:     protocol.CmdPlaceOrder,
-				Payload:  bytes,
+				MarketID:  testOrderBook.marketID,
+				CommandID: payload.CommandID,
+				Timestamp: payload.Timestamp,
+				SeqID:     100,
+				Type:      protocol.CmdPlaceOrder,
+				Payload:   bytes,
 			},
 		})
 
@@ -1243,19 +1245,20 @@ func TestOrderValidation(t *testing.T) {
 
 		book.processCommand(&InputEvent{
 			Cmd: &protocol.Command{
-				MarketID: "BTC-USDT",
-				Type:     protocol.CmdPlaceOrder,
-				Payload:  bytes,
+				MarketID:  "BTC-USDT",
+				CommandID: payload.CommandID,
+				Timestamp: payload.Timestamp,
+				Type:      protocol.CmdPlaceOrder,
+				Payload:   bytes[:1],
 			},
 		})
 
-		found := false
-		for _, log := range publishTrader.Logs() {
-			if log.Type == protocol.LogTypeReject && log.OrderID == "bad-place" {
-				found = log.RejectReason == protocol.RejectReasonInvalidPayload && log.Timestamp == 999
-			}
-		}
-		assert.True(t, found)
+		logs := publishTrader.Logs()
+		require.Len(t, logs, 1)
+		assert.Equal(t, protocol.LogTypeReject, logs[0].Type)
+		assert.Equal(t, "unknown", logs[0].OrderID)
+		assert.Equal(t, protocol.RejectReasonInvalidPayload, logs[0].RejectReason)
+		assert.Equal(t, int64(999), logs[0].Timestamp)
 	})
 
 	t.Run("RejectPlaceWithoutTimestamp", func(t *testing.T) {

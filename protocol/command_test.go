@@ -62,7 +62,6 @@ func TestPlaceOrderParams_MarshalUnmarshalBinary(t *testing.T) {
 	assert.Equal(t, params.VisibleSize, decoded.VisibleSize)
 	assert.Equal(t, params.QuoteSize, decoded.QuoteSize)
 	assert.Equal(t, params.UserID, decoded.UserID)
-	assert.Equal(t, params.Timestamp, decoded.Timestamp)
 }
 
 // TestPlaceOrderParams_UnmarshalBinaryRejectsTruncatedPayload verifies malformed binary input is rejected.
@@ -103,7 +102,6 @@ func TestCancelOrderParams_MarshalUnmarshalBinary(t *testing.T) {
 
 	assert.Equal(t, params.OrderID, decoded.OrderID)
 	assert.Equal(t, params.UserID, decoded.UserID)
-	assert.Equal(t, params.Timestamp, decoded.Timestamp)
 }
 
 func TestAmendOrderParams_MarshalUnmarshalBinary(t *testing.T) {
@@ -124,7 +122,6 @@ func TestAmendOrderParams_MarshalUnmarshalBinary(t *testing.T) {
 
 	assert.Equal(t, params.OrderID, decoded.OrderID)
 	assert.Equal(t, params.UserID, decoded.UserID)
-	assert.Equal(t, params.Timestamp, decoded.Timestamp)
 	assert.Equal(t, params.NewPrice, decoded.NewPrice)
 	assert.Equal(t, params.NewSize, decoded.NewSize)
 }
@@ -144,7 +141,6 @@ func TestCreateMarketParams_MarshalUnmarshalBinary(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, params.UserID, decoded.UserID)
-	assert.Equal(t, params.Timestamp, decoded.Timestamp)
 	assert.Equal(t, params.MinLotSize, decoded.MinLotSize)
 }
 
@@ -164,8 +160,6 @@ func TestSuspendMarketParams_MarshalUnmarshalBinary(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, params.UserID, decoded.UserID)
-	assert.Equal(t, params.Timestamp, decoded.Timestamp)
-	assert.Equal(t, params.MarketID, decoded.MarketID)
 	assert.Equal(t, params.Reason, decoded.Reason)
 }
 
@@ -184,8 +178,6 @@ func TestResumeMarketParams_MarshalUnmarshalBinary(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, params.UserID, decoded.UserID)
-	assert.Equal(t, params.Timestamp, decoded.Timestamp)
-	assert.Equal(t, params.MarketID, decoded.MarketID)
 }
 
 func TestUpdateConfigParams_MarshalUnmarshalBinary(t *testing.T) {
@@ -204,8 +196,6 @@ func TestUpdateConfigParams_MarshalUnmarshalBinary(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, params.UserID, decoded.UserID)
-	assert.Equal(t, params.Timestamp, decoded.Timestamp)
-	assert.Equal(t, params.MarketID, decoded.MarketID)
 	assert.Equal(t, params.MinLotSize, decoded.MinLotSize)
 }
 
@@ -226,7 +216,6 @@ func TestUserEventParams_MarshalUnmarshalBinary(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, params.UserID, decoded.UserID)
-	assert.Equal(t, params.Timestamp, decoded.Timestamp)
 	assert.Equal(t, params.EventType, decoded.EventType)
 	assert.Equal(t, params.Key, decoded.Key)
 	assert.Equal(t, params.Data, decoded.Data)

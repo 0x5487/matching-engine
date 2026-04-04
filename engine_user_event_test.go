@@ -155,18 +155,15 @@ func TestUserEvent_RequiresPositiveTimestamp(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Eventually(t, func() bool {
-		logs := publish.Logs()
-		if len(logs) != 1 {
-			return false
-		}
-		log := logs[0]
-		return log.Type == protocol.LogTypeReject &&
-			log.OrderID == "blk-0" &&
-			log.UserID == 999 &&
-			log.RejectReason == protocol.RejectReasonInvalidPayload &&
-			log.Timestamp == 0
-	}, time.Second, 10*time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	logs := publish.Logs()
+	require.Len(t, logs, 1, "Expected 1 log, got: %v", logs)
+	log := logs[0]
+	assert.Equal(t, protocol.LogTypeReject, log.Type)
+	assert.Equal(t, "blk-0", log.OrderID)
+	assert.Equal(t, uint64(999), log.UserID)
+	assert.Equal(t, protocol.RejectReasonInvalidPayload, log.RejectReason)
+	assert.Equal(t, int64(0), log.Timestamp)
 
 	_ = engine.Shutdown(ctx)
 }
