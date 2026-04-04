@@ -161,7 +161,7 @@ Successful management commands are emitted as `LogTypeAdmin`. Invalid management
 
 ### Event Handling
 
-Implement `PublishLog` interface to handle order book events:
+Implement `Publisher` interface to handle order book events:
 
 ```go
 type MyHandler struct{}
