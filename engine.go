@@ -52,9 +52,18 @@ func NewMatchingEngine(engineID string, publishTrader Publisher) *MatchingEngine
 		},
 	}
 
-	engine.ring = NewRingBuffer(defaultRingBufferSize, engine)
+	engine.ring = NewRingBuffer(defaultRingBufferSize, &engineEventHandler{engine})
 
 	return engine
+}
+
+// engineEventHandler is a private wrapper to hide the onEvent method from the public API.
+type engineEventHandler struct {
+	engine *MatchingEngine
+}
+
+func (h *engineEventHandler) OnEvent(ev *InputEvent) {
+	h.engine.onEvent(ev)
 }
 
 // Submit sends a command to the engine and returns a Future for the result.
@@ -108,9 +117,9 @@ func (engine *MatchingEngine) Run() error {
 	return nil
 }
 
-// OnEvent implements EventHandler[InputEvent] for the Engine's shared RingBuffer.
+// onEvent implements EventHandler[InputEvent] for the Engine's shared RingBuffer.
 // It routes events to the appropriate OrderBook based on MarketID.
-func (engine *MatchingEngine) OnEvent(ev *InputEvent) {
+func (engine *MatchingEngine) onEvent(ev *InputEvent) {
 	if ev.Cmd != nil {
 		engine.processCommand(ev)
 		return
