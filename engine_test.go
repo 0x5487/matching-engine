@@ -632,3 +632,37 @@ func TestManagement_LateResponsePollution(t *testing.T) {
 
 	_ = engine.Shutdown(ctxLong)
 }
+
+func TestManagement_UnknownMarketFuture(t *testing.T) {
+	publish := NewMemoryPublishLog()
+	engine := NewMatchingEngine("engine-1", publish)
+	go func() {
+		_ = engine.Run()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	// Try to suspend a non-existent market using the Submit API helper
+	future, err := submitSuspendMarket(ctx, engine, &protocol.SuspendMarketParams{
+		CommandID: "cmd-unknown",
+		UserID:    1,
+		MarketID:  "UNKNOWN-MARKET",
+		Reason:    "test",
+		Timestamp: time.Now().UnixNano(),
+	})
+	require.NoError(t, err)
+
+	// If fixed correctly, this should return an error immediately (ErrNotFound)
+	// instead of waiting for the context timeout.
+	start := time.Now()
+	_, err = future.Wait(ctx)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	// If elapsed time is close to 200ms, it means it hung until timeout
+	require.Less(t, elapsed, 100*time.Millisecond, "Future should return immediately for unknown market")
+	require.ErrorIs(t, err, ErrNotFound)
+
+	_ = engine.Shutdown(ctx)
+}
