@@ -630,7 +630,7 @@ func (engine *MatchingEngine) processCommand(ev *InputEvent) {
 		return
 	}
 
-	book := engine.orderBook(cmd.MarketID)
+	book := engine.orderbooks[cmd.MarketID]
 	if book == nil {
 		engine.rejectCommand(cmd, protocol.RejectReasonMarketNotFound)
 		engine.respondQueryError(ev, ErrNotFound)
@@ -646,21 +646,21 @@ func (engine *MatchingEngine) processCommand(ev *InputEvent) {
 func (engine *MatchingEngine) processQuery(ev *InputEvent) {
 	switch q := ev.Query.(type) {
 	case *protocol.GetDepthRequest:
-		book := engine.orderBook(q.MarketID)
+		book := engine.orderbooks[q.MarketID]
 		if book != nil {
 			book.processQuery(ev)
 		} else {
 			engine.respondQueryError(ev, ErrNotFound)
 		}
 	case *protocol.GetStatsRequest:
-		book := engine.orderBook(q.MarketID)
+		book := engine.orderbooks[q.MarketID]
 		if book != nil {
 			book.processQuery(ev)
 		} else {
 			engine.respondQueryError(ev, ErrNotFound)
 		}
 	case *OrderBookSnapshot:
-		book := engine.orderBook(q.MarketID)
+		book := engine.orderbooks[q.MarketID]
 		if book != nil {
 			book.processQuery(ev)
 		} else {
@@ -804,11 +804,6 @@ func (engine *MatchingEngine) rejectLog(cmdID, marketID string, userID uint64, r
 	engine.publishTrader.Publish(batch.Logs)
 	releaseBookLog(log)
 	batch.Release()
-}
-
-// orderBook is an internal helper to look up an OrderBook by marketID.
-func (engine *MatchingEngine) orderBook(marketID string) *OrderBook {
-	return engine.orderbooks[marketID]
 }
 
 // respondQueryError returns a query-side error without waiting for timeout.
