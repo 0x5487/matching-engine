@@ -112,13 +112,17 @@ func (sl *PooledSkiplist) Insert(price udecimal.Decimal) (bool, error) {
 	var update [SkiplistMaxLevel]int32
 	x := sl.head
 
-	// Find position and track update path
-	for i := sl.level - 1; i >= 0; i-- {
+	// Find position and track update path.
+	// currentLevel is clamped to SkiplistMaxLevel so that i is always a valid
+	// index into update [SkiplistMaxLevel]int32. gosec cannot track this
+	// invariant across functions, so accesses inside the loop are safe.
+	currentLevel := min(sl.level, int32(SkiplistMaxLevel))
+	for i := currentLevel - 1; i >= 0; i-- {
 		for sl.nodes[x].Forward[i] != NullIndex &&
 			sl.less(sl.nodes[sl.nodes[x].Forward[i]].Price, price) {
 			x = sl.nodes[x].Forward[i]
 		}
-		update[i] = x
+		update[i] = x //nolint:gosec // G602: i < currentLevel <= SkiplistMaxLevel == len(update)
 	}
 
 	x = sl.nodes[x].Forward[0]
@@ -128,8 +132,11 @@ func (sl *PooledSkiplist) Insert(price udecimal.Decimal) (bool, error) {
 		return false, nil
 	}
 
-	// Generate random level
-	newLevel := sl.randomLevel()
+	// Generate random level.
+	// randomLevel() guarantees newLevel <= SkiplistMaxLevel == len(update),
+	// so all index accesses below are in-bounds. gosec cannot verify this
+	// cross-function invariant, hence the suppression annotations.
+	newLevel := sl.randomLevel() // <= SkiplistMaxLevel by construction
 	if newLevel > sl.level {
 		for i := sl.level; i < newLevel; i++ {
 			update[i] = sl.head
@@ -146,8 +153,8 @@ func (sl *PooledSkiplist) Insert(price udecimal.Decimal) (bool, error) {
 	sl.nodes[newNode].Level = newLevel
 
 	for i := range newLevel {
-		sl.nodes[newNode].Forward[i] = sl.nodes[update[i]].Forward[i]
-		sl.nodes[update[i]].Forward[i] = newNode
+		sl.nodes[newNode].Forward[i] = sl.nodes[update[i]].Forward[i] //nolint:gosec // G602: i < newLevel <= SkiplistMaxLevel == len(update)
+		sl.nodes[update[i]].Forward[i] = newNode                      //nolint:gosec // G602: i < newLevel <= SkiplistMaxLevel == len(update)
 	}
 
 	sl.count++
@@ -185,13 +192,16 @@ func (sl *PooledSkiplist) Delete(price udecimal.Decimal) bool {
 	var update [SkiplistMaxLevel]int32
 	x := sl.head
 
-	// Find position and track update path
-	for i := sl.level - 1; i >= 0; i-- {
+	// Find position and track update path.
+	// currentLevel is clamped to SkiplistMaxLevel so that i is always a valid
+	// index into update [SkiplistMaxLevel]int32.
+	currentLevel := min(sl.level, int32(SkiplistMaxLevel))
+	for i := currentLevel - 1; i >= 0; i-- {
 		for sl.nodes[x].Forward[i] != NullIndex &&
 			sl.less(sl.nodes[sl.nodes[x].Forward[i]].Price, price) {
 			x = sl.nodes[x].Forward[i]
 		}
-		update[i] = x
+		update[i] = x //nolint:gosec // G602: i < currentLevel <= SkiplistMaxLevel == len(update)
 	}
 
 	x = sl.nodes[x].Forward[0]
@@ -201,8 +211,12 @@ func (sl *PooledSkiplist) Delete(price udecimal.Decimal) bool {
 		return false
 	}
 
-	// Update forward pointers
-	for i := range sl.level {
+	// Update forward pointers.
+	// sl.level is always <= SkiplistMaxLevel == len(update) by invariant;
+	// gosec cannot verify this cross-function, so accesses are annotated.
+	delLevel := min(sl.level, int32(SkiplistMaxLevel))
+	for i := range delLevel {
+		//nolint:gosec // G602: i < delLevel <= SkiplistMaxLevel == len(update)
 		if sl.nodes[update[i]].Forward[i] != x {
 			break
 		}

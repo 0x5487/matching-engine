@@ -83,9 +83,6 @@ type InputEvent struct {
 	Resp  chan any
 }
 
-// engineSnapshotQuery is an internal query type for Engine-level snapshot requests.
-type engineSnapshotQuery struct{}
-
 // Future represents a placeholder for an asynchronous operation result.
 type Future[T any] struct {
 	engine   *MatchingEngine
@@ -101,7 +98,10 @@ func (f *Future[T]) Wait(ctx context.Context) (T, error) {
 	}
 
 	defer func() {
-		if f.engine != nil && f.respChan != nil {
+		// Only return channel to pool if we successfully received the response.
+		// If we timed out or were canceled, the engine might still send a late response
+		// to this channel. Abandoning the channel is safer to prevent pollution of the pool.
+		if f.engine != nil && f.respChan != nil && ctx.Err() == nil {
 			f.engine.releaseResponseChannel(f.respChan)
 		}
 	}()

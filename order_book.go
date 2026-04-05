@@ -149,7 +149,15 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 	case protocol.CmdAmendOrder:
 		book.handleAmendOrder(ev)
 	default:
-		// Ignore unknown command types
+		book.rejectInvalidPayload(
+			cmd.CommandID,
+			book.marketID,
+			"unknown",
+			cmd.UserID,
+			protocol.RejectReasonUnknownCommand,
+			cmd.Timestamp,
+		)
+		book.sendResponse(ev.Resp, ErrUnknownCommand)
 	}
 
 	if cmd.SeqID > 0 {
@@ -610,15 +618,26 @@ func (book *OrderBook) unmarshalPayload(ev *InputEvent, payload binaryPayload) e
 }
 
 func (book *OrderBook) processQuery(ev *InputEvent) {
-	switch q := ev.Query.(type) {
-	case *protocol.GetDepthRequest:
-		book.sendResponse(ev.Resp, book.depth(q.Limit))
-	case *protocol.GetStatsRequest:
+	q, ok := ev.Query.(*protocol.Query)
+	if !ok {
+		book.sendResponse(ev.Resp, ErrInvalidParam)
+		return
+	}
+
+	switch q.Type {
+	case protocol.QueryGetDepth:
+		req, ok := q.Payload.(*protocol.GetDepthRequest)
+		if !ok {
+			book.sendResponse(ev.Resp, ErrInvalidParam)
+			return
+		}
+		book.sendResponse(ev.Resp, book.depth(req.Limit))
+	case protocol.QueryGetStats:
 		book.sendResponse(ev.Resp, book.stats())
-	case *OrderBookSnapshot: // Snapshot query
+	case protocol.QuerySnapshot:
 		book.sendResponse(ev.Resp, book.createSnapshot())
 	default:
-		book.sendResponse(ev.Resp, ErrInvalidParam)
+		book.sendResponse(ev.Resp, ErrUnknownQuery)
 	}
 }
 

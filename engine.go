@@ -185,14 +185,18 @@ func (engine *MatchingEngine) SubmitAsyncBatch(
 // Query executes a read-only request against the matching engine.
 func (engine *MatchingEngine) Query(
 	ctx context.Context,
-	req any,
+	query *protocol.Query,
 ) (*Future[any], error) {
+	if query == nil {
+		return nil, ErrInvalidParam
+	}
+
 	if engine.isShutdown.Load() {
 		return nil, ErrShutdown
 	}
 
 	respChan := engine.acquireResponseChannel()
-	if err := engine.enqueue(ctx, nil, req, respChan); err != nil {
+	if err := engine.enqueue(ctx, nil, query, respChan); err != nil {
 		engine.releaseResponseChannel(respChan)
 		return nil, err
 	}
@@ -231,7 +235,11 @@ func (engine *MatchingEngine) TakeSnapshot(
 	respChan := engine.acquireResponseChannel()
 	defer engine.releaseResponseChannel(respChan)
 
-	if err := engine.enqueue(ctx, nil, &engineSnapshotQuery{}, respChan); err != nil {
+	query := &protocol.Query{
+		Type: protocol.QuerySnapshot,
+	}
+
+	if err := engine.enqueue(ctx, nil, query, respChan); err != nil {
 		return nil, err
 	}
 
@@ -564,33 +572,25 @@ func (engine *MatchingEngine) handleCreateMarketCommand(cmd *protocol.Command, r
 }
 
 func (engine *MatchingEngine) processQuery(ev *InputEvent) {
-	switch q := ev.Query.(type) {
-	case *protocol.GetDepthRequest:
+	q, ok := ev.Query.(*protocol.Query)
+	if !ok {
+		engine.respondQueryError(ev, ErrInvalidParam)
+		return
+	}
+
+	switch q.Type {
+	case protocol.QueryGetDepth, protocol.QueryGetStats:
 		book := engine.orderbooks[q.MarketID]
 		if book != nil {
 			book.processQuery(ev)
 		} else {
 			engine.respondQueryError(ev, ErrNotFound)
 		}
-	case *protocol.GetStatsRequest:
-		book := engine.orderbooks[q.MarketID]
-		if book != nil {
-			book.processQuery(ev)
-		} else {
-			engine.respondQueryError(ev, ErrNotFound)
-		}
-	case *OrderBookSnapshot:
-		book := engine.orderbooks[q.MarketID]
-		if book != nil {
-			book.processQuery(ev)
-		} else {
-			engine.respondQueryError(ev, ErrNotFound)
-		}
-	case *engineSnapshotQuery:
+	case protocol.QuerySnapshot:
 		engine.handleSnapshotQuery(ev)
 	default:
 		// Unsupported query type
-		engine.respondQueryError(ev, ErrInvalidParam)
+		engine.respondQueryError(ev, ErrUnknownQuery)
 	}
 }
 

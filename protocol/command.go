@@ -145,6 +145,27 @@ func (c *Command) SetPayload(p Params) error {
 
 // --- Query Types ---
 
+// QueryType defines the type of the query.
+type QueryType uint8
+
+const (
+	// QueryUnknown represents an unknown query type.
+	QueryUnknown QueryType = 0
+	// QueryGetDepth represents a get depth query.
+	QueryGetDepth QueryType = 1
+	// QueryGetStats represents a get stats query.
+	QueryGetStats QueryType = 2
+	// QuerySnapshot represents a snapshot query.
+	QuerySnapshot QueryType = 3
+)
+
+// Query represents a single query to be processed by the matching engine.
+type Query struct {
+	Type     QueryType
+	MarketID string
+	Payload  any
+}
+
 // GetDepthRequest represents a request to get the order book depth.
 type GetDepthRequest struct {
 	MarketID string `json:"market_id"`
