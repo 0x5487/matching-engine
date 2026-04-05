@@ -137,7 +137,40 @@ func main() {
 - Every state-changing command must carry an upstream-assigned logical `Timestamp`. `Timestamp <= 0` is rejected as `invalid_payload`. For engine helper methods such as `CreateMarket`, `SuspendMarket`, `ResumeMarket`, `UpdateConfig`, and `SendUserEvent`, pass the timestamp explicitly from your Gateway / Sequencer / OMS.
 - Business-level failures are emitted as `OrderBookLog` entries with `Type == protocol.LogTypeReject`.
 - Commands sent to a missing market generate a reject event with `RejectReasonMarketNotFound`.
-- The `Query()` method (e.g., for `protocol.GetStatsRequest` or `protocol.GetDepthRequest`) returns `ErrNotFound` immediately when the market does not exist.
+- Unknown command types will return `ErrUnknownCommand` through the `Future.Wait()` call.
+- The `Query()` method uses a `*protocol.Query` envelope and returns `ErrNotFound` immediately when the market does not exist.
+
+### Querying Market State
+
+Query the engine for read-only state such as order book depth or statistics:
+
+```go
+// 1. Query Market Statistics
+statsQuery := &protocol.Query{
+	Type:     protocol.QueryGetStats,
+	MarketID: "BTC-USDT",
+	Payload:  &protocol.GetStatsRequest{MarketID: "BTC-USDT"},
+}
+future, err := engine.Query(ctx, statsQuery)
+res, err := future.Wait(ctx)
+if err == nil {
+	stats := res.(*protocol.GetStatsResponse)
+	fmt.Printf("Bids: %d, Asks: %d\n", stats.BidOrderCount, stats.AskOrderCount)
+}
+
+// 2. Query Order Book Depth
+depthQuery := &protocol.Query{
+	Type:     protocol.QueryGetDepth,
+	MarketID: "BTC-USDT",
+	Payload:  &protocol.GetDepthRequest{MarketID: "BTC-USDT", Limit: 10},
+}
+future, err = engine.Query(ctx, depthQuery)
+res, err = future.Wait(ctx)
+if err == nil {
+	depth := res.(*protocol.GetDepthResponse)
+	fmt.Printf("Top Bid: %s\n", depth.Bids[0].Price)
+}
+```
 
 ### Management Commands
 
