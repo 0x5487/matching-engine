@@ -118,7 +118,7 @@ func (sl *PooledSkiplist) Insert(price udecimal.Decimal) (bool, error) {
 			sl.less(sl.nodes[sl.nodes[x].Forward[i]].Price, price) {
 			x = sl.nodes[x].Forward[i]
 		}
-		update[i] = x //nolint:gosec // false positive
+		update[i] = x
 	}
 
 	x = sl.nodes[x].Forward[0]
@@ -146,8 +146,8 @@ func (sl *PooledSkiplist) Insert(price udecimal.Decimal) (bool, error) {
 	sl.nodes[newNode].Level = newLevel
 
 	for i := range newLevel {
-		sl.nodes[newNode].Forward[i] = sl.nodes[update[i]].Forward[i] //nolint:gosec // false positive
-		sl.nodes[update[i]].Forward[i] = newNode                      //nolint:gosec // false positive
+		sl.nodes[newNode].Forward[i] = sl.nodes[update[i]].Forward[i]
+		sl.nodes[update[i]].Forward[i] = newNode
 	}
 
 	sl.count++
@@ -191,7 +191,7 @@ func (sl *PooledSkiplist) Delete(price udecimal.Decimal) bool {
 			sl.less(sl.nodes[sl.nodes[x].Forward[i]].Price, price) {
 			x = sl.nodes[x].Forward[i]
 		}
-		update[i] = x //nolint:gosec // false positive
+		update[i] = x
 	}
 
 	x = sl.nodes[x].Forward[0]
@@ -203,7 +203,7 @@ func (sl *PooledSkiplist) Delete(price udecimal.Decimal) bool {
 
 	// Update forward pointers
 	for i := range sl.level {
-		if sl.nodes[update[i]].Forward[i] != x { //nolint:gosec // false positive
+		if sl.nodes[update[i]].Forward[i] != x {
 			break
 		}
 		sl.nodes[update[i]].Forward[i] = sl.nodes[x].Forward[i]
