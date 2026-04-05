@@ -21,4 +21,8 @@ var (
 	ErrInvalidSize = errors.New("invalid size")
 	// ErrOrderBookClosed is returned when the order book is closed.
 	ErrOrderBookClosed = errors.New("order book is closed")
+	// ErrUnknownCommand is returned when the command type is unknown.
+	ErrUnknownCommand = errors.New("unknown command")
+	// ErrUnknownQuery is returned when the query type is unknown.
+	ErrUnknownQuery = errors.New("unknown query")
 )

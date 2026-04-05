@@ -57,7 +57,11 @@ func createMarket(t *testing.T, engine *MatchingEngine, marketID, minLotSize str
 func waitForBidCount(t *testing.T, engine *MatchingEngine, marketID string, count int64) {
 	t.Helper()
 	assert.Eventually(t, func() bool {
-		f, e := engine.Query(context.Background(), &protocol.GetStatsRequest{MarketID: marketID})
+		f, e := engine.Query(context.Background(), &protocol.Query{
+			Type:     protocol.QueryGetStats,
+			MarketID: marketID,
+			Payload:  &protocol.GetStatsRequest{MarketID: marketID},
+		})
 		if e != nil {
 			return false
 		}
@@ -72,7 +76,11 @@ func waitForBidCount(t *testing.T, engine *MatchingEngine, marketID string, coun
 func waitForAskCount(t *testing.T, engine *MatchingEngine, marketID string, count int64) {
 	t.Helper()
 	assert.Eventually(t, func() bool {
-		f, e := engine.Query(context.Background(), &protocol.GetStatsRequest{MarketID: marketID})
+		f, e := engine.Query(context.Background(), &protocol.Query{
+			Type:     protocol.QueryGetStats,
+			MarketID: marketID,
+			Payload:  &protocol.GetStatsRequest{MarketID: marketID},
+		})
 		if e != nil {
 			return false
 		}
@@ -258,17 +266,22 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		ctx := context.Background()
 
 		start := time.Now()
-		future, err := engine.Query(ctx, &protocol.GetStatsRequest{MarketID: "NON-EXISTENT"})
+		future, err := engine.Query(ctx, &protocol.Query{
+			Type:     protocol.QueryGetStats,
+			MarketID: "NON-EXISTENT",
+			Payload:  &protocol.GetStatsRequest{MarketID: "NON-EXISTENT"},
+		})
 		require.NoError(t, err)
 		stats, err := future.Wait(ctx)
 		assert.Nil(t, stats)
 		require.ErrorIs(t, err, ErrNotFound)
 		assert.Less(t, time.Since(start), 200*time.Millisecond)
 
-		futureDepth, err := engine.Query(
-			ctx,
-			&protocol.GetDepthRequest{MarketID: "NON-EXISTENT", Limit: 10},
-		)
+		futureDepth, err := engine.Query(ctx, &protocol.Query{
+			Type:     protocol.QueryGetDepth,
+			MarketID: "NON-EXISTENT",
+			Payload:  &protocol.GetDepthRequest{MarketID: "NON-EXISTENT", Limit: 10},
+		})
 		require.NoError(t, err)
 		depth, err := futureDepth.Wait(ctx)
 		assert.Nil(t, depth)
@@ -354,7 +367,11 @@ func TestMatchingEngineInitialization(t *testing.T) {
 				log.Timestamp == 0
 		}, time.Second, 10*time.Millisecond)
 
-		statsFuture, err := engine.Query(ctx, &protocol.GetStatsRequest{MarketID: marketID})
+		statsFuture, err := engine.Query(ctx, &protocol.Query{
+			Type:     protocol.QueryGetStats,
+			MarketID: marketID,
+			Payload:  &protocol.GetStatsRequest{MarketID: marketID},
+		})
 		require.NoError(t, err)
 		_, statsErr := statsFuture.Wait(ctx)
 		require.ErrorIs(t, statsErr, ErrNotFound)
@@ -605,7 +622,11 @@ func TestManagement_LateResponsePollution(t *testing.T) {
 
 	go engine.Run()
 	assert.Eventually(t, func() bool {
-		f, e := engine.Query(context.Background(), &protocol.GetStatsRequest{MarketID: marketID1})
+		f, e := engine.Query(context.Background(), &protocol.Query{
+			Type:     protocol.QueryGetStats,
+			MarketID: marketID1,
+			Payload:  &protocol.GetStatsRequest{MarketID: marketID1},
+		})
 		if e != nil {
 			return false
 		}
@@ -916,4 +937,36 @@ func TestUserEvent_ValidationErrors(t *testing.T) {
 		err := engine.SubmitAsync(context.Background(), cmd)
 		require.ErrorIs(t, err, ErrInvalidParam)
 	})
+}
+
+func TestEngine_UnknownCommand(t *testing.T) {
+	log := NewMemoryPublishLog()
+	engine := setupEngine(t, log)
+	createMarket(t, engine, marketBTC, "0.01")
+
+	ctx := context.Background()
+	cmd := &protocol.Command{
+		Type:      protocol.CommandType(99), // Unknown
+		UserID:    1,
+		MarketID:  marketBTC,
+		CommandID: "unknown-1",
+		Timestamp: time.Now().UnixNano(),
+	}
+
+	future, err := engine.Submit(ctx, cmd)
+	require.NoError(t, err)
+
+	_, err = future.Wait(ctx)
+	require.Error(t, err)
+	assert.Equal(t, ErrUnknownCommand, err)
+
+	// Check if RejectLog was published
+	var found bool
+	for _, l := range log.Logs() {
+		if l.Type == protocol.LogTypeReject && l.RejectReason == protocol.RejectReasonUnknownCommand {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "RejectLog with unknown_command not found")
 }
