@@ -17,19 +17,6 @@ var orderPool = sync.Pool{
 	},
 }
 
-// Command payload pools to reduce allocations during Unmarshal.
-var placeOrderCmdPool = sync.Pool{
-	New: func() any {
-		return &protocol.PlaceOrderParams{}
-	},
-}
-
-var cancelOrderCmdPool = sync.Pool{
-	New: func() any {
-		return &protocol.CancelOrderParams{}
-	},
-}
-
 func acquireOrder() *Order {
 	val := orderPool.Get()
 	o, ok := val.(*Order)
@@ -166,12 +153,9 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 }
 
 func (book *OrderBook) handleSuspendMarket(ev *InputEvent) {
-	payload := &protocol.SuspendMarketParams{}
-	if err := book.unmarshalPayload(ev, payload); err != nil {
-		return
-	}
-
 	cmd := ev.Cmd
+	payload, _ := cmd.Params.(*protocol.SuspendMarketParams)
+
 	if !book.validateBasic(cmd.CommandID, cmd.UserID, "", cmd.Timestamp) {
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
@@ -179,13 +163,17 @@ func (book *OrderBook) handleSuspendMarket(ev *InputEvent) {
 
 	book.state = protocol.OrderBookStateSuspended
 	batch := acquireLogBatch()
+	reason := ""
+	if payload != nil {
+		reason = payload.Reason
+	}
 	log := NewAdminLog(
 		book.seqID.Add(1),
 		cmd.CommandID,
 		book.engineID,
 		book.marketID,
 		cmd.UserID,
-		payload.Reason,
+		reason,
 		cmd.Timestamp,
 	)
 	batch.Logs = append(batch.Logs, log)
@@ -197,11 +185,6 @@ func (book *OrderBook) handleSuspendMarket(ev *InputEvent) {
 }
 
 func (book *OrderBook) handleResumeMarket(ev *InputEvent) {
-	payload := &protocol.ResumeMarketParams{}
-	if err := book.unmarshalPayload(ev, payload); err != nil {
-		return
-	}
-
 	cmd := ev.Cmd
 	if !book.validateBasic(cmd.CommandID, cmd.UserID, "", cmd.Timestamp) {
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
@@ -228,39 +211,35 @@ func (book *OrderBook) handleResumeMarket(ev *InputEvent) {
 }
 
 func (book *OrderBook) handleUpdateConfig(ev *InputEvent) {
-	payload := &protocol.UpdateConfigParams{}
-	if err := book.unmarshalPayload(ev, payload); err != nil {
+	cmd := ev.Cmd
+	payload, ok := cmd.Params.(*protocol.UpdateConfigParams)
+	if !ok && cmd.Params != nil {
+		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
-	cmd := ev.Cmd
 	if !book.validateBasic(cmd.CommandID, cmd.UserID, "", cmd.Timestamp) {
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
-	if payload.MinLotSize != "" {
-		size, err := udecimal.Parse(payload.MinLotSize)
-		if err == nil {
-			book.lotSize = size
-			batch := acquireLogBatch()
-			log := NewAdminLog(
-				book.seqID.Add(1),
-				cmd.CommandID,
-				book.engineID,
-				book.marketID,
-				cmd.UserID,
-				"market_config_updated",
-				cmd.Timestamp,
-			)
-			batch.Logs = append(batch.Logs, log)
-			book.publisher.Publish(batch.Logs)
-			releaseBookLog(log)
-			batch.Release()
-			book.sendResponse(ev.Resp, true)
-		} else {
-			book.handleParseError(cmd.CommandID, cmd.UserID, "", cmd.Timestamp, ev.Resp, err)
-		}
+	if payload != nil && !payload.MinLotSize.IsZero() {
+		book.lotSize = payload.MinLotSize
+		batch := acquireLogBatch()
+		log := NewAdminLog(
+			book.seqID.Add(1),
+			cmd.CommandID,
+			book.engineID,
+			book.marketID,
+			cmd.UserID,
+			"market_config_updated",
+			cmd.Timestamp,
+		)
+		batch.Logs = append(batch.Logs, log)
+		book.publisher.Publish(batch.Logs)
+		releaseBookLog(log)
+		batch.Release()
+		book.sendResponse(ev.Resp, true)
 	} else {
 		// No config update requested, but still respond success if we reached here
 		book.sendResponse(ev.Resp, true)
@@ -268,58 +247,31 @@ func (book *OrderBook) handleUpdateConfig(ev *InputEvent) {
 }
 
 func (book *OrderBook) handlePlaceOrder(ev *InputEvent) {
-	val := placeOrderCmdPool.Get()
-	payload, ok := val.(*protocol.PlaceOrderParams)
+	cmd := ev.Cmd
+	payload, ok := cmd.Params.(*protocol.PlaceOrderParams)
 	if !ok {
 		book.rejectInvalidPayload(
-			ev.Cmd.CommandID,
+			cmd.CommandID,
 			book.marketID,
 			"unknown",
-			0,
+			cmd.UserID,
 			protocol.RejectReasonInvalidPayload,
-			ev.Cmd.Timestamp,
+			cmd.Timestamp,
 		)
-		book.sendResponse(ev.Resp, errors.New("failed to acquire place order params from pool"))
-		return
-	}
-	defer placeOrderCmdPool.Put(payload)
-	*payload = protocol.PlaceOrderParams{}
-
-	if err := book.unmarshalPayload(ev, payload); err != nil {
+		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
-	cmd := ev.Cmd
 	if !book.validateState(cmd.CommandID, cmd.UserID, payload.OrderID, cmd.Timestamp) {
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
-	// Parse strings to decimals
-	price, err := udecimal.Parse(payload.Price)
-	if err != nil {
-		book.handleParseError(cmd.CommandID, cmd.UserID, payload.OrderID, cmd.Timestamp, ev.Resp, err)
-		return
-	}
-	size, err := udecimal.Parse(payload.Size)
-	if err != nil {
-		book.handleParseError(cmd.CommandID, cmd.UserID, payload.OrderID, cmd.Timestamp, ev.Resp, err)
-		return
-	}
-
-	visibleSize, quoteSize := udecimal.Zero, udecimal.Zero
-	if payload.VisibleSize != "" {
-		if visibleSize, err = udecimal.Parse(payload.VisibleSize); err != nil {
-			book.handleParseError(cmd.CommandID, cmd.UserID, payload.OrderID, cmd.Timestamp, ev.Resp, err)
-			return
-		}
-	}
-	if payload.QuoteSize != "" {
-		if quoteSize, err = udecimal.Parse(payload.QuoteSize); err != nil {
-			book.handleParseError(cmd.CommandID, cmd.UserID, payload.OrderID, cmd.Timestamp, ev.Resp, err)
-			return
-		}
-	}
+	// Use pre-parsed decimals directly from payload
+	price := payload.Price
+	size := payload.Size
+	visibleSize := payload.VisibleSize
+	quoteSize := payload.QuoteSize
 
 	// Check for duplicate ID
 	if book.bidQueue.order(payload.OrderID) != nil || book.askQueue.order(payload.OrderID) != nil {
@@ -386,28 +338,21 @@ func (book *OrderBook) handlePlaceOrder(ev *InputEvent) {
 }
 
 func (book *OrderBook) handleCancelOrder(ev *InputEvent) {
-	val := cancelOrderCmdPool.Get()
-	payload, ok := val.(*protocol.CancelOrderParams)
+	cmd := ev.Cmd
+	payload, ok := cmd.Params.(*protocol.CancelOrderParams)
 	if !ok {
 		book.rejectInvalidPayload(
-			ev.Cmd.CommandID,
+			cmd.CommandID,
 			book.marketID,
 			"unknown",
-			0,
+			cmd.UserID,
 			protocol.RejectReasonInvalidPayload,
-			ev.Cmd.Timestamp,
+			cmd.Timestamp,
 		)
-		book.sendResponse(ev.Resp, errors.New("failed to acquire cancel order params from pool"))
-		return
-	}
-	defer cancelOrderCmdPool.Put(payload)
-	*payload = protocol.CancelOrderParams{}
-
-	if err := book.unmarshalPayload(ev, payload); err != nil {
+		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
-	cmd := ev.Cmd
 	// Cancel is allowed in Suspended state
 	if !book.validateBasic(cmd.CommandID, cmd.UserID, payload.OrderID, cmd.Timestamp) {
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
@@ -458,27 +403,28 @@ func (book *OrderBook) handleCancelOrder(ev *InputEvent) {
 }
 
 func (book *OrderBook) handleAmendOrder(ev *InputEvent) {
-	payload := &protocol.AmendOrderParams{}
-	if err := book.unmarshalPayload(ev, payload); err != nil {
+	cmd := ev.Cmd
+	payload, ok := cmd.Params.(*protocol.AmendOrderParams)
+	if !ok {
+		book.rejectInvalidPayload(
+			cmd.CommandID,
+			book.marketID,
+			"unknown",
+			cmd.UserID,
+			protocol.RejectReasonInvalidPayload,
+			cmd.Timestamp,
+		)
+		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
-	cmd := ev.Cmd
 	if !book.validateState(cmd.CommandID, cmd.UserID, payload.OrderID, cmd.Timestamp) {
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
-	newPrice, err := udecimal.Parse(payload.NewPrice)
-	if err != nil {
-		book.handleParseError(cmd.CommandID, cmd.UserID, payload.OrderID, cmd.Timestamp, ev.Resp, err)
-		return
-	}
-	newSize, err := udecimal.Parse(payload.NewSize)
-	if err != nil {
-		book.handleParseError(cmd.CommandID, cmd.UserID, payload.OrderID, cmd.Timestamp, ev.Resp, err)
-		return
-	}
+	newPrice := payload.NewPrice
+	newSize := payload.NewSize
 
 	order, ok := book.findOrder(payload.OrderID)
 	if !ok || order.UserID != cmd.UserID {
@@ -597,26 +543,6 @@ func (book *OrderBook) handleAmendOrder(ev *InputEvent) {
 	book.sendResponse(ev.Resp, true)
 }
 
-type binaryPayload interface {
-	UnmarshalBinary(data []byte) error
-}
-
-func (book *OrderBook) unmarshalPayload(ev *InputEvent, payload binaryPayload) error {
-	if err := payload.UnmarshalBinary(ev.Cmd.Payload); err != nil {
-		book.rejectInvalidPayload(
-			ev.Cmd.CommandID,
-			book.marketID,
-			"unknown",
-			ev.Cmd.UserID,
-			protocol.RejectReasonInvalidPayload,
-			ev.Cmd.Timestamp,
-		)
-		book.sendResponse(ev.Resp, err)
-		return err
-	}
-	return nil
-}
-
 func (book *OrderBook) processQuery(ev *InputEvent) {
 	q, ok := ev.Query.(*protocol.Query)
 	if !ok {
@@ -683,25 +609,6 @@ func (book *OrderBook) rejectInvalidPayload(
 	book.publisher.Publish(batch.Logs)
 	releaseBookLog(log)
 	batch.Release()
-}
-
-func (book *OrderBook) handleParseError(
-	commandID string,
-	userID uint64,
-	orderID string,
-	timestamp int64,
-	resp chan<- any,
-	err error,
-) {
-	book.rejectInvalidPayload(
-		commandID,
-		book.marketID,
-		orderID,
-		userID,
-		protocol.RejectReasonInvalidPayload,
-		timestamp,
-	)
-	book.sendResponse(resp, err)
 }
 
 func (book *OrderBook) validateState(

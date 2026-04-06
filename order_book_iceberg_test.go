@@ -23,9 +23,10 @@ func TestIceberg_Placement(t *testing.T) {
 		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Buy,
-		Size:        "100",
-		VisibleSize: "10",
-		Price:       "90",
+		Size:        udecimal.MustFromInt64(100, 0),
+		VisibleSize: udecimal.MustFromInt64(10, 0),
+		Price:       udecimal.MustFromInt64(100, 0),
+
 	})
 
 	depth := orderBook.depth(1)
@@ -44,9 +45,9 @@ func TestIceberg_Replenishment(t *testing.T) {
 		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
-		Size:        "100",
-		VisibleSize: "10",
-		Price:       "100",
+		Size:        udecimal.MustFromInt64(100, 0),
+		VisibleSize: udecimal.MustFromInt64(10, 0),
+		Price:       udecimal.MustFromInt64(100, 0),
 	})
 
 	// 2. Place Taker: Buy 10
@@ -54,8 +55,8 @@ func TestIceberg_Replenishment(t *testing.T) {
 		OrderID:   "taker-1",
 		OrderType: Limit,
 		Side:      Buy,
-		Size:      "10",
-		Price:     "100",
+		Size:        udecimal.MustFromInt64(10, 0),
+		Price:       udecimal.MustFromInt64(100, 0),
 	})
 
 	// 3. Verify Match and Replenish
@@ -92,9 +93,9 @@ func TestIceberg_ReplenishmentPriority(t *testing.T) {
 		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
-		Size:        "100",
-		VisibleSize: "10",
-		Price:       "100",
+		Size:        udecimal.MustFromInt64(100, 0),
+		VisibleSize: udecimal.MustFromInt64(10, 0),
+		Price:       udecimal.MustFromInt64(100, 0),
 	})
 
 	// 2. Place Normal Order: 10 @ 100 (queued after ice-1)
@@ -102,8 +103,8 @@ func TestIceberg_ReplenishmentPriority(t *testing.T) {
 		OrderID:   "norm-1",
 		OrderType: Limit,
 		Side:      Sell,
-		Size:      "10",
-		Price:     "100",
+		Size:        udecimal.MustFromInt64(10, 0),
+		Price:       udecimal.MustFromInt64(100, 0),
 	})
 
 	depth := orderBook.depth(1)
@@ -116,8 +117,8 @@ func TestIceberg_ReplenishmentPriority(t *testing.T) {
 		OrderID:   "taker-1",
 		OrderType: Limit,
 		Side:      Buy,
-		Size:      "10",
-		Price:     "100",
+		Size:        udecimal.MustFromInt64(10, 0),
+		Price:       udecimal.MustFromInt64(100, 0),
 	})
 
 	// 4. Taker buys another 10. This should match with norm-1, NOT ice-1.
@@ -125,8 +126,8 @@ func TestIceberg_ReplenishmentPriority(t *testing.T) {
 		OrderID:   "taker-2",
 		OrderType: Limit,
 		Side:      Buy,
-		Size:      "10",
-		Price:     "100",
+		Size:        udecimal.MustFromInt64(10, 0),
+		Price:       udecimal.MustFromInt64(100, 0),
 	})
 
 	logs := publishTrader.Logs()
@@ -150,9 +151,9 @@ func TestIceberg_Amend(t *testing.T) {
 		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
-		Size:        "100",
-		VisibleSize: "10",
-		Price:       "100",
+		Size:        udecimal.MustFromInt64(100, 0),
+		VisibleSize: udecimal.MustFromInt64(10, 0),
+		Price:       udecimal.MustFromInt64(100, 0),
 	})
 
 	// 2. Normal: 10 @ 100
@@ -160,15 +161,15 @@ func TestIceberg_Amend(t *testing.T) {
 		OrderID:   "norm-1",
 		OrderType: Limit,
 		Side:      Sell,
-		Size:      "10",
-		Price:     "100",
+		Size:        udecimal.MustFromInt64(10, 0),
+		Price:       udecimal.MustFromInt64(100, 0),
 	})
 
 	// 3. Amend Iceberg: Decrease total to 50
 	testAmend(orderBook, 101, "cmd-amend-ice-1", ts+100, &protocol.AmendOrderParams{
 		OrderID:  orderIDIceberg,
-		NewPrice: "100",
-		NewSize:  "50",
+		NewPrice: udecimal.MustFromInt64(100, 0),
+		NewSize:  udecimal.MustFromInt64(50, 0),
 	})
 
 	// Taker buys 5. Should match with ice-1.
@@ -176,8 +177,8 @@ func TestIceberg_Amend(t *testing.T) {
 		OrderID:   "taker-1",
 		OrderType: Limit,
 		Side:      Buy,
-		Size:      "5",
-		Price:     "100",
+		Size:      udecimal.MustFromInt64(5, 0),
+		Price:     udecimal.MustFromInt64(100, 0),
 	})
 
 	logs := publishTrader.Logs()
@@ -193,8 +194,8 @@ func TestIceberg_Amend(t *testing.T) {
 	// 4. Amend Iceberg: Increase total to 200
 	testAmend(orderBook, 101, "cmd-amend-ice-1-2", ts+300, &protocol.AmendOrderParams{
 		OrderID:  orderIDIceberg,
-		NewPrice: "100",
-		NewSize:  "200",
+		NewPrice: udecimal.MustFromInt64(100, 0),
+		NewSize:  udecimal.MustFromInt64(200, 0),
 	})
 
 	// Taker buys 10. Should match with norm-1.
@@ -202,8 +203,8 @@ func TestIceberg_Amend(t *testing.T) {
 		OrderID:   "taker-2",
 		OrderType: Limit,
 		Side:      Buy,
-		Size:      "10",
-		Price:     "100",
+		Size:        udecimal.MustFromInt64(10, 0),
+		Price:       udecimal.MustFromInt64(100, 0),
 	})
 
 	logs = publishTrader.Logs()
@@ -228,9 +229,10 @@ func TestIceberg_PartialFillNoReplenish(t *testing.T) {
 		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
-		Size:        "60",
-		VisibleSize: "10",
-		Price:       "100",
+		Size:        udecimal.MustFromInt64(100, 0),
+		VisibleSize: udecimal.MustFromInt64(10, 0),
+		Price:       udecimal.MustFromInt64(100, 0),
+
 	})
 
 	depth := orderBook.depth(1)
@@ -242,8 +244,8 @@ func TestIceberg_PartialFillNoReplenish(t *testing.T) {
 		OrderID:   "taker-1",
 		OrderType: Limit,
 		Side:      Buy,
-		Size:      "5",
-		Price:     "100",
+		Size:      udecimal.MustFromInt64(5, 0),
+		Price:     udecimal.MustFromInt64(100, 0),
 	})
 
 	// 3. Verify: Visible should be 5 (10 - 5), NOT replenished to 10.
@@ -281,8 +283,9 @@ func TestIceberg_TakerAggressiveMatch(t *testing.T) {
 				OrderID:   "sell-" + string(rune('A'+i)),
 				OrderType: Limit,
 				Side:      Sell,
-				Size:      "20",
-				Price:     "100",
+				Size:      udecimal.MustFromInt64(20, 0),
+				Price:     udecimal.MustFromInt64(100, 0),
+
 			},
 		)
 	}
@@ -296,9 +299,9 @@ func TestIceberg_TakerAggressiveMatch(t *testing.T) {
 		OrderID:     "ice-buyer",
 		OrderType:   Limit,
 		Side:        Buy,
-		Size:        "80",
-		VisibleSize: "10",
-		Price:       "100",
+		Size:        udecimal.MustFromInt64(80, 0),
+		VisibleSize: udecimal.MustFromInt64(10, 0),
+		Price:       udecimal.MustFromInt64(100, 0),
 	})
 
 	// 3. Verify: All 80 should be matched
@@ -337,9 +340,9 @@ func TestIceberg_SnapshotRestore(t *testing.T) {
 		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
-		Size:        "100",
-		VisibleSize: "10",
-		Price:       "100",
+		Size:        udecimal.MustFromInt64(100, 0),
+		VisibleSize: udecimal.MustFromInt64(10, 0),
+		Price:       udecimal.MustFromInt64(100, 0),
 	})
 
 	depth := orderBook.depth(1)
@@ -372,8 +375,8 @@ func TestIceberg_SnapshotRestore(t *testing.T) {
 		OrderID:   "taker-restore",
 		OrderType: Limit,
 		Side:      Buy,
-		Size:      "10",
-		Price:     "100",
+		Size:        udecimal.MustFromInt64(10, 0),
+		Price:       udecimal.MustFromInt64(100, 0),
 	})
 
 	// After replenishment, visible should be 10 again (from hidden)

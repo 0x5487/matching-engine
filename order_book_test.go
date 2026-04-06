@@ -19,16 +19,16 @@ func newPlaceCmd(id string, ot OrderType, s Side, price, size float64) *protocol
 		OrderID:   id,
 		OrderType: ot,
 		Side:      s,
-		Price:     udecimal.MustFromFloat64(price).String(),
-		Size:      udecimal.MustFromFloat64(size).String(),
+		Price:     udecimal.MustFromFloat64(price),
+		Size:      udecimal.MustFromFloat64(size),
 	}
 }
 
 func newAmendCmd(id string, price, size float64) *protocol.AmendOrderParams { //nolint:unparam
 	return &protocol.AmendOrderParams{
 		OrderID:  id,
-		NewPrice: udecimal.MustFromFloat64(price).String(),
-		NewSize:  udecimal.MustFromFloat64(size).String(),
+		NewPrice: udecimal.MustFromFloat64(price),
+		NewSize:  udecimal.MustFromFloat64(size),
 	}
 }
 
@@ -46,16 +46,16 @@ func testPlace(
 	ts int64,
 	params *protocol.PlaceOrderParams,
 ) {
-	bytes, _ := params.MarshalBinary()
+	cmd := &protocol.Command{
+		MarketID:  book.marketID,
+		Type:      protocol.CmdPlaceOrder,
+		UserID:    userID,
+		CommandID: commandID,
+		Timestamp: ts,
+		Params:    params,
+	}
 	book.processCommand(&InputEvent{
-		Cmd: &protocol.Command{
-			MarketID:  book.marketID,
-			Type:      protocol.CmdPlaceOrder,
-			UserID:    userID,
-			CommandID: commandID,
-			Timestamp: ts,
-			Payload:   bytes,
-		},
+		Cmd: cmd,
 	})
 }
 
@@ -67,16 +67,16 @@ func testCancel(
 	ts int64,
 	params *protocol.CancelOrderParams,
 ) {
-	bytes, _ := params.MarshalBinary()
+	cmd := &protocol.Command{
+		MarketID:  book.marketID,
+		Type:      protocol.CmdCancelOrder,
+		UserID:    userID,
+		CommandID: commandID,
+		Timestamp: ts,
+		Params:    params,
+	}
 	book.processCommand(&InputEvent{
-		Cmd: &protocol.Command{
-			MarketID:  book.marketID,
-			Type:      protocol.CmdCancelOrder,
-			UserID:    userID,
-			CommandID: commandID,
-			Timestamp: ts,
-			Payload:   bytes,
-		},
+		Cmd: cmd,
 	})
 }
 
@@ -88,16 +88,16 @@ func testAmend(
 	ts int64,
 	params *protocol.AmendOrderParams,
 ) {
-	bytes, _ := params.MarshalBinary()
+	cmd := &protocol.Command{
+		MarketID:  book.marketID,
+		Type:      protocol.CmdAmendOrder,
+		UserID:    userID,
+		CommandID: commandID,
+		Timestamp: ts,
+		Params:    params,
+	}
 	book.processCommand(&InputEvent{
-		Cmd: &protocol.Command{
-			MarketID:  book.marketID,
-			Type:      protocol.CmdAmendOrder,
-			UserID:    userID,
-			CommandID: commandID,
-			Timestamp: ts,
-			Payload:   bytes,
-		},
+		Cmd: cmd,
 	})
 }
 
@@ -127,14 +127,13 @@ func TestLimitOrders(t *testing.T) {
 		assert.Equal(t, uint64(0), testOrderBook.LastCmdSeqID())
 
 		// Send command with SeqID
-		payload := &protocol.PlaceOrderParams{
+		params := &protocol.PlaceOrderParams{
 			OrderID:   "buyAll",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     "1000",
-			Size:      "10",
+			Price:     udecimal.MustFromInt64(1000, 0),
+			Size:      udecimal.MustFromInt64(10, 0),
 		}
-		bytes, _ := (payload).MarshalBinary()
 		testOrderBook.processCommand(&InputEvent{
 			Cmd: &protocol.Command{
 				MarketID:  testOrderBook.marketID,
@@ -143,7 +142,7 @@ func TestLimitOrders(t *testing.T) {
 				Timestamp: 1,
 				SeqID:     100,
 				Type:      protocol.CmdPlaceOrder,
-				Payload:   bytes,
+				Params:    params,
 			},
 		})
 
@@ -191,8 +190,8 @@ func TestLimitOrders(t *testing.T) {
 			OrderID:   "new-1",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     "100",
-			Size:      "1",
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(1, 0),
 		})
 
 		memoryPublishTrader, ok := orderBook.publisher.(*MemoryPublishLog)
@@ -262,9 +261,9 @@ func TestMarketOrder(t *testing.T) {
 			OrderID:   orderIDMarketBuy,
 			OrderType: Market,
 			Side:      Buy,
-			Price:     "0",
-			Size:      "0",
-			QuoteSize: "360",
+			Price:     udecimal.Zero,
+			Size:      udecimal.Zero,
+			QuoteSize: udecimal.MustFromInt64(360, 0),
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -280,9 +279,10 @@ func TestMarketOrder(t *testing.T) {
 			OrderID:   "mysell",
 			OrderType: Market,
 			Side:      Sell,
-			Price:     "0",
-			Size:      "0",
-			QuoteSize: "90",
+			Price:     udecimal.Zero,
+			Size:      udecimal.MustFromInt64(10, 0),
+			QuoteSize: udecimal.Zero,
+
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -298,9 +298,10 @@ func TestMarketOrder(t *testing.T) {
 			OrderID:   "market-quote-buy",
 			OrderType: Market,
 			Side:      Buy,
-			Price:     "0",
-			Size:      "0",
-			QuoteSize: "230",
+			Price:     udecimal.Zero,
+			Size:      udecimal.MustFromInt64(10, 0),
+			QuoteSize: udecimal.Zero,
+
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -326,9 +327,10 @@ func TestMarketOrder(t *testing.T) {
 			OrderID:   "market-quote-partial",
 			OrderType: Market,
 			Side:      Buy,
-			Price:     "0",
-			Size:      "0",
-			QuoteSize: "55",
+			Price:     udecimal.Zero,
+			Size:      udecimal.MustFromInt64(10, 0),
+			QuoteSize: udecimal.Zero,
+
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -350,9 +352,10 @@ func TestMarketOrder(t *testing.T) {
 			OrderID:   "market-quote-no-liq",
 			OrderType: Market,
 			Side:      Buy,
-			Price:     "0",
-			Size:      "0",
-			QuoteSize: "100",
+			Price:     udecimal.Zero,
+			Size:      udecimal.MustFromInt64(10, 0),
+			QuoteSize: udecimal.Zero,
+
 		})
 
 		assert.Equal(t, 1, publishTrader.Count())
@@ -368,8 +371,8 @@ func TestMarketOrder(t *testing.T) {
 			OrderID:   "market-base-buy",
 			OrderType: Market,
 			Side:      Buy,
-			Price:     "0",
-			Size:      "2",
+			Price:     udecimal.Zero,
+			Size:      udecimal.MustFromInt64(2, 0),
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -395,8 +398,8 @@ func TestMarketOrder(t *testing.T) {
 			OrderID:   "market-base-partial",
 			OrderType: Market,
 			Side:      Buy,
-			Price:     "0",
-			Size:      udecimal.MustFromFloat64(0.5).String(),
+			Price:     udecimal.Zero,
+			Size:      udecimal.MustFromFloat64(0.5),
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -417,8 +420,8 @@ func TestMarketOrder(t *testing.T) {
 			OrderID:   "market-base-all",
 			OrderType: Market,
 			Side:      Buy,
-			Price:     "0",
-			Size:      "3",
+			Price:     udecimal.Zero,
+			Size:      udecimal.MustFromInt64(3, 0),
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -436,8 +439,8 @@ func TestPostOnlyOrder(t *testing.T) {
 			OrderID:   "post_only",
 			OrderType: PostOnly,
 			Side:      Buy,
-			Price:     "100",
-			Size:      "1",
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(1, 0),
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -745,7 +748,7 @@ func TestAmendOrder(t *testing.T) {
 			101,
 			"cmd-amend-buy-1",
 			1,
-			&protocol.AmendOrderParams{OrderID: "buy-1", NewPrice: "95", NewSize: "5"},
+			&protocol.AmendOrderParams{OrderID: "buy-1", NewPrice: udecimal.MustFromInt64(95, 0), NewSize: udecimal.MustFromInt64(5, 0)},
 		)
 
 		depth := testOrderBook.depth(10)
@@ -811,8 +814,8 @@ func TestRejectReason(t *testing.T) {
 			OrderID:   "ioc-1",
 			OrderType: IOC,
 			Side:      Buy,
-			Price:     "100",
-			Size:      "1",
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(1, 0),
 		})
 
 		assert.Equal(t, 1, publishTrader.Count())
@@ -939,8 +942,8 @@ func TestMatchAmount(t *testing.T) {
 			OrderID:   "buy-all",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     "1000",
-			Size:      "3",
+			Price:     udecimal.MustFromInt64(1000, 0),
+			Size:      udecimal.MustFromInt64(3, 0),
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -977,8 +980,8 @@ func TestTradeID(t *testing.T) {
 			OrderID:   "buy-match",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     "115",
-			Size:      "1",
+			Price:     udecimal.MustFromInt64(115, 0),
+			Size:      udecimal.MustFromInt64(1, 0),
 		})
 
 		assert.Equal(t, 7, memoryPublishTrader.Count())
@@ -993,8 +996,8 @@ func TestTradeID(t *testing.T) {
 			OrderID:   "buy-all",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     "1000",
-			Size:      "3",
+			Price:     udecimal.MustFromInt64(1000, 0),
+			Size:      udecimal.MustFromInt64(3, 0),
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -1019,8 +1022,8 @@ func TestTradeID(t *testing.T) {
 			OrderID:   "fok-reject",
 			OrderType: FOK,
 			Side:      Buy,
-			Price:     "100",
-			Size:      "1",
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(1, 0),
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -1041,15 +1044,15 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 			OrderID:   "bid-1",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     "100",
-			Size:      "10",
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(10, 0),
 		})
 		testPlace(book, 2, "cmd-ask-1", 2, &protocol.PlaceOrderParams{
 			OrderID:   "ask-1",
 			OrderType: Limit,
 			Side:      Sell,
-			Price:     "110",
-			Size:      "5",
+			Price:     udecimal.MustFromInt64(110, 0),
+			Size:      udecimal.MustFromInt64(5, 0),
 		})
 
 		assert.Equal(t, int64(1), book.bidQueue.orderCount())
@@ -1085,8 +1088,8 @@ func TestOrderBookSnapshotRestore(t *testing.T) {
 			OrderID:   "buy-match",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     "115",
-			Size:      "1",
+			Price:     udecimal.MustFromInt64(115, 0),
+			Size:      udecimal.MustFromInt64(1, 0),
 		})
 
 		assert.Equal(t, int64(1), restoredBook.askQueue.orderCount())
@@ -1144,8 +1147,8 @@ func TestOrderValidation(t *testing.T) {
 			1,
 			&protocol.AmendOrderParams{
 				OrderID:  "non-existent",
-				NewPrice: "100",
-				NewSize:  "2",
+				NewPrice: udecimal.MustFromInt64(100, 0),
+				NewSize:  udecimal.MustFromInt64(2, 0),
 			},
 		)
 
@@ -1165,8 +1168,8 @@ func TestOrderValidation(t *testing.T) {
 			OrderID:   "owner-1",
 			OrderType: Limit,
 			Side:      Buy,
-			Size:      "1",
-			Price:     "100",
+			Size:      udecimal.MustFromInt64(1, 0),
+			Price:     udecimal.MustFromInt64(100, 0),
 		})
 
 		assert.NotNil(t, orderBook.bidQueue.order("owner-1"))
@@ -1176,8 +1179,8 @@ func TestOrderValidation(t *testing.T) {
 		})
 		testAmend(orderBook, 2, "cmd-amend-owner-1", 1, &protocol.AmendOrderParams{
 			OrderID:  "owner-1",
-			NewPrice: "110",
-			NewSize:  "1",
+			NewPrice: udecimal.MustFromInt64(110, 0),
+			NewSize:  udecimal.MustFromInt64(1, 0),
 		})
 
 		logs := publishTrader.Logs()
@@ -1204,14 +1207,14 @@ func TestOrderValidation(t *testing.T) {
 			OrderID:   "amend-invalid-price",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     "100",
-			Size:      "2",
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(2, 0),
 		})
 
 		testAmend(book, 9, "cmd-amend-invalid-price-2", 777, &protocol.AmendOrderParams{
 			OrderID:  "amend-invalid-price",
-			NewPrice: "bad-price",
-			NewSize:  "2",
+			NewPrice: udecimal.Zero,
+			NewSize:  udecimal.MustFromInt64(2, 0),
 		})
 
 		order := book.bidQueue.order("amend-invalid-price")
@@ -1236,14 +1239,14 @@ func TestOrderValidation(t *testing.T) {
 			OrderID:   "amend-invalid-size",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     "100",
-			Size:      "2",
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(2, 0),
 		})
 
 		testAmend(book, 9, "cmd-amend-invalid-size-2", 778, &protocol.AmendOrderParams{
 			OrderID:  "amend-invalid-size",
-			NewPrice: "100",
-			NewSize:  "bad-size",
+			NewPrice: udecimal.MustFromInt64(100, 0),
+			NewSize:  udecimal.Zero,
 		})
 
 		order := book.bidQueue.order("amend-invalid-size")
@@ -1268,11 +1271,10 @@ func TestOrderValidation(t *testing.T) {
 			OrderID:   "bad-place",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     "not-a-decimal",
-			Size:      "1",
+			Price:     udecimal.Zero,
+			Size:      udecimal.MustFromInt64(1, 0),
 		}
-		bytes, err := (payload).MarshalBinary()
-		require.NoError(t, err)
+		_, _ = (payload).MarshalBinary()
 
 		book.processCommand(&InputEvent{
 			Cmd: &protocol.Command{
@@ -1281,7 +1283,7 @@ func TestOrderValidation(t *testing.T) {
 				CommandID: "cmd-bad-place",
 				Timestamp: 999,
 				Type:      protocol.CmdPlaceOrder,
-				Payload:   bytes[:1],
+				Params:    nil,
 			},
 		})
 
@@ -1301,8 +1303,8 @@ func TestOrderValidation(t *testing.T) {
 			OrderID:   "missing-place-timestamp",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     "100",
-			Size:      "1",
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(1, 0),
 		})
 
 		logs := publishTrader.Logs()
@@ -1322,8 +1324,8 @@ func TestOrderValidation(t *testing.T) {
 			OrderID:   "cancel-without-timestamp",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     "100",
-			Size:      "1",
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(1, 0),
 		})
 
 		testCancel(book, 56, "cmd-cancel-ts-2", 0, &protocol.CancelOrderParams{
@@ -1350,14 +1352,14 @@ func TestOrderValidation(t *testing.T) {
 			OrderID:   "amend-without-timestamp",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     "100",
-			Size:      "2",
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(2, 0),
 		})
 
 		testAmend(book, 57, "cmd-amend-ts-2", 0, &protocol.AmendOrderParams{
 			OrderID:  "amend-without-timestamp",
-			NewPrice: "100",
-			NewSize:  "1",
+			NewPrice: udecimal.MustFromInt64(100, 0),
+			NewSize:  udecimal.MustFromInt64(1, 0),
 		})
 
 		order := book.bidQueue.order("amend-without-timestamp")
@@ -1402,8 +1404,8 @@ func TestOrderBook_LotSize(t *testing.T) {
 			OrderID:   "sell-1",
 			OrderType: Limit,
 			Side:      Sell,
-			Price:     "50000",
-			Size:      "0.1",
+			Price:     udecimal.MustFromInt64(50000, 0),
+			Size:      udecimal.MustParse("0.1"),
 		})
 		assert.Equal(t, int64(1), orderBook.askQueue.orderCount())
 
@@ -1411,9 +1413,10 @@ func TestOrderBook_LotSize(t *testing.T) {
 			OrderID:   orderIDMarketBuy,
 			OrderType: Market,
 			Side:      Buy,
-			Price:     "0",
-			Size:      "0",
-			QuoteSize: udecimal.MustParse("0.04").String(),
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(2, 0),
+
+			QuoteSize: udecimal.MustParse("0.04"),
 		})
 
 		logs := publishTrader.Logs()
@@ -1437,8 +1440,8 @@ func TestOrderBook_LotSize(t *testing.T) {
 			OrderID:   "sell-1",
 			OrderType: Limit,
 			Side:      Sell,
-			Size:      udecimal.MustParse("0.005").String(),
-			Price:     "1000",
+			Size:      udecimal.MustParse("0.005"),
+			Price:     udecimal.MustFromInt64(1000, 0),
 		})
 		assert.Equal(t, int64(1), orderBook.askQueue.orderCount())
 
@@ -1446,9 +1449,10 @@ func TestOrderBook_LotSize(t *testing.T) {
 			OrderID:   orderIDMarketBuy,
 			OrderType: Market,
 			Side:      Buy,
-			Price:     "0",
-			Size:      "0",
-			QuoteSize: udecimal.MustParse("5.5").String(),
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(2, 0),
+
+			QuoteSize: udecimal.MustParse("5.5"),
 		})
 
 		logs := publishTrader.Logs()

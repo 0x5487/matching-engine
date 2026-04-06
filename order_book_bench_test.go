@@ -31,7 +31,7 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 		Timestamp: time.Now().UnixNano(),
 	}
 	_ = cmd.SetPayload(&protocol.CreateMarketParams{
-		MinLotSize: "",
+		MinLotSize: udecimal.Zero,
 	})
 	future, err := engine.Submit(ctx, cmd)
 	if err != nil {
@@ -56,8 +56,9 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 	}
 	sizeOne := udecimal.MustFromInt64(1, 0)
 
-	const poolSize = 65536
+	const poolSize = 1000000
 	cmdPool := make([]*protocol.Command, poolSize)
+	binaryPool := make([][]byte, poolSize)
 
 	for i := range poolSize {
 		var side Side
@@ -65,61 +66,68 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 
 		r := rng.Intn(100)
 		if r < 80 {
-			// 80% limit orders around midPrice
 			sideR := rng.Intn(2)
 			if sideR == 0 {
 				side = Buy
-				priceIdx = rng.Intn(500) // 9500-9999
+				priceIdx = rng.Intn(500)
 			} else {
 				side = Sell
-				priceIdx = rng.Intn(500) + 501 // 10001-10500
+				priceIdx = rng.Intn(500) + 501
 			}
 		} else {
-			// 20% crossing orders to trigger matches
 			sideR := rng.Intn(2)
 			if sideR == 0 {
 				side = Buy
-				priceIdx = rng.Intn(500) + 501 // 10001-10500 (crosses)
+				priceIdx = rng.Intn(500) + 501
 			} else {
 				side = Sell
-				priceIdx = rng.Intn(500) // 9500-9999 (crosses)
+				priceIdx = rng.Intn(500)
 			}
 		}
 
 		c := &protocol.Command{
 			Type:      protocol.CmdPlaceOrder,
-			UserID:    uint64(rng.Intn(1000) + 1), //nolint:gosec
+			UserID:    uint64(rng.Intn(1000) + 1),
 			MarketID:  marketID,
-			CommandID: fmt.Sprintf("order-%d-%d", i, rng.Int63()),
+			CommandID: fmt.Sprintf("o-%d-%d", i, rng.Int63()),
 			Timestamp: time.Now().UnixNano(),
 		}
 		_ = c.SetPayload(&protocol.PlaceOrderParams{
 			OrderID:   c.CommandID,
 			Side:      side,
 			OrderType: protocol.OrderTypeLimit,
-			Price:     priceCache[priceIdx].String(),
-			Size:      sizeOne.String(),
+			Price:     priceCache[priceIdx],
+			Size:      sizeOne,
 		})
 		cmdPool[i] = c
+		binaryPool[i], _ = c.MarshalBinary()
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	// Submit asynchronously
+	// Submit asynchronously - using pre-parsed commands to measure core engine throughput.
+	// We acquire a fresh command envelope for each call to avoid pool recycling issues.
 	for i := range b.N {
 		cmdIdx := i % poolSize
-		_ = engine.SubmitAsync(ctx, cmdPool[cmdIdx])
+		cmd := protocol.AcquireCommand()
+		*cmd = *cmdPool[cmdIdx]
+		_ = engine.SubmitAsync(ctx, cmd)
 	}
 
-	b.StopTimer()
-
-	// Report final state of the order book
+	// Send a sentinel query to ensure all preceding commands are processed
 	query := &protocol.Query{
 		Type:     protocol.QueryGetStats,
 		MarketID: marketID,
 		Payload:  &protocol.GetStatsRequest{MarketID: marketID},
 	}
+	if f, err := engine.Query(ctx, query); err == nil {
+		_, _ = f.Wait(ctx)
+	}
+
+	b.StopTimer()
+
+	// Report final state of the order book
 	if f, err := engine.Query(ctx, query); err == nil {
 		if res, err := f.Wait(context.Background()); err == nil {
 			if stats, ok := res.(*protocol.GetStatsResponse); ok {
@@ -160,7 +168,7 @@ func BenchmarkSubmitAsyncBatch(b *testing.B) {
 		Timestamp: time.Now().UnixNano(),
 	}
 	_ = cmd.SetPayload(&protocol.CreateMarketParams{
-		MinLotSize: "",
+		MinLotSize: udecimal.Zero,
 	})
 	future, _ := engine.Submit(ctx, cmd)
 
@@ -180,7 +188,7 @@ func BenchmarkSubmitAsyncBatch(b *testing.B) {
 	}
 	sizeOne := udecimal.MustFromInt64(1, 0)
 
-	const poolSize = 65536
+	const poolSize = 5000000
 	const batchSize = 100 // Size of each batch
 
 	cmdPool := make([]*protocol.Command, poolSize)
@@ -221,8 +229,8 @@ func BenchmarkSubmitAsyncBatch(b *testing.B) {
 			OrderID:   c.CommandID,
 			Side:      side,
 			OrderType: protocol.OrderTypeLimit,
-			Price:     priceCache[priceIdx].String(),
-			Size:      sizeOne.String(),
+			Price:     priceCache[priceIdx],
+			Size:      sizeOne,
 		})
 		cmdPool[i] = c
 	}
@@ -235,6 +243,16 @@ func BenchmarkSubmitAsyncBatch(b *testing.B) {
 		startIdx := (i * batchSize) % (poolSize - batchSize)
 		batch := cmdPool[startIdx : startIdx+batchSize]
 		_ = engine.SubmitAsyncBatch(ctx, batch)
+	}
+
+	// Wait for processing to finish
+	query := &protocol.Query{
+		Type:     protocol.QueryGetStats,
+		MarketID: marketID,
+		Payload:  &protocol.GetStatsRequest{MarketID: marketID},
+	}
+	if f, err := engine.Query(ctx, query); err == nil {
+		_, _ = f.Wait(ctx)
 	}
 
 	b.StopTimer()

@@ -12,8 +12,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/quagmt/udecimal"
-
 	"github.com/0x5487/matching-engine/protocol"
 )
 
@@ -534,6 +532,8 @@ func (engine *MatchingEngine) restoreMarket(f *os.File, segment MarketSegment, f
 
 func (engine *MatchingEngine) processCommand(ev *InputEvent) {
 	cmd := ev.Cmd
+	defer protocol.ReleaseCommand(cmd)
+
 	if cmd.CommandID == "" {
 		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
 		engine.respondQueryError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
@@ -560,14 +560,7 @@ func (engine *MatchingEngine) processCommand(ev *InputEvent) {
 }
 
 func (engine *MatchingEngine) handleCreateMarketCommand(cmd *protocol.Command, resp chan<- any) {
-	params := &protocol.CreateMarketParams{}
-	if err := params.UnmarshalBinary(cmd.Payload); err != nil {
-		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
-		if resp != nil {
-			resp <- err
-		}
-		return
-	}
+	params, _ := cmd.Params.(*protocol.CreateMarketParams)
 	engine.handleCreateMarket(cmd.CommandID, cmd.Timestamp, cmd.MarketID, cmd.UserID, params, resp)
 }
 
@@ -639,16 +632,8 @@ func (engine *MatchingEngine) handleCreateMarket(
 
 	// Create and Store (no goroutine, no individual RingBuffer)
 	opts := []OrderBookOption{}
-	if params.MinLotSize != "" {
-		size, err := udecimal.Parse(params.MinLotSize)
-		if err != nil {
-			engine.rejectLog(cmdID, marketID, userID, protocol.RejectReasonInvalidPayload, ts)
-			if resp != nil {
-				resp <- err
-			}
-			return
-		}
-		opts = append(opts, WithLotSize(size))
+	if params != nil && !params.MinLotSize.IsZero() {
+		opts = append(opts, WithLotSize(params.MinLotSize))
 	}
 
 	newbook := newOrderBook(engine.engineID, marketID, engine.publishTrader, opts...)
@@ -679,11 +664,15 @@ func (engine *MatchingEngine) handleCreateMarket(
 
 // handleUserEvent processes a generic user event.
 func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
-	payload := &protocol.UserEventParams{}
-	if err := payload.UnmarshalBinary(cmd.Payload); err != nil {
-		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
-		return
+	payload, ok := cmd.Params.(*protocol.UserEventParams)
+	if !ok {
+		// Only reject if payload was expected but missing/wrong type
+		if cmd.Params != nil {
+			engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
+			return
+		}
 	}
+
 	if cmd.Timestamp <= 0 {
 		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
 		return
@@ -764,29 +753,19 @@ func (engine *MatchingEngine) rejectCommand(cmd *protocol.Command, reason protoc
 
 // commandOrderID extracts the business identifier used for reject logs.
 func (engine *MatchingEngine) commandOrderID(cmd *protocol.Command) string {
-	switch cmd.Type {
-	case protocol.CmdPlaceOrder:
-		payload := &protocol.PlaceOrderParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.OrderID
-		}
-	case protocol.CmdCancelOrder:
-		payload := &protocol.CancelOrderParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.OrderID
-		}
-	case protocol.CmdAmendOrder:
-		payload := &protocol.AmendOrderParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.OrderID
-		}
-	case protocol.CmdUserEvent:
-		payload := &protocol.UserEventParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.Key
-		}
-	default:
+	if cmd.Params == nil {
 		return "unknown"
+	}
+
+	switch p := cmd.Params.(type) {
+	case *protocol.PlaceOrderParams:
+		return p.OrderID
+	case *protocol.CancelOrderParams:
+		return p.OrderID
+	case *protocol.AmendOrderParams:
+		return p.OrderID
+	case *protocol.UserEventParams:
+		return p.Key
 	}
 	return "unknown"
 }

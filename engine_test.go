@@ -18,6 +18,16 @@ const (
 	testEngineID = "test-engine-1"
 )
 
+func newPlaceParams(id string, price, size float64) *protocol.PlaceOrderParams {
+	return &protocol.PlaceOrderParams{
+		OrderID:   id,
+		OrderType: protocol.OrderTypeLimit,
+		Side:      protocol.SideBuy,
+		Price:     udecimal.MustFromFloat64(price),
+		Size:      udecimal.MustFromFloat64(size),
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
@@ -38,14 +48,18 @@ func setupEngine(t *testing.T, log Publisher) *MatchingEngine {
 func createMarket(t *testing.T, engine *MatchingEngine, marketID, minLotSize string) {
 	t.Helper()
 	ctx := context.Background()
+	var mls udecimal.Decimal
+	if minLotSize != "" {
+		mls, _ = udecimal.Parse(minLotSize)
+	}
 	cmd := &protocol.Command{
 		Type:      protocol.CmdCreateMarket,
 		UserID:    1,
 		MarketID:  marketID,
 		CommandID: "setup-create-" + marketID,
 		Timestamp: time.Now().UnixNano(),
+		Params:    &protocol.CreateMarketParams{MinLotSize: mls},
 	}
-	_ = cmd.SetPayload(&protocol.CreateMarketParams{MinLotSize: minLotSize})
 	future, err := engine.Submit(ctx, cmd)
 	require.NoError(t, err)
 	_, err = future.Wait(ctx)
@@ -126,7 +140,7 @@ func TestMatchingEngineInitialization(t *testing.T) {
 			Timestamp: 1,
 		}
 		_ = cmd.SetPayload(&protocol.CreateMarketParams{
-			MinLotSize: "0.01",
+			MinLotSize: udecimal.MustFromInt64(1, 2),
 		})
 		_, err := engine.Submit(context.Background(), cmd)
 		require.ErrorIs(t, err, ErrInvalidParam)
@@ -153,8 +167,8 @@ func TestMatchingEngineInitialization(t *testing.T) {
 			OrderID:   "order1",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     udecimal.MustFromInt64(100, 0).String(),
-			Size:      udecimal.MustFromInt64(2, 0).String(),
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(2, 0),
 		})
 		err := engine.SubmitAsync(ctx, cmdOrder1)
 		require.NoError(t, err)
@@ -171,8 +185,8 @@ func TestMatchingEngineInitialization(t *testing.T) {
 			OrderID:   "order2",
 			OrderType: Limit,
 			Side:      Sell,
-			Price:     udecimal.MustFromInt64(110, 0).String(),
-			Size:      udecimal.MustFromInt64(2, 0).String(),
+			Price:     udecimal.MustFromInt64(110, 0),
+			Size:      udecimal.MustFromInt64(2, 0),
 		})
 		err = engine.SubmitAsync(ctx, cmdOrder2)
 		require.NoError(t, err)
@@ -198,8 +212,8 @@ func TestMatchingEngineInitialization(t *testing.T) {
 			OrderID:   "order1",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     udecimal.MustFromInt64(100, 0).String(),
-			Size:      udecimal.MustFromInt64(2, 0).String(),
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(2, 0),
 		})
 		err := engine.SubmitAsync(ctx, cmdPlace1)
 		require.NoError(t, err)
@@ -239,8 +253,8 @@ func TestMatchingEngineInitialization(t *testing.T) {
 			OrderID:   "missing-market-order",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     "100",
-			Size:      "1",
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(1, 0),
 		})
 		err := engine.SubmitAsync(ctx, cmdPlace)
 		require.NoError(t, err) // Enqueue succeeds; market check is on the consumer side.
@@ -302,7 +316,8 @@ func TestMatchingEngineInitialization(t *testing.T) {
 			CommandID: "create-market-existing-1",
 			Timestamp: 1001,
 		}
-		_ = cmd1.SetPayload(&protocol.CreateMarketParams{MinLotSize: "0.01"})
+		_ = cmd1.SetPayload(&protocol.CreateMarketParams{MinLotSize: udecimal.MustFromInt64(1, 2)})
+
 		future1, err := engine.Submit(ctx, cmd1)
 		require.NoError(t, err)
 		_, err = future1.Wait(ctx)
@@ -317,7 +332,8 @@ func TestMatchingEngineInitialization(t *testing.T) {
 			CommandID: "create-market-existing-2",
 			Timestamp: 1002,
 		}
-		_ = cmd2.SetPayload(&protocol.CreateMarketParams{MinLotSize: "0.01"})
+		_ = cmd2.SetPayload(&protocol.CreateMarketParams{MinLotSize: udecimal.MustFromInt64(1, 2)})
+
 		future2, err := engine.Submit(ctx, cmd2)
 		require.NoError(t, err)
 		_, err = future2.Wait(ctx)
@@ -348,7 +364,7 @@ func TestMatchingEngineInitialization(t *testing.T) {
 			CommandID: "create-market-zero-ts",
 			Timestamp: 0,
 		}
-		_ = cmd.SetPayload(&protocol.CreateMarketParams{MinLotSize: "0.01"})
+		_ = cmd.SetPayload(&protocol.CreateMarketParams{MinLotSize: udecimal.MustFromFloat64(0.01)})
 		future, err := engine.Submit(ctx, cmd)
 		require.NoError(t, err)
 		_, err = future.Wait(ctx)
@@ -393,7 +409,8 @@ func TestCommandAndEngineIDPropagation(t *testing.T) {
 		CommandID: "prop-market-create",
 		Timestamp: time.Now().UnixNano(),
 	}
-	_ = cmdMarket.SetPayload(&protocol.CreateMarketParams{MinLotSize: ""})
+	_ = cmdMarket.SetPayload(&protocol.CreateMarketParams{MinLotSize: udecimal.Zero})
+
 	future, err := engine.Submit(ctx, cmdMarket)
 	require.NoError(t, err)
 
@@ -415,8 +432,8 @@ func TestCommandAndEngineIDPropagation(t *testing.T) {
 		OrderID:   "single-oid",
 		OrderType: Limit,
 		Side:      Buy,
-		Price:     "100",
-		Size:      "1",
+		Price:     udecimal.MustFromInt64(100, 0),
+		Size:      udecimal.MustFromInt64(1, 0),
 	})
 	err = engine.SubmitAsync(ctx, cmdPlace)
 	require.NoError(t, err)
@@ -450,7 +467,8 @@ func TestMatchingEngineShutdown(t *testing.T) {
 				CommandID: "shutdown-market-" + market,
 				Timestamp: time.Now().UnixNano(),
 			}
-			_ = cmd.SetPayload(&protocol.CreateMarketParams{MinLotSize: ""})
+			_ = cmd.SetPayload(&protocol.CreateMarketParams{MinLotSize: udecimal.MustFromInt64(1, 2)})
+
 			future, err := engine.Submit(ctx, cmd)
 			require.NoError(t, err)
 			futures = append(futures, future)
@@ -475,8 +493,8 @@ func TestMatchingEngineShutdown(t *testing.T) {
 				OrderID:   "order-" + market,
 				OrderType: Limit,
 				Side:      Buy,
-				Price:     udecimal.MustFromInt64(int64(100+i*10), 0).String(),
-				Size:      udecimal.MustFromInt64(1, 0).String(),
+				Price:     udecimal.MustFromInt64(int64(100+i*10), 0),
+				Size:      udecimal.MustFromInt64(1, 0),
 			})
 			err := engine.SubmitAsync(ctx, cmd)
 			require.NoError(t, err)
@@ -498,8 +516,8 @@ func TestMatchingEngineShutdown(t *testing.T) {
 			OrderID:   "after-shutdown",
 			OrderType: Limit,
 			Side:      Buy,
-			Price:     udecimal.MustFromInt64(100, 0).String(),
-			Size:      udecimal.MustFromInt64(1, 0).String(),
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(1, 0),
 		})
 		err = engine.SubmitAsync(ctx, cmdAfter)
 		assert.Equal(t, ErrShutdown, err)
@@ -526,8 +544,9 @@ func TestManagement_SuspendResume(t *testing.T) {
 		OrderID:   "order-1",
 		Side:      Buy,
 		OrderType: Limit,
-		Price:     "3000",
-		Size:      "1",
+		Price:     udecimal.MustFromInt64(3000, 0),
+		Size:      udecimal.MustFromInt64(1, 0),
+
 	})
 	err := engine.SubmitAsync(ctx, cmdPlace1)
 	require.NoError(t, err)
@@ -559,8 +578,9 @@ func TestManagement_SuspendResume(t *testing.T) {
 		OrderID:   "order-2",
 		Side:      Buy,
 		OrderType: Limit,
-		Price:     "3000",
-		Size:      "1",
+		Price:     udecimal.MustFromInt64(3000, 0),
+		Size:      udecimal.MustFromInt64(1, 0),
+
 	})
 	err = engine.SubmitAsync(ctx, cmdPlace2)
 	require.NoError(t, err)
@@ -612,7 +632,7 @@ func TestManagement_LateResponsePollution(t *testing.T) {
 		Timestamp: time.Now().UnixNano(),
 	}
 	_ = cmd1.SetPayload(&protocol.CreateMarketParams{
-		MinLotSize: "0.01",
+		MinLotSize: udecimal.MustFromInt64(1, 2),
 	})
 	future1, err := engine.Submit(context.Background(), cmd1)
 	require.NoError(t, err)
@@ -643,7 +663,7 @@ func TestManagement_LateResponsePollution(t *testing.T) {
 		Timestamp: time.Now().UnixNano(),
 	}
 	_ = cmd2.SetPayload(&protocol.CreateMarketParams{
-		MinLotSize: "0.01",
+		MinLotSize: udecimal.MustFromInt64(1, 2),
 	})
 	future2, err := engine.Submit(ctxLong, cmd2)
 	require.NoError(t, err)
@@ -717,7 +737,7 @@ func TestMatchingEngine_ContextAwareSubmission(t *testing.T) {
 			CommandID: "cmd-1",
 			Timestamp: time.Now().UnixNano(),
 		}
-		_ = cmd.SetPayload(&protocol.CreateMarketParams{MinLotSize: "0.01"})
+		_ = cmd.SetPayload(&protocol.CreateMarketParams{MinLotSize: udecimal.MustFromFloat64(0.01)})
 		_, err := engine.Submit(ctx, cmd)
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	})
@@ -748,7 +768,7 @@ func TestManagement_MalformedPayload(t *testing.T) {
 				Type:      tc.cmdType,
 				MarketID:  marketID,
 				CommandID: tc.cmdID,
-				Payload:   []byte("this-is-not-json-or-binary"),
+				Params:    []byte("this-is-not-json-or-binary"),
 			}
 			futureCmd, err := engine.Submit(context.Background(), protoCmd)
 			require.NoError(t, err)
@@ -779,8 +799,8 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 		OrderID:   "order-1",
 		Side:      Buy,
 		OrderType: Limit,
-		Price:     "100",
-		Size:      "1",
+		Price:     udecimal.MustFromInt64(100, 0),
+		Size:      udecimal.MustFromInt64(1, 0),
 	})
 	err := engine.SubmitAsync(ctx, cmdOrder1)
 	require.NoError(t, err)
@@ -814,8 +834,8 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 		OrderID:   "order-2",
 		Side:      Buy,
 		OrderType: Limit,
-		Price:     "101",
-		Size:      "1",
+		Price:     udecimal.MustFromInt64(101, 0),
+		Size:      udecimal.MustFromInt64(1, 0),
 	})
 	err = engine.SubmitAsync(ctx, cmdOrder2)
 	require.NoError(t, err)
@@ -870,7 +890,7 @@ func TestUserEvent_ValidationErrors(t *testing.T) {
 			UserID:    0,
 			MarketID:  "",
 			Timestamp: 0,
-			Payload:   []byte("{"),
+			Params:    []byte("{"),
 		})
 		require.NoError(t, err)
 
