@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"unsafe"
 
 	"github.com/quagmt/udecimal"
 )
@@ -13,23 +12,54 @@ import (
 type CommandType uint8
 
 const (
-	CmdUnknown       CommandType = 0
-	CmdPlaceOrder    CommandType = 1
-	CmdCancelOrder   CommandType = 2
-	CmdAmendOrder    CommandType = 3
-	CmdCreateMarket  CommandType = 11
+	// CmdUnknown represents an unknown command type.
+	CmdUnknown CommandType = 0
+	// CmdPlaceOrder represents a place-order command.
+	CmdPlaceOrder CommandType = 1
+	// CmdCancelOrder represents a cancel-order command.
+	CmdCancelOrder CommandType = 2
+	// CmdAmendOrder represents an amend-order command.
+	CmdAmendOrder CommandType = 3
+	// CmdCreateMarket represents a create-market command.
+	CmdCreateMarket CommandType = 11
+	// CmdSuspendMarket represents a suspend-market command.
 	CmdSuspendMarket CommandType = 12
-	CmdResumeMarket  CommandType = 13
-	CmdUpdateConfig  CommandType = 14
-	CmdUserEvent     CommandType = 21
+	// CmdResumeMarket represents a resume-market command.
+	CmdResumeMarket CommandType = 13
+	// CmdUpdateConfig represents an update-config command.
+	CmdUpdateConfig CommandType = 14
+	// CmdUserEvent represents a user-event command.
+	CmdUserEvent CommandType = 21
 )
 
 const (
-	stringLenSize  = 2
-	payloadLenSize = 4
+	stringLenSize    = 2
+	payloadLenSize   = 4
+	versionSize      = 1
+	userIDSize       = 8
+	commandTypeSize  = 1
+	seqIDSize        = 8
+	timestampLenSize = 8
+	sideFieldSize    = 1
+	orderTypeSize    = 1
+	minPayloadSize   = 2
+
+	requestHeaderSize = versionSize + userIDSize + commandTypeSize + seqIDSize + timestampLenSize
+	minRequestSize    = requestHeaderSize + stringLenSize + stringLenSize + payloadLenSize
+
+	maxUint16Value = 1<<16 - 1
+	maxUint32Value = 1<<32 - 1
+	maxInt64Value  = 1<<63 - 1
+	sideBuyValue   = 1
+	sideSellValue  = 2
 )
 
-var errUnknownRequest = errors.New("unknown request")
+var (
+	errUnknownRequest  = errors.New("unknown request")
+	errStringTooLong   = errors.New("string too long")
+	errPayloadTooLarge = errors.New("payload too large")
+	errInvalidRequest  = errors.New("invalid request")
+)
 
 // BaseCommand contains the shared metadata for all command requests.
 type BaseCommand struct {
@@ -41,401 +71,77 @@ type BaseCommand struct {
 	Timestamp int64
 }
 
-// Params is the common interface for all command parameters.
-type Params interface {
-	MarshalBinary() ([]byte, error)
-	BinarySize() int
-	UnmarshalBinary(data []byte) error
+// GetRequestBase returns the shared metadata for a typed request and a boolean indicating success.
+func GetRequestBase(req any) (BaseCommand, bool) {
+	switch r := req.(type) {
+	case *PlaceOrderRequest:
+		return r.BaseCommand, true
+	case *CancelOrderRequest:
+		return r.BaseCommand, true
+	case *AmendOrderRequest:
+		return r.BaseCommand, true
+	case *CreateMarketRequest:
+		return r.BaseCommand, true
+	case *SuspendMarketRequest:
+		return r.BaseCommand, true
+	case *ResumeMarketRequest:
+		return r.BaseCommand, true
+	case *UpdateConfigRequest:
+		return r.BaseCommand, true
+	case *UserEventRequest:
+		return r.BaseCommand, true
+	case *BaseCommand:
+		return *r, true
+	case BaseCommand:
+		return r, true
+	default:
+		return BaseCommand{}, false
+	}
 }
 
-// Command represents a single command to be processed by the matching engine.
-type Command struct {
-	Version   uint8
-	Type      CommandType
-	SeqID     uint64
-	UserID    uint64
-	MarketID  string
-	CommandID string
-	Timestamp int64
-	Params    any // Parsed specialized params
-}
-
-// MarshalCommand serializes a Command and its payload into a single byte slice.
-func MarshalCommand(c *Command) ([]byte, error) {
-	var payloadSize int
-	if p, ok := c.Params.(Params); ok {
-		payloadSize = p.BinarySize()
-	}
-
-	totalSize := 1 + 8 + 1 + 8 + 8 +
-		stringLenSize + len(c.MarketID) +
-		stringLenSize + len(c.CommandID) +
-		payloadLenSize + payloadSize
-
-	buf := make([]byte, totalSize)
-	offset := 0
-
-	buf[offset] = c.Version
-	offset++
-	binary.BigEndian.PutUint64(buf[offset:], c.UserID)
-	offset += 8
-	buf[offset] = uint8(c.Type)
-	offset++
-	binary.BigEndian.PutUint64(buf[offset:], c.SeqID)
-	offset += 8
-	binary.BigEndian.PutUint64(buf[offset:], uint64(c.Timestamp))
-	offset += 8
-
-	offset += writeString(buf[offset:], c.MarketID)
-	offset += writeString(buf[offset:], c.CommandID)
-
-	binary.BigEndian.PutUint32(buf[offset:], uint32(payloadSize))
-	offset += 4
-
-	if payloadSize > 0 {
-		p := c.Params.(Params)
-		pData, err := p.MarshalBinary()
-		if err != nil {
-			return nil, err
-		}
-		copy(buf[offset:], pData)
-	}
-
-	return buf, nil
-}
-
-// UnmarshalCommand deserializes a Command and its payload from binary format.
-func UnmarshalCommand(data []byte) (*Command, error) {
-	if len(data) < 26 {
-		return nil, io.ErrUnexpectedEOF
-	}
-
-	c := &Command{}
-	offset := 0
-	c.Version = data[offset]
-	offset++
-	c.UserID = binary.BigEndian.Uint64(data[offset:])
-	offset += 8
-	c.Type = CommandType(data[offset])
-	offset++
-	c.SeqID = binary.BigEndian.Uint64(data[offset:])
-	offset += 8
-	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:]))
-	offset += 8
-
-	var n int
-	var err error
-	c.MarketID, n, err = readString(data[offset:])
-	if err != nil {
-		return nil, err
-	}
-	offset += n
-	c.CommandID, n, err = readString(data[offset:])
-	if err != nil {
-		return nil, err
-	}
-	offset += n
-
-	if len(data[offset:]) < 4 {
-		return nil, io.ErrUnexpectedEOF
-	}
-	payloadLen := int(binary.BigEndian.Uint32(data[offset:]))
-	offset += 4
-
-	if payloadLen > 0 {
-		if len(data[offset:]) < payloadLen {
-			return nil, io.ErrUnexpectedEOF
-		}
-		pData := data[offset : offset+payloadLen]
-		switch c.Type {
-		case CmdPlaceOrder:
-			p := &PlaceOrderParams{}
-			if err := p.UnmarshalBinary(pData); err != nil {
-				return nil, err
-			}
-			c.Params = p
-		case CmdCancelOrder:
-			p := &CancelOrderParams{}
-			if err := p.UnmarshalBinary(pData); err != nil {
-				return nil, err
-			}
-			c.Params = p
-		case CmdAmendOrder:
-			p := &AmendOrderParams{}
-			if err := p.UnmarshalBinary(pData); err != nil {
-				return nil, err
-			}
-			c.Params = p
-		case CmdCreateMarket:
-			p := &CreateMarketParams{}
-			if err := p.UnmarshalBinary(pData); err != nil {
-				return nil, err
-			}
-			c.Params = p
-		case CmdSuspendMarket:
-			p := &SuspendMarketParams{}
-			if err := p.UnmarshalBinary(pData); err != nil {
-				return nil, err
-			}
-			c.Params = p
-		case CmdUpdateConfig:
-			p := &UpdateConfigParams{}
-			if err := p.UnmarshalBinary(pData); err != nil {
-				return nil, err
-			}
-			c.Params = p
-		case CmdUserEvent:
-			p := &UserEventParams{}
-			if err := p.UnmarshalBinary(pData); err != nil {
-				return nil, err
-			}
-			c.Params = p
-		}
-	}
-
-	return c, nil
-}
-
-// MarshalBinary is kept for compatibility with Params interface.
-func (c *Command) MarshalBinary() ([]byte, error) {
-	return MarshalCommand(c)
-}
-
-// UnmarshalBinary is kept for compatibility.
-func (c *Command) UnmarshalBinary(data []byte) error {
-	nc, err := UnmarshalCommand(data)
-	if err != nil {
-		return err
-	}
-	*c = *nc
-	return nil
-}
-
-// SetPayload sets the specialized params of the command.
-func (c *Command) SetPayload(p Params) error {
-	c.Params = p
-	return nil
-}
-
-// --- Specialized Params (Business Payloads) ---
+// --- Specialized Requests (Typed Payloads) ---
 
 // PlaceOrderRequest represents a typed place-order command.
 type PlaceOrderRequest struct {
 	BaseCommand
+
 	OrderID     string           `json:"order_id"`
 	Side        Side             `json:"side"`
 	OrderType   OrderType        `json:"order_type"`
 	Price       udecimal.Decimal `json:"price"`
 	Size        udecimal.Decimal `json:"size"`
-	VisibleSize udecimal.Decimal `json:"visible_size,omitempty"`
-	QuoteSize   udecimal.Decimal `json:"quote_size,omitempty"`
-}
-
-type PlaceOrderParams struct {
-	OrderID     string           `json:"order_id"`
-	Side        Side             `json:"side"`
-	OrderType   OrderType        `json:"order_type"`
-	Price       udecimal.Decimal `json:"price"`
-	Size        udecimal.Decimal `json:"size"`
-	VisibleSize udecimal.Decimal `json:"visible_size,omitempty"`
-	QuoteSize   udecimal.Decimal `json:"quote_size,omitempty"`
-}
-
-func (c *PlaceOrderParams) MarshalBinary() ([]byte, error) {
-	buf := make([]byte, c.BinarySize())
-	offset := 0
-	buf[offset] = uint8(c.Side)
-	offset++
-	buf[offset] = c.OrderType.ToUint8()
-	offset++
-	offset += writeString(buf[offset:], c.OrderID)
-	offset += writeString(buf[offset:], c.Price.String())
-	offset += writeString(buf[offset:], c.Size.String())
-	offset += writeString(buf[offset:], c.VisibleSize.String())
-	writeString(buf[offset:], c.QuoteSize.String())
-	return buf, nil
-}
-
-func (c *PlaceOrderParams) BinarySize() int {
-	return 1 + 1 + stringLenSize*5 + len(c.OrderID) + len(c.Price.String()) + len(c.Size.String()) + len(c.VisibleSize.String()) + len(c.QuoteSize.String())
-}
-
-func (c *PlaceOrderParams) UnmarshalBinary(data []byte) error {
-	if len(data) < 2 {
-		return io.ErrUnexpectedEOF
-	}
-	offset := 0
-	c.Side = Side(data[offset])
-	offset++
-	c.OrderType = OrderTypeFromUint8(data[offset])
-	offset++
-	var n int
-	var err error
-	var s string
-	c.OrderID, n, err = readString(data[offset:])
-	if err != nil {
-		return err
-	}
-	offset += n
-	if s, n, err = readString(data[offset:]); err != nil {
-		return err
-	}
-	c.Price, err = udecimal.Parse(s)
-	if err != nil {
-		return err
-	}
-	offset += n
-
-	if s, n, err = readString(data[offset:]); err != nil {
-		return err
-	}
-	c.Size, err = udecimal.Parse(s)
-	if err != nil {
-		return err
-	}
-	offset += n
-
-	if s, n, err = readString(data[offset:]); err != nil {
-		return err
-	}
-	c.VisibleSize, err = udecimal.Parse(s)
-	if err != nil {
-		return err
-	}
-	offset += n
-
-	if s, _, err = readString(data[offset:]); err != nil {
-		return err
-	}
-	c.QuoteSize, err = udecimal.Parse(s)
-	return err
+	VisibleSize udecimal.Decimal `json:"visible_size"`
+	QuoteSize   udecimal.Decimal `json:"quote_size"`
 }
 
 // CancelOrderRequest represents a typed cancel-order command.
 type CancelOrderRequest struct {
 	BaseCommand
+
 	OrderID string `json:"order_id"`
-}
-
-type CancelOrderParams struct {
-	OrderID string `json:"order_id"`
-}
-
-func (c *CancelOrderParams) MarshalBinary() ([]byte, error) {
-	buf := make([]byte, c.BinarySize())
-	writeString(buf, c.OrderID)
-	return buf, nil
-}
-
-func (c *CancelOrderParams) BinarySize() int {
-	return stringLenSize + len(c.OrderID)
-}
-
-func (c *CancelOrderParams) UnmarshalBinary(data []byte) error {
-	var err error
-	c.OrderID, _, err = readString(data)
-	return err
 }
 
 // AmendOrderRequest represents a typed amend-order command.
 type AmendOrderRequest struct {
 	BaseCommand
+
 	OrderID  string           `json:"order_id"`
 	NewPrice udecimal.Decimal `json:"new_price"`
 	NewSize  udecimal.Decimal `json:"new_size"`
-}
-
-type AmendOrderParams struct {
-	OrderID  string           `json:"order_id"`
-	NewPrice udecimal.Decimal `json:"new_price"`
-	NewSize  udecimal.Decimal `json:"new_size"`
-}
-
-func (c *AmendOrderParams) MarshalBinary() ([]byte, error) {
-	buf := make([]byte, c.BinarySize())
-	offset := 0
-	offset += writeString(buf[offset:], c.OrderID)
-	offset += writeString(buf[offset:], c.NewPrice.String())
-	writeString(buf[offset:], c.NewSize.String())
-	return buf, nil
-}
-
-func (c *AmendOrderParams) BinarySize() int {
-	return stringLenSize*3 + len(c.OrderID) + len(c.NewPrice.String()) + len(c.NewSize.String())
-}
-
-func (c *AmendOrderParams) UnmarshalBinary(data []byte) error {
-	offset := 0
-	var n int
-	var err error
-	var s string
-	c.OrderID, n, err = readString(data[offset:])
-	if err != nil {
-		return err
-	}
-	offset += n
-	if s, n, err = readString(data[offset:]); err == nil {
-		c.NewPrice, _ = udecimal.Parse(s)
-		offset += n
-	}
-	if s, _, err = readString(data[offset:]); err == nil {
-		c.NewSize, _ = udecimal.Parse(s)
-	}
-	return nil
 }
 
 // CreateMarketRequest represents a typed create-market command.
 type CreateMarketRequest struct {
 	BaseCommand
+
 	MinLotSize udecimal.Decimal `json:"min_lot_size"`
-}
-
-type CreateMarketParams struct {
-	MinLotSize udecimal.Decimal `json:"min_lot_size"`
-}
-
-func (c *CreateMarketParams) MarshalBinary() ([]byte, error) {
-	buf := make([]byte, c.BinarySize())
-	writeString(buf, c.MinLotSize.String())
-	return buf, nil
-}
-
-func (c *CreateMarketParams) BinarySize() int {
-	return stringLenSize + len(c.MinLotSize.String())
-}
-
-func (c *CreateMarketParams) UnmarshalBinary(data []byte) error {
-	s, _, err := readString(data)
-	if err == nil {
-		c.MinLotSize, _ = udecimal.Parse(s)
-	}
-	return err
 }
 
 // SuspendMarketRequest represents a typed suspend-market command.
 type SuspendMarketRequest struct {
 	BaseCommand
+
 	Reason string `json:"reason"`
-}
-
-type SuspendMarketParams struct {
-	Reason string `json:"reason"`
-}
-
-func (c *SuspendMarketParams) MarshalBinary() ([]byte, error) {
-	buf := make([]byte, c.BinarySize())
-	writeString(buf, c.Reason)
-	return buf, nil
-}
-
-func (c *SuspendMarketParams) BinarySize() int {
-	return stringLenSize + len(c.Reason)
-}
-
-func (c *SuspendMarketParams) UnmarshalBinary(data []byte) error {
-	var err error
-	c.Reason, _, err = readString(data)
-	return err
 }
 
 // ResumeMarketRequest represents a typed resume-market command.
@@ -443,351 +149,447 @@ type ResumeMarketRequest struct {
 	BaseCommand
 }
 
-type ResumeMarketParams struct{}
-
-func (c *ResumeMarketParams) MarshalBinary() ([]byte, error) {
-	return []byte{}, nil
-}
-
-func (c *ResumeMarketParams) BinarySize() int {
-	return 0
-}
-
-func (c *ResumeMarketParams) UnmarshalBinary(_ []byte) error {
-	return nil
-}
-
 // UpdateConfigRequest represents a typed update-config command.
 type UpdateConfigRequest struct {
 	BaseCommand
+
 	MinLotSize udecimal.Decimal `json:"min_lot_size"`
-}
-
-type UpdateConfigParams struct {
-	MinLotSize udecimal.Decimal `json:"min_lot_size"`
-}
-
-func (c *UpdateConfigParams) MarshalBinary() ([]byte, error) {
-	buf := make([]byte, c.BinarySize())
-	writeString(buf, c.MinLotSize.String())
-	return buf, nil
-}
-
-func (c *UpdateConfigParams) BinarySize() int {
-	return stringLenSize + len(c.MinLotSize.String())
-}
-
-func (c *UpdateConfigParams) UnmarshalBinary(data []byte) error {
-	s, _, err := readString(data)
-	if err == nil {
-		c.MinLotSize, _ = udecimal.Parse(s)
-	}
-	return err
 }
 
 // UserEventRequest represents a typed user-event command.
 type UserEventRequest struct {
 	BaseCommand
+
 	EventType string `json:"event_type"`
 	Key       string `json:"key"`
 	Data      []byte `json:"data"`
 }
 
-type UserEventParams struct {
-	EventType string `json:"event_type"`
-	Key       string `json:"key"`
-	Data      []byte `json:"data"`
-}
+// MarshalRequest serializes a typed request into binary format.
+// It follows the wire format: version(1), user_id(8), type(1), seq_id(8), timestamp(8), market_id(string), command_id(string), payload_len(4), payload(n).
+// The wire CommandType is always derived from the concrete request type, regardless of the value in BaseCommand.Type.
+func MarshalRequest(req any) ([]byte, error) {
+	base, ok := GetRequestBase(req)
+	if !ok {
+		return nil, errUnknownRequest
+	}
+	if base.Timestamp < 0 {
+		return nil, errInvalidRequest
+	}
 
-func (c *UserEventParams) MarshalBinary() ([]byte, error) {
-	size := stringLenSize + len(c.EventType) + stringLenSize + len(c.Key) + payloadLenSize + len(c.Data)
-	buf := make([]byte, size)
+	var (
+		payload  []byte
+		wireType CommandType // always derived from the concrete type, not base.Type
+	)
+
+	switch r := req.(type) {
+	case *PlaceOrderRequest:
+		wireType = CmdPlaceOrder
+		// Validate body string fields before building the buffer to avoid panicking.
+		if len(r.OrderID) > maxUint16Value {
+			return nil, errStringTooLong
+		}
+		// side(1) + orderType(1) + orderID(string) + price(string) + size(string) + visibleSize(string) + quoteSize(string)
+		priceStr := r.Price.String()
+		sizeStr := r.Size.String()
+		visStr := r.VisibleSize.String()
+		quoteStr := r.QuoteSize.String()
+		pSize := sideFieldSize + orderTypeSize + stringLenSize*5 + len(r.OrderID) + len(priceStr) + len(sizeStr) + len(visStr) + len(quoteStr)
+		buf := make([]byte, pSize)
+		offset := 0
+		buf[offset] = sideToUint8(r.Side)
+		offset++
+		buf[offset] = r.OrderType.ToUint8()
+		offset++
+		offset += mustWriteString(buf[offset:], r.OrderID)
+		offset += mustWriteString(buf[offset:], priceStr)
+		offset += mustWriteString(buf[offset:], sizeStr)
+		offset += mustWriteString(buf[offset:], visStr)
+		mustWriteString(buf[offset:], quoteStr)
+		payload = buf
+	case *CancelOrderRequest:
+		wireType = CmdCancelOrder
+		// Validate body string fields before building the buffer to avoid panicking.
+		if len(r.OrderID) > maxUint16Value {
+			return nil, errStringTooLong
+		}
+		buf := make([]byte, stringLenSize+len(r.OrderID))
+		mustWriteString(buf, r.OrderID)
+		payload = buf
+	case *AmendOrderRequest:
+		wireType = CmdAmendOrder
+		// Validate body string fields before building the buffer to avoid panicking.
+		if len(r.OrderID) > maxUint16Value {
+			return nil, errStringTooLong
+		}
+		priceStr := r.NewPrice.String()
+		sizeStr := r.NewSize.String()
+		buf := make([]byte, stringLenSize*3+len(r.OrderID)+len(priceStr)+len(sizeStr))
+		offset := 0
+		offset += mustWriteString(buf[offset:], r.OrderID)
+		offset += mustWriteString(buf[offset:], priceStr)
+		mustWriteString(buf[offset:], sizeStr)
+		payload = buf
+	case *CreateMarketRequest:
+		wireType = CmdCreateMarket
+		s := r.MinLotSize.String()
+		buf := make([]byte, stringLenSize+len(s))
+		mustWriteString(buf, s)
+		payload = buf
+	case *SuspendMarketRequest:
+		wireType = CmdSuspendMarket
+		// Validate body string fields before building the buffer to avoid panicking.
+		if len(r.Reason) > maxUint16Value {
+			return nil, errStringTooLong
+		}
+		buf := make([]byte, stringLenSize+len(r.Reason))
+		mustWriteString(buf, r.Reason)
+		payload = buf
+	case *ResumeMarketRequest:
+		wireType = CmdResumeMarket
+		payload = []byte{}
+	case *UpdateConfigRequest:
+		wireType = CmdUpdateConfig
+		s := r.MinLotSize.String()
+		buf := make([]byte, stringLenSize+len(s))
+		mustWriteString(buf, s)
+		payload = buf
+	case *UserEventRequest:
+		wireType = CmdUserEvent
+		// Validate body string fields before building the buffer to avoid panicking.
+		if len(r.EventType) > maxUint16Value || len(r.Key) > maxUint16Value {
+			return nil, errStringTooLong
+		}
+		pSize := stringLenSize + len(r.EventType) + stringLenSize + len(r.Key) + payloadLenSize + len(r.Data)
+		buf := make([]byte, pSize)
+		offset := 0
+		offset += mustWriteString(buf[offset:], r.EventType)
+		offset += mustWriteString(buf[offset:], r.Key)
+		binary.BigEndian.PutUint32(buf[offset:], safeUint32Len(len(r.Data)))
+		offset += payloadLenSize
+		copy(buf[offset:], r.Data)
+		payload = buf
+	default:
+		return nil, errUnknownRequest
+	}
+
+	if len(base.MarketID) > maxUint16Value || len(base.CommandID) > maxUint16Value {
+		return nil, errStringTooLong
+	}
+	if len(payload) > maxUint32Value {
+		return nil, errPayloadTooLarge
+	}
+
+	payloadSize := len(payload)
+	totalSize := requestHeaderSize +
+		stringLenSize + len(base.MarketID) +
+		stringLenSize + len(base.CommandID) +
+		payloadLenSize + payloadSize
+
+	buf := make([]byte, totalSize)
 	offset := 0
-	offset += writeString(buf[offset:], c.EventType)
-	offset += writeString(buf[offset:], c.Key)
-	binary.BigEndian.PutUint32(buf[offset:], uint32(len(c.Data)))
-	offset += payloadLenSize
-	copy(buf[offset:], c.Data)
+
+	buf[offset] = 1 // Hardcoded version
+	offset++
+	binary.BigEndian.PutUint64(buf[offset:], base.UserID)
+	offset += 8
+	// Write the derived wire type, not base.Type, to guarantee correctness even
+	// when the caller leaves BaseCommand.Type at its zero value (CmdUnknown).
+	buf[offset] = uint8(wireType)
+	offset++
+	binary.BigEndian.PutUint64(buf[offset:], base.SeqID)
+	offset += 8
+	binary.BigEndian.PutUint64(buf[offset:], uint64(base.Timestamp))
+	offset += 8
+
+	offset += mustWriteString(buf[offset:], base.MarketID)
+	offset += mustWriteString(buf[offset:], base.CommandID)
+
+	binary.BigEndian.PutUint32(buf[offset:], uint32(payloadSize))
+	offset += 4
+
+	if payloadSize > 0 {
+		copy(buf[offset:], payload)
+	}
+
 	return buf, nil
 }
 
-func (c *UserEventParams) BinarySize() int {
-	return stringLenSize + len(c.EventType) + stringLenSize + len(c.Key) + payloadLenSize + len(c.Data)
-}
-
-func (c *UserEventParams) UnmarshalBinary(data []byte) error {
-	offset := 0
-	var n int
-	var err error
-	c.EventType, n, err = readString(data[offset:])
-	if err != nil {
-		return err
-	}
-	offset += n
-	c.Key, n, err = readString(data[offset:])
-	if err != nil {
-		return err
-	}
-	offset += n
-	if len(data[offset:]) < payloadLenSize {
-		return io.ErrUnexpectedEOF
-	}
-	dataLen := int(binary.BigEndian.Uint32(data[offset:]))
-	offset += payloadLenSize
-	if len(data[offset:]) < dataLen {
-		return io.ErrUnexpectedEOF
-	}
-	c.Data = make([]byte, dataLen)
-	copy(c.Data, data[offset:])
-	return nil
-}
-
-// MarshalRequest serializes a typed request through the current command bridge.
-func MarshalRequest(req any) ([]byte, error) {
-	cmd, err := requestToCommand(req)
-	if err != nil {
-		return nil, err
-	}
-	return MarshalCommand(cmd)
-}
-
-// UnmarshalRequest deserializes bytes into a typed request through the current command bridge.
+// UnmarshalRequest deserializes a typed request from binary format.
 func UnmarshalRequest(data []byte) (any, error) {
-	cmd, err := UnmarshalCommand(data)
+	if len(data) < minRequestSize {
+		return nil, io.ErrUnexpectedEOF
+	}
+
+	offset := 0
+	_ = data[offset] // Skip version
+	offset++
+	userID := binary.BigEndian.Uint64(data[offset:])
+	offset += 8
+	cmdType := CommandType(data[offset])
+	offset++
+	seqID := binary.BigEndian.Uint64(data[offset:])
+	offset += 8
+	timestampValue := binary.BigEndian.Uint64(data[offset:])
+	if timestampValue > maxInt64Value {
+		return nil, errInvalidRequest
+	}
+	timestamp := int64(timestampValue)
+	offset += 8
+
+	marketID, n, err := readString(data[offset:])
 	if err != nil {
 		return nil, err
 	}
-	return commandToRequest(cmd)
+	offset += n
+	commandID, n, err := readString(data[offset:])
+	if err != nil {
+		return nil, err
+	}
+	offset += n
+
+	if len(data[offset:]) < payloadLenSize {
+		return nil, io.ErrUnexpectedEOF
+	}
+	payloadLen := int(binary.BigEndian.Uint32(data[offset:]))
+	offset += 4
+
+	if len(data[offset:]) < payloadLen {
+		return nil, io.ErrUnexpectedEOF
+	}
+	pData := data[offset : offset+payloadLen]
+
+	base := BaseCommand{
+		Type:      cmdType,
+		SeqID:     seqID,
+		CommandID: commandID,
+		UserID:    userID,
+		MarketID:  marketID,
+		Timestamp: timestamp,
+	}
+
+	switch cmdType {
+	case CmdPlaceOrder:
+		if len(pData) < minPayloadSize {
+			return nil, io.ErrUnexpectedEOF
+		}
+		pOffset := 0
+		side := Side(pData[pOffset])
+		pOffset++
+		orderType := OrderTypeFromUint8(pData[pOffset])
+		pOffset++
+		orderID, n, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		pOffset += n
+		priceStr, n, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		price, _ := udecimal.Parse(priceStr)
+		pOffset += n
+		sizeStr, n, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		size, _ := udecimal.Parse(sizeStr)
+		pOffset += n
+		visStr, n, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		visibleSize, _ := udecimal.Parse(visStr)
+		pOffset += n
+		quoteStr, _, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		quoteSize, _ := udecimal.Parse(quoteStr)
+
+		return &PlaceOrderRequest{
+			BaseCommand: base,
+			OrderID:     orderID,
+			Side:        side,
+			OrderType:   orderType,
+			Price:       price,
+			Size:        size,
+			VisibleSize: visibleSize,
+			QuoteSize:   quoteSize,
+		}, nil
+	case CmdCancelOrder:
+		orderID, _, err := readString(pData)
+		if err != nil {
+			return nil, err
+		}
+		return &CancelOrderRequest{
+			BaseCommand: base,
+			OrderID:     orderID,
+		}, nil
+	case CmdAmendOrder:
+		pOffset := 0
+		orderID, n, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		pOffset += n
+		priceStr, n, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		price, _ := udecimal.Parse(priceStr)
+		pOffset += n
+		sizeStr, _, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		size, _ := udecimal.Parse(sizeStr)
+		return &AmendOrderRequest{
+			BaseCommand: base,
+			OrderID:     orderID,
+			NewPrice:    price,
+			NewSize:     size,
+		}, nil
+	case CmdCreateMarket:
+		s, _, err := readString(pData)
+		if err != nil {
+			return nil, err
+		}
+		minLotSize, _ := udecimal.Parse(s)
+		return &CreateMarketRequest{
+			BaseCommand: base,
+			MinLotSize:  minLotSize,
+		}, nil
+	case CmdSuspendMarket:
+		reason, _, err := readString(pData)
+		if err != nil {
+			return nil, err
+		}
+		return &SuspendMarketRequest{
+			BaseCommand: base,
+			Reason:      reason,
+		}, nil
+	case CmdResumeMarket:
+		return &ResumeMarketRequest{BaseCommand: base}, nil
+	case CmdUpdateConfig:
+		s, _, err := readString(pData)
+		if err != nil {
+			return nil, err
+		}
+		minLotSize, _ := udecimal.Parse(s)
+		return &UpdateConfigRequest{
+			BaseCommand: base,
+			MinLotSize:  minLotSize,
+		}, nil
+	case CmdUserEvent:
+		pOffset := 0
+		eventType, n, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		pOffset += n
+		key, n, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		pOffset += n
+		if len(pData[pOffset:]) < payloadLenSize {
+			return nil, io.ErrUnexpectedEOF
+		}
+		dataLen := int(binary.BigEndian.Uint32(pData[pOffset:]))
+		pOffset += payloadLenSize
+		if len(pData[pOffset:]) < dataLen {
+			return nil, io.ErrUnexpectedEOF
+		}
+		dataBytes := make([]byte, dataLen)
+		copy(dataBytes, pData[pOffset:])
+		return &UserEventRequest{
+			BaseCommand: base,
+			EventType:   eventType,
+			Key:         key,
+			Data:        dataBytes,
+		}, nil
+	default:
+		return nil, errUnknownRequest
+	}
 }
 
-// --- Query Types ---
-
+// QueryType identifies a read-only query handled by the engine.
 type QueryType uint8
 
 const (
-	QueryUnknown  QueryType = 0
+	// QueryUnknown represents an unknown query type.
+	QueryUnknown QueryType = 0
+	// QueryGetDepth returns order-book depth.
 	QueryGetDepth QueryType = 1
+	// QueryGetStats returns order-book statistics.
 	QueryGetStats QueryType = 2
+	// QuerySnapshot returns in-memory snapshots for all books.
 	QuerySnapshot QueryType = 3
 )
 
+// Query represents a read-only request against the matching engine.
 type Query struct {
 	Type     QueryType
 	MarketID string
 	Payload  any
 }
 
+// GetDepthRequest contains parameters for a depth query.
 type GetDepthRequest struct {
-	MarketID string `json:"market_id"`
-	Limit    uint32 `json:"limit"`
+	Limit uint32
 }
 
-type GetStatsRequest struct {
-	MarketID string `json:"market_id"`
-}
-
-// requestToCommand converts a typed request into the legacy command envelope.
-func requestToCommand(req any) (*Command, error) {
-	switch r := req.(type) {
-	case *PlaceOrderRequest:
-		return &Command{
-			Type:      r.Type,
-			SeqID:     r.SeqID,
-			UserID:    r.UserID,
-			MarketID:  r.MarketID,
-			CommandID: r.CommandID,
-			Timestamp: r.Timestamp,
-			Params: &PlaceOrderParams{
-				OrderID:     r.OrderID,
-				Side:        r.Side,
-				OrderType:   r.OrderType,
-				Price:       r.Price,
-				Size:        r.Size,
-				VisibleSize: r.VisibleSize,
-				QuoteSize:   r.QuoteSize,
-			},
-		}, nil
-	case *CancelOrderRequest:
-		return &Command{
-			Type:      r.Type,
-			SeqID:     r.SeqID,
-			UserID:    r.UserID,
-			MarketID:  r.MarketID,
-			CommandID: r.CommandID,
-			Timestamp: r.Timestamp,
-			Params: &CancelOrderParams{
-				OrderID: r.OrderID,
-			},
-		}, nil
-	case *AmendOrderRequest:
-		return &Command{
-			Type:      r.Type,
-			SeqID:     r.SeqID,
-			UserID:    r.UserID,
-			MarketID:  r.MarketID,
-			CommandID: r.CommandID,
-			Timestamp: r.Timestamp,
-			Params: &AmendOrderParams{
-				OrderID:  r.OrderID,
-				NewPrice: r.NewPrice,
-				NewSize:  r.NewSize,
-			},
-		}, nil
-	case *CreateMarketRequest:
-		return &Command{
-			Type:      r.Type,
-			SeqID:     r.SeqID,
-			UserID:    r.UserID,
-			MarketID:  r.MarketID,
-			CommandID: r.CommandID,
-			Timestamp: r.Timestamp,
-			Params: &CreateMarketParams{
-				MinLotSize: r.MinLotSize,
-			},
-		}, nil
-	case *SuspendMarketRequest:
-		return &Command{
-			Type:      r.Type,
-			SeqID:     r.SeqID,
-			UserID:    r.UserID,
-			MarketID:  r.MarketID,
-			CommandID: r.CommandID,
-			Timestamp: r.Timestamp,
-			Params: &SuspendMarketParams{
-				Reason: r.Reason,
-			},
-		}, nil
-	case *ResumeMarketRequest:
-		return &Command{
-			Type:      r.Type,
-			SeqID:     r.SeqID,
-			UserID:    r.UserID,
-			MarketID:  r.MarketID,
-			CommandID: r.CommandID,
-			Timestamp: r.Timestamp,
-			Params:    &ResumeMarketParams{},
-		}, nil
-	case *UpdateConfigRequest:
-		return &Command{
-			Type:      r.Type,
-			SeqID:     r.SeqID,
-			UserID:    r.UserID,
-			MarketID:  r.MarketID,
-			CommandID: r.CommandID,
-			Timestamp: r.Timestamp,
-			Params: &UpdateConfigParams{
-				MinLotSize: r.MinLotSize,
-			},
-		}, nil
-	case *UserEventRequest:
-		return &Command{
-			Type:      r.Type,
-			SeqID:     r.SeqID,
-			UserID:    r.UserID,
-			MarketID:  r.MarketID,
-			CommandID: r.CommandID,
-			Timestamp: r.Timestamp,
-			Params: &UserEventParams{
-				EventType: r.EventType,
-				Key:       r.Key,
-				Data:      r.Data,
-			},
-		}, nil
-	default:
-		return nil, errUnknownRequest
+// mustWriteString writes a length-prefixed string into buf.
+// Callers MUST validate len(s) <= maxUint16Value before calling this function;
+// it panics if the string is too long as a last-resort programming-error guard.
+func mustWriteString(buf []byte, s string) int {
+	if len(s) > maxUint16Value {
+		panic(errStringTooLong)
 	}
-}
-
-// commandToRequest converts the legacy command envelope into a typed request.
-func commandToRequest(cmd *Command) (any, error) {
-	base := BaseCommand{
-		Type:      cmd.Type,
-		SeqID:     cmd.SeqID,
-		CommandID: cmd.CommandID,
-		UserID:    cmd.UserID,
-		MarketID:  cmd.MarketID,
-		Timestamp: cmd.Timestamp,
-	}
-
-	switch p := cmd.Params.(type) {
-	case *PlaceOrderParams:
-		return &PlaceOrderRequest{
-			BaseCommand: base,
-			OrderID:     p.OrderID,
-			Side:        p.Side,
-			OrderType:   p.OrderType,
-			Price:       p.Price,
-			Size:        p.Size,
-			VisibleSize: p.VisibleSize,
-			QuoteSize:   p.QuoteSize,
-		}, nil
-	case *CancelOrderParams:
-		return &CancelOrderRequest{
-			BaseCommand: base,
-			OrderID:     p.OrderID,
-		}, nil
-	case *AmendOrderParams:
-		return &AmendOrderRequest{
-			BaseCommand: base,
-			OrderID:     p.OrderID,
-			NewPrice:    p.NewPrice,
-			NewSize:     p.NewSize,
-		}, nil
-	case *CreateMarketParams:
-		return &CreateMarketRequest{
-			BaseCommand: base,
-			MinLotSize:  p.MinLotSize,
-		}, nil
-	case *SuspendMarketParams:
-		return &SuspendMarketRequest{
-			BaseCommand: base,
-			Reason:      p.Reason,
-		}, nil
-	case *ResumeMarketParams:
-		return &ResumeMarketRequest{
-			BaseCommand: base,
-		}, nil
-	case *UpdateConfigParams:
-		return &UpdateConfigRequest{
-			BaseCommand: base,
-			MinLotSize:  p.MinLotSize,
-		}, nil
-	case *UserEventParams:
-		return &UserEventRequest{
-			BaseCommand: base,
-			EventType:   p.EventType,
-			Key:         p.Key,
-			Data:        p.Data,
-		}, nil
-	case nil:
-		return &BaseCommand{
-			Type:      cmd.Type,
-			SeqID:     cmd.SeqID,
-			CommandID: cmd.CommandID,
-			UserID:    cmd.UserID,
-			MarketID:  cmd.MarketID,
-			Timestamp: cmd.Timestamp,
-		}, nil
-	default:
-		return nil, errUnknownRequest
-	}
-}
-
-func writeString(buf []byte, s string) int {
-	l := len(s)
-	binary.BigEndian.PutUint16(buf, uint16(l))
+	binary.BigEndian.PutUint16(buf, safeUint16Len(len(s)))
 	copy(buf[stringLenSize:], s)
-	return stringLenSize + l
+	return stringLenSize + len(s)
 }
 
-func readString(data []byte) (string, int, error) {
-	if len(data) < stringLenSize {
+// readString reads a length-prefixed string from buf.
+func readString(buf []byte) (string, int, error) {
+	if len(buf) < stringLenSize {
 		return "", 0, io.ErrUnexpectedEOF
 	}
-	l := int(binary.BigEndian.Uint16(data))
-	if len(data) < stringLenSize+l {
+	length := int(binary.BigEndian.Uint16(buf))
+	if len(buf) < stringLenSize+length {
 		return "", 0, io.ErrUnexpectedEOF
 	}
-	b := data[stringLenSize : stringLenSize+l]
-	return *(*string)(unsafe.Pointer(&b)), stringLenSize + l, nil
+	return string(buf[stringLenSize : stringLenSize+length]), stringLenSize + length, nil
+}
+
+// sideToUint8 converts a side enum to its on-wire binary form.
+func sideToUint8(side Side) uint8 {
+	switch side {
+	case SideBuy:
+		return sideBuyValue
+	case SideSell:
+		return sideSellValue
+	default:
+		return 0
+	}
+}
+
+// safeUint16Len converts a validated length into uint16 for wire encoding.
+func safeUint16Len(length int) uint16 {
+	if length > maxUint16Value {
+		panic(errStringTooLong)
+	}
+	//nolint:gosec // length is bounded by maxUint16Value above.
+	return uint16(length)
+}
+
+// safeUint32Len converts a validated length into uint32 for wire encoding.
+func safeUint32Len(length int) uint32 {
+	if length > maxUint32Value {
+		panic(errPayloadTooLarge)
+	}
+	//nolint:gosec // length is bounded by maxUint32Value above.
+	return uint32(length)
 }

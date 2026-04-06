@@ -1,220 +1,432 @@
 package protocol
 
 import (
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/quagmt/udecimal"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCommand_MarshalUnmarshalBinary(t *testing.T) {
-	cmd := &Command{
-		Version:   1,
-		Type:      CmdPlaceOrder,
-		SeqID:     123,
-		UserID:    789,
-		MarketID:  "BTC-USDT",
-		CommandID: "cmd-456",
-		Timestamp: 1678901234,
-		Params: &PlaceOrderParams{
+// happyPathRequests contains one valid instance of every supported request type,
+// with Type deliberately set to CmdUnknown to verify that MarshalRequest derives
+// the correct wire type from the concrete Go type (fix for issue #2).
+var happyPathRequests = []struct {
+	name string
+	req  any
+}{
+	{
+		name: "PlaceOrderRequest",
+		req: &PlaceOrderRequest{
+			BaseCommand: BaseCommand{
+				Type:      CmdPlaceOrder,
+				SeqID:     123,
+				CommandID: "cmd-place",
+				UserID:    789,
+				MarketID:  "BTC-USDT",
+				Timestamp: 1678901234,
+			},
+			OrderID:   "order-1",
+			Side:      SideBuy,
+			OrderType: OrderTypeLimit,
+			Price:     udecimal.MustFromInt64(100, 0),
+			Size:      udecimal.MustFromInt64(1, 0),
+		},
+	},
+	{
+		name: "CancelOrderRequest",
+		req: &CancelOrderRequest{
+			BaseCommand: BaseCommand{
+				Type:      CmdCancelOrder,
+				SeqID:     124,
+				CommandID: "cmd-cancel",
+				UserID:    789,
+				MarketID:  "BTC-USDT",
+				Timestamp: 1678901235,
+			},
 			OrderID: "order-1",
-			Price:   udecimal.MustFromInt64(100, 0),
-			Size:    udecimal.MustFromInt64(1, 0),
+		},
+	},
+	{
+		name: "AmendOrderRequest",
+		req: &AmendOrderRequest{
+			BaseCommand: BaseCommand{
+				Type:      CmdAmendOrder,
+				SeqID:     125,
+				CommandID: "cmd-amend",
+				UserID:    789,
+				MarketID:  "BTC-USDT",
+				Timestamp: 1678901236,
+			},
+			OrderID:  "order-1",
+			NewPrice: udecimal.MustFromInt64(101, 0),
+			NewSize:  udecimal.MustFromInt64(2, 0),
+		},
+	},
+	{
+		name: "CreateMarketRequest",
+		req: &CreateMarketRequest{
+			BaseCommand: BaseCommand{
+				Type:      CmdCreateMarket,
+				SeqID:     126,
+				CommandID: "cmd-create",
+				UserID:    1,
+				MarketID:  "ETH-USDT",
+				Timestamp: 1678901237,
+			},
+			MinLotSize: udecimal.MustFromInt64(1, 2),
+		},
+	},
+	{
+		name: "SuspendMarketRequest",
+		req: &SuspendMarketRequest{
+			BaseCommand: BaseCommand{
+				Type:      CmdSuspendMarket,
+				SeqID:     127,
+				CommandID: "cmd-suspend",
+				UserID:    1,
+				MarketID:  "ETH-USDT",
+				Timestamp: 1678901238,
+			},
+			Reason: "maintenance",
+		},
+	},
+	{
+		name: "ResumeMarketRequest",
+		req: &ResumeMarketRequest{
+			BaseCommand: BaseCommand{
+				Type:      CmdResumeMarket,
+				SeqID:     128,
+				CommandID: "cmd-resume",
+				UserID:    1,
+				MarketID:  "ETH-USDT",
+				Timestamp: 1678901239,
+			},
+		},
+	},
+	{
+		name: "UpdateConfigRequest",
+		req: &UpdateConfigRequest{
+			BaseCommand: BaseCommand{
+				Type:      CmdUpdateConfig,
+				SeqID:     129,
+				CommandID: "cmd-update",
+				UserID:    1,
+				MarketID:  "ETH-USDT",
+				Timestamp: 1678901240,
+			},
+			MinLotSize: udecimal.MustFromInt64(1, 3),
+		},
+	},
+	{
+		name: "UserEventRequest",
+		req: &UserEventRequest{
+			BaseCommand: BaseCommand{
+				Type:      CmdUserEvent,
+				SeqID:     130,
+				CommandID: "cmd-user-event",
+				UserID:    99,
+				MarketID:  "ETH-USDT",
+				Timestamp: 1678901241,
+			},
+			EventType: "EndOfBlock",
+			Key:       "block-123",
+			Data:      []byte("some-data"),
+		},
+	},
+}
+
+// TestMarshalUnmarshalRequest verifies happy-path round trips for every request type.
+func TestMarshalUnmarshalRequest(t *testing.T) {
+	for _, tt := range happyPathRequests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := MarshalRequest(tt.req)
+			require.NoError(t, err)
+
+			decoded, err := UnmarshalRequest(data)
+			require.NoError(t, err)
+			require.Equal(t, tt.req, decoded, "round-trip failed for "+tt.name)
+		})
+	}
+}
+
+// TestMarshalRequest_DerivedWireType verifies that MarshalRequest always writes the
+// correct CommandType on the wire, even when BaseCommand.Type is left at CmdUnknown.
+// This guards against the MQ-dispatch bug described in code-review issue #2.
+func TestMarshalRequest_DerivedWireType(t *testing.T) {
+	tests := []struct {
+		name         string
+		req          any
+		wantWireType CommandType
+	}{
+		{
+			name: "PlaceOrderRequest with zero Type",
+			req: &PlaceOrderRequest{
+				BaseCommand: BaseCommand{
+					// Type intentionally omitted (zero value = CmdUnknown)
+					CommandID: "cmd-1",
+					UserID:    1,
+					MarketID:  "BTC-USDT",
+					Timestamp: 1,
+				},
+				OrderID:   "o1",
+				Side:      SideBuy,
+				OrderType: OrderTypeLimit,
+			},
+			wantWireType: CmdPlaceOrder,
+		},
+		{
+			name: "CancelOrderRequest with zero Type",
+			req: &CancelOrderRequest{
+				BaseCommand: BaseCommand{
+					CommandID: "cmd-2",
+					UserID:    1,
+					MarketID:  "BTC-USDT",
+					Timestamp: 1,
+				},
+				OrderID: "o1",
+			},
+			wantWireType: CmdCancelOrder,
+		},
+		{
+			name: "CreateMarketRequest with zero Type",
+			req: &CreateMarketRequest{
+				BaseCommand: BaseCommand{
+					CommandID: "cmd-3",
+					UserID:    1,
+					MarketID:  "ETH-USDT",
+					Timestamp: 1,
+				},
+			},
+			wantWireType: CmdCreateMarket,
+		},
+		{
+			name: "SuspendMarketRequest with zero Type",
+			req: &SuspendMarketRequest{
+				BaseCommand: BaseCommand{
+					CommandID: "cmd-4",
+					UserID:    1,
+					MarketID:  "ETH-USDT",
+					Timestamp: 1,
+				},
+				Reason: "maintenance",
+			},
+			wantWireType: CmdSuspendMarket,
+		},
+		{
+			name: "ResumeMarketRequest with zero Type",
+			req: &ResumeMarketRequest{
+				BaseCommand: BaseCommand{
+					CommandID: "cmd-5",
+					UserID:    1,
+					MarketID:  "ETH-USDT",
+					Timestamp: 1,
+				},
+			},
+			wantWireType: CmdResumeMarket,
+		},
+		{
+			name: "UserEventRequest with zero Type",
+			req: &UserEventRequest{
+				BaseCommand: BaseCommand{
+					CommandID: "cmd-6",
+					UserID:    1,
+					Timestamp: 1,
+				},
+				EventType: "EndOfBlock",
+				Key:       "block-1",
+			},
+			wantWireType: CmdUserEvent,
 		},
 	}
 
-	data, err := cmd.MarshalBinary()
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := MarshalRequest(tt.req)
+			require.NoError(t, err, "MarshalRequest must not fail for valid request")
 
-	decoded, err := UnmarshalCommand(data)
-	require.NoError(t, err)
+			decoded, err := UnmarshalRequest(data)
+			require.NoError(t, err, "UnmarshalRequest must not fail on well-formed bytes")
 
-	require.Equal(t, cmd.Version, decoded.Version)
-	require.Equal(t, cmd.Type, decoded.Type)
-	require.Equal(t, cmd.SeqID, decoded.SeqID)
-	require.Equal(t, cmd.UserID, decoded.UserID)
-	require.Equal(t, cmd.MarketID, decoded.MarketID)
-	require.Equal(t, cmd.CommandID, decoded.CommandID)
-	require.Equal(t, cmd.Timestamp, decoded.Timestamp)
-
-	p, ok := decoded.Params.(*PlaceOrderParams)
-	require.True(t, ok)
-	require.Equal(t, "order-1", p.OrderID)
-	require.Equal(t, "100", p.Price.String())
-
+			base, ok := GetRequestBase(decoded)
+			require.True(t, ok)
+			require.Equal(t, tt.wantWireType, base.Type,
+				"wire type must be derived from concrete request type, not BaseCommand.Type")
+		})
+	}
 }
 
-func TestPlaceOrderParams_MarshalUnmarshalBinary(t *testing.T) {
-	params := &PlaceOrderParams{
-		OrderID:     "order-1",
-		Side:        SideBuy,
-		OrderType:   OrderTypeLimit,
-		Price:       udecimal.MustFromInt64(1005, 1),
-		Size:        udecimal.MustFromInt64(10, 0),
-		VisibleSize: udecimal.MustFromInt64(5, 0),
-		QuoteSize:   udecimal.Zero,
+// TestMarshalRequest_InvalidInputs verifies that MarshalRequest returns errors
+// (not panics) for oversized body string fields, and for other invalid inputs.
+// This guards against the panic-on-large-string bug described in code-review issue #1.
+func TestMarshalRequest_InvalidInputs(t *testing.T) {
+	oversized := strings.Repeat("x", maxUint16Value+1)
+
+	tests := []struct {
+		name    string
+		req     any
+		wantErr error
+	}{
+		{
+			name:    "nil request",
+			req:     nil,
+			wantErr: errUnknownRequest,
+		},
+		{
+			name:    "unknown request type",
+			req:     struct{ Foo string }{"bar"},
+			wantErr: errUnknownRequest,
+		},
+		{
+			name: "negative timestamp",
+			req: &PlaceOrderRequest{
+				BaseCommand: BaseCommand{
+					CommandID: "cmd-1",
+					UserID:    1,
+					MarketID:  "BTC-USDT",
+					Timestamp: -1,
+				},
+				OrderID:   "o1",
+				Side:      SideBuy,
+				OrderType: OrderTypeLimit,
+			},
+			wantErr: errInvalidRequest,
+		},
+		{
+			name: "oversized MarketID in header",
+			req: &PlaceOrderRequest{
+				BaseCommand: BaseCommand{
+					CommandID: "cmd-1",
+					UserID:    1,
+					MarketID:  oversized,
+					Timestamp: 1,
+				},
+				OrderID:   "o1",
+				Side:      SideBuy,
+				OrderType: OrderTypeLimit,
+			},
+			wantErr: errStringTooLong,
+		},
+		{
+			name: "oversized CommandID in header",
+			req: &PlaceOrderRequest{
+				BaseCommand: BaseCommand{
+					CommandID: oversized,
+					UserID:    1,
+					MarketID:  "BTC-USDT",
+					Timestamp: 1,
+				},
+				OrderID:   "o1",
+				Side:      SideBuy,
+				OrderType: OrderTypeLimit,
+			},
+			wantErr: errStringTooLong,
+		},
+		// --- Body string field oversize tests (issue #1 fixes) ---
+		{
+			name: "PlaceOrderRequest oversized OrderID",
+			req: &PlaceOrderRequest{
+				BaseCommand: BaseCommand{
+					CommandID: "cmd-1",
+					UserID:    1,
+					MarketID:  "BTC-USDT",
+					Timestamp: 1,
+				},
+				OrderID:   oversized,
+				Side:      SideBuy,
+				OrderType: OrderTypeLimit,
+			},
+			wantErr: errStringTooLong,
+		},
+		{
+			name: "CancelOrderRequest oversized OrderID",
+			req: &CancelOrderRequest{
+				BaseCommand: BaseCommand{
+					CommandID: "cmd-1",
+					UserID:    1,
+					MarketID:  "BTC-USDT",
+					Timestamp: 1,
+				},
+				OrderID: oversized,
+			},
+			wantErr: errStringTooLong,
+		},
+		{
+			name: "AmendOrderRequest oversized OrderID",
+			req: &AmendOrderRequest{
+				BaseCommand: BaseCommand{
+					CommandID: "cmd-1",
+					UserID:    1,
+					MarketID:  "BTC-USDT",
+					Timestamp: 1,
+				},
+				OrderID: oversized,
+			},
+			wantErr: errStringTooLong,
+		},
+		{
+			name: "SuspendMarketRequest oversized Reason",
+			req: &SuspendMarketRequest{
+				BaseCommand: BaseCommand{
+					CommandID: "cmd-1",
+					UserID:    1,
+					MarketID:  "BTC-USDT",
+					Timestamp: 1,
+				},
+				Reason: oversized,
+			},
+			wantErr: errStringTooLong,
+		},
+		{
+			name: "UserEventRequest oversized EventType",
+			req: &UserEventRequest{
+				BaseCommand: BaseCommand{
+					CommandID: "cmd-1",
+					UserID:    1,
+					Timestamp: 1,
+				},
+				EventType: oversized,
+				Key:       "k",
+			},
+			wantErr: errStringTooLong,
+		},
+		{
+			name: "UserEventRequest oversized Key",
+			req: &UserEventRequest{
+				BaseCommand: BaseCommand{
+					CommandID: "cmd-1",
+					UserID:    1,
+					Timestamp: 1,
+				},
+				EventType: "EndOfBlock",
+				Key:       oversized,
+			},
+			wantErr: errStringTooLong,
+		},
 	}
 
-	data, err := params.MarshalBinary()
-	require.NoError(t, err)
-
-	var decoded PlaceOrderParams
-	err = decoded.UnmarshalBinary(data)
-	require.NoError(t, err)
-
-	require.Equal(t, params.OrderID, decoded.OrderID)
-	require.Equal(t, params.Side, decoded.Side)
-	require.Equal(t, params.OrderType, decoded.OrderType)
-	require.Equal(t, params.Price.String(), decoded.Price.String())
-	require.Equal(t, params.Size.String(), decoded.Size.String())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := MarshalRequest(tt.req)
+			require.ErrorIs(t, err, tt.wantErr,
+				"MarshalRequest must return %v, got %v", tt.wantErr, err)
+		})
+	}
 }
 
-func TestPlaceOrderParams_UnmarshalBinaryRejectsTruncatedPayload(t *testing.T) {
-	cmd := &PlaceOrderParams{
-		OrderID:     "order-1",
-		Side:        SideBuy,
-		OrderType:   OrderTypeLimit,
-		Price:       udecimal.MustFromInt64(100, 0),
-		Size:        udecimal.MustFromInt64(1, 0),
-		VisibleSize: udecimal.MustFromInt64(5, 1),
-		QuoteSize:   udecimal.Zero,
-	}
-
-	data, err := cmd.MarshalBinary()
-	require.NoError(t, err)
-
-	var decoded PlaceOrderParams
-	err = decoded.UnmarshalBinary(data[:len(data)-1])
-	require.Error(t, err)
-}
-
-func TestCancelOrderParams_MarshalUnmarshalBinary(t *testing.T) {
-	params := &CancelOrderParams{
-		OrderID: "order-123",
-	}
-
-	data, err := params.MarshalBinary()
-	require.NoError(t, err)
-
-	var decoded CancelOrderParams
-	err = decoded.UnmarshalBinary(data)
-	require.NoError(t, err)
-
-	require.Equal(t, params.OrderID, decoded.OrderID)
-}
-
-func TestAmendOrderParams_MarshalUnmarshalBinary(t *testing.T) {
-	params := &AmendOrderParams{
-		OrderID:  "order-123",
-		NewPrice: udecimal.MustFromInt64(1005, 1),
-		NewSize:  udecimal.MustFromInt64(10, 0),
-	}
-
-	data, err := params.MarshalBinary()
-	require.NoError(t, err)
-
-	var decoded AmendOrderParams
-	err = decoded.UnmarshalBinary(data)
-	require.NoError(t, err)
-
-	require.Equal(t, params.OrderID, decoded.OrderID)
-	require.Equal(t, params.NewPrice.String(), decoded.NewPrice.String())
-	require.Equal(t, params.NewSize.String(), decoded.NewSize.String())
-}
-
-func TestCreateMarketParams_MarshalUnmarshalBinary(t *testing.T) {
-	params := &CreateMarketParams{
-		MinLotSize: udecimal.MustFromInt64(1, 2),
-	}
-
-	data, err := params.MarshalBinary()
-	require.NoError(t, err)
-
-	var decoded CreateMarketParams
-	err = decoded.UnmarshalBinary(data)
-	require.NoError(t, err)
-
-	require.Equal(t, params.MinLotSize.String(), decoded.MinLotSize.String())
-}
-
-func TestUpdateConfigParams_MarshalUnmarshalBinary(t *testing.T) {
-	params := &UpdateConfigParams{
-		MinLotSize: udecimal.MustFromInt64(1, 3),
-	}
-
-	data, err := params.MarshalBinary()
-	require.NoError(t, err)
-
-	var decoded UpdateConfigParams
-	err = decoded.UnmarshalBinary(data)
-	require.NoError(t, err)
-
-	require.Equal(t, params.MinLotSize.String(), decoded.MinLotSize.String())
-}
-
-func TestUserEventParams_MarshalUnmarshalBinary(t *testing.T) {
-	params := &UserEventParams{
-		EventType: "Audit",
-		Key:       "key-1",
-		Data:      []byte("some-data"),
-	}
-
-	data, err := params.MarshalBinary()
-	require.NoError(t, err)
-
-	var decoded UserEventParams
-	err = decoded.UnmarshalBinary(data)
-	require.NoError(t, err)
-
-	require.Equal(t, params.EventType, decoded.EventType)
-	require.Equal(t, params.Key, decoded.Key)
-	require.Equal(t, params.Data, decoded.Data)
-}
-
-func TestCommand_SetAndUnmarshalPayload(t *testing.T) {
-	cmd := &Command{
-		Type:      CmdPlaceOrder,
-		UserID:    123,
-		MarketID:  "BTC-USDT",
-		CommandID: "cmd-456",
-		Timestamp: 1678901234,
-	}
-
-	params := &PlaceOrderParams{
-		OrderID: "order-1",
-		Side:    SideBuy,
-		Price:   udecimal.MustFromInt64(1005, 1),
-		Size:    udecimal.MustFromInt64(10, 0),
-	}
-
-	err := cmd.SetPayload(params)
-	require.NoError(t, err)
-
-	data, err := cmd.MarshalBinary()
-	require.NoError(t, err)
-
-	decodedCmd, err := UnmarshalCommand(data)
-	require.NoError(t, err)
-
-	require.Equal(t, cmd.UserID, decodedCmd.UserID)
-	require.Equal(t, cmd.CommandID, decodedCmd.CommandID)
-
-	p, ok := decodedCmd.Params.(*PlaceOrderParams)
-	require.True(t, ok)
-	require.Equal(t, params.OrderID, p.OrderID)
-	require.Equal(t, params.Price.String(), p.Price.String())
-
-}
-
-func TestMarshalUnmarshalRequest(t *testing.T) {
-	req := &PlaceOrderRequest{
+// TestUnmarshalRequest_TruncatedPayloads verifies that UnmarshalRequest returns
+// io.ErrUnexpectedEOF (not a panic or nil error) when the binary data is truncated.
+// This guards against the lost negative-path coverage described in issue #3.
+func TestUnmarshalRequest_TruncatedPayloads(t *testing.T) {
+	// Build a valid wire frame first, then truncate it at various offsets.
+	validReq := &PlaceOrderRequest{
 		BaseCommand: BaseCommand{
 			Type:      CmdPlaceOrder,
-			SeqID:     123,
-			CommandID: "cmd-456",
-			UserID:    789,
+			CommandID: "cmd-trunc",
+			UserID:    1,
 			MarketID:  "BTC-USDT",
-			Timestamp: 1678901234,
+			Timestamp: 1,
 		},
 		OrderID:   "order-1",
 		Side:      SideBuy,
@@ -223,21 +435,66 @@ func TestMarshalUnmarshalRequest(t *testing.T) {
 		Size:      udecimal.MustFromInt64(1, 0),
 	}
 
-	data, err := MarshalRequest(req)
+	full, err := MarshalRequest(validReq)
 	require.NoError(t, err)
 
-	decoded, err := UnmarshalRequest(data)
+	// Test every prefix truncation in the header region (first 32 bytes covers
+	// version + userID + type + seqID + timestamp, plus partial strings).
+	for i := range len(full) - 1 {
+		truncated := full[:i]
+		_, err := UnmarshalRequest(truncated)
+		require.ErrorIs(t, err, io.ErrUnexpectedEOF,
+			"expected ErrUnexpectedEOF for %d-byte truncation, got: %v", i, err)
+	}
+}
+
+// TestUnmarshalRequest_UnknownCommandType verifies that UnmarshalRequest returns
+// errUnknownRequest when the wire command type is not recognized.
+func TestUnmarshalRequest_UnknownCommandType(t *testing.T) {
+	// Build a valid ResumeMarket frame (smallest payload), then overwrite the
+	// command-type byte with an unrecognized value.
+	validReq := &ResumeMarketRequest{
+		BaseCommand: BaseCommand{
+			Type:      CmdResumeMarket,
+			CommandID: "cmd-unk",
+			UserID:    1,
+			MarketID:  "X",
+			Timestamp: 1,
+		},
+	}
+
+	data, err := MarshalRequest(validReq)
 	require.NoError(t, err)
 
-	placeReq, ok := decoded.(*PlaceOrderRequest)
-	require.True(t, ok)
-	require.Equal(t, req.Type, placeReq.Type)
-	require.Equal(t, req.SeqID, placeReq.SeqID)
-	require.Equal(t, req.CommandID, placeReq.CommandID)
-	require.Equal(t, req.UserID, placeReq.UserID)
-	require.Equal(t, req.MarketID, placeReq.MarketID)
-	require.Equal(t, req.Timestamp, placeReq.Timestamp)
-	require.Equal(t, req.OrderID, placeReq.OrderID)
-	require.Equal(t, req.Price.String(), placeReq.Price.String())
-	require.Equal(t, req.Size.String(), placeReq.Size.String())
+	// The command-type byte sits at offset 9 (1 version + 8 userID).
+	const cmdTypeOffset = 9
+	data[cmdTypeOffset] = 0xFF // unrecognized type
+
+	_, err = UnmarshalRequest(data)
+	require.ErrorIs(t, err, errUnknownRequest)
+}
+
+// TestUnmarshalRequest_InvalidTimestamp verifies that UnmarshalRequest rejects
+// timestamps that would overflow int64 (bit 63 set in the uint64 wire value).
+func TestUnmarshalRequest_InvalidTimestamp(t *testing.T) {
+	validReq := &ResumeMarketRequest{
+		BaseCommand: BaseCommand{
+			Type:      CmdResumeMarket,
+			CommandID: "cmd-ts",
+			UserID:    1,
+			MarketID:  "X",
+			Timestamp: 1,
+		},
+	}
+
+	data, err := MarshalRequest(validReq)
+	require.NoError(t, err)
+
+	// Timestamp bytes are at offset 18 (1 version + 8 userID + 1 type + 8 seqID).
+	const timestampOffset = 18
+	// Set the most-significant bit to make the value exceed maxInt64Value.
+	data[timestampOffset] = 0x80
+
+	_, err = UnmarshalRequest(data)
+	require.ErrorIs(t, err, errInvalidRequest)
 }

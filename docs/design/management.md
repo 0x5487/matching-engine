@@ -2,9 +2,9 @@
 
 ## 1. Background
 
-Management commands are part of the same event-driven write path as trading commands. This preserves replayability, keeps administrative actions observable, and avoids direct state mutation outside the engine event loop.
+Management requests are part of the same event-driven write path as trading requests. This preserves replayability, keeps administrative actions observable, and avoids direct state mutation outside the engine event loop.
 
-The current engine already supports management commands for:
+The current engine already supports management requests for:
 
 - market creation
 - market suspension
@@ -20,47 +20,39 @@ Management command types currently defined in `protocol/command.go`:
 ```go
 const (
     CmdUnknown       CommandType = 0
-    CmdCreateMarket  CommandType = 1
-    CmdSuspendMarket CommandType = 2
-    CmdResumeMarket  CommandType = 3
-    CmdUpdateConfig  CommandType = 4
-
-    CmdPlaceOrder    CommandType = 51
-    CmdCancelOrder   CommandType = 52
-    CmdAmendOrder    CommandType = 53
+    CmdPlaceOrder    CommandType = 1
+    CmdCancelOrder   CommandType = 2
+    CmdAmendOrder    CommandType = 3
+    CmdCreateMarket  CommandType = 11
+    CmdSuspendMarket CommandType = 12
+    CmdResumeMarket  CommandType = 13
+    CmdUpdateConfig  CommandType = 14
+    CmdUserEvent     CommandType = 21
 )
 ```
 
-### 2.2 Payloads
+### 2.2 Typed Requests
 
-All management payloads carry upstream-assigned logical timestamps and use `uint64` operator identity.
+All management requests carry upstream-assigned logical timestamps and use `uint64` operator identity.
 
 ```go
-type CreateMarketCommand struct {
-    UserID     uint64 `json:"user_id"`
-    MarketID   string `json:"market_id"`
-    MinLotSize string `json:"min_lot_size"`
-    Timestamp  int64  `json:"timestamp"`
+type CreateMarketRequest struct {
+    BaseCommand
+    MinLotSize udecimal.Decimal `json:"min_lot_size"`
 }
 
-type SuspendMarketCommand struct {
-    UserID    uint64 `json:"user_id"`
-    MarketID  string `json:"market_id"`
-    Reason    string `json:"reason"`
-    Timestamp int64  `json:"timestamp"`
+type SuspendMarketRequest struct {
+    BaseCommand
+    Reason string `json:"reason"`
 }
 
-type ResumeMarketCommand struct {
-    UserID    uint64 `json:"user_id"`
-    MarketID  string `json:"market_id"`
-    Timestamp int64  `json:"timestamp"`
+type ResumeMarketRequest struct {
+    BaseCommand
 }
 
-type UpdateConfigCommand struct {
-    UserID     uint64 `json:"user_id"`
-    MarketID   string `json:"market_id"`
-    MinLotSize string `json:"min_lot_size,omitempty"`
-    Timestamp  int64  `json:"timestamp"`
+type UpdateConfigRequest struct {
+    BaseCommand
+    MinLotSize udecimal.Decimal `json:"min_lot_size"`
 }
 ```
 
@@ -68,17 +60,17 @@ type UpdateConfigCommand struct {
 
 ### 3.1 Write Path
 
-Management helper methods on `MatchingEngine` construct these payloads, wrap them in `protocol.Command`, and enqueue them into the shared engine ring buffer.
+Management helper methods on `MatchingEngine` accept typed requests directly and enqueue them into the shared engine ring buffer.
 
 Current helper methods:
 
-- `CreateMarket(ctx, commandID, userID, marketID, minLotSize, timestamp) (*Future[bool], error)`
-- `SuspendMarket(ctx, commandID, userID, marketID, timestamp) (*Future[bool], error)`
-- `ResumeMarket(ctx, commandID, userID, marketID, timestamp) (*Future[bool], error)`
-- `UpdateConfig(ctx, commandID, userID, marketID, minLotSize, timestamp) (*Future[bool], error)`
+- `CreateMarket(ctx, *protocol.CreateMarketRequest) (*Future[bool], error)`
+- `SuspendMarket(ctx, *protocol.SuspendMarketRequest) (*Future[bool], error)`
+- `ResumeMarket(ctx, *protocol.ResumeMarketRequest) (*Future[bool], error)`
+- `UpdateConfig(ctx, *protocol.UpdateConfigRequest) (*Future[bool], error)`
 
-These methods are asynchronous with respect to business execution but return a `Future` that can be used to wait for the result. A returned `error` from the helper method itself means enqueue or serialization failure, not business rejection. Business-level errors (e.g., duplicate market) are returned when calling `future.Wait(ctx)`.
-An empty `commandID` is rejected before enqueue.
+These methods are asynchronous with respect to business execution but return a `Future` that can be used to wait for the result. A returned `error` from the helper method itself means enqueue or request-validation failure, not business rejection. Business-level errors (e.g., duplicate market) are returned when calling `future.Wait(ctx)`.
+A request with an empty `CommandID` is rejected before enqueue.
 
 ### 3.2 Business Failures
 
@@ -118,7 +110,7 @@ Rejected operations produce `OrderBookLog` entries with `market_suspended` or `m
 
 ## 4. Recovery and Replay
 
-Management actions are part of deterministic replay semantics because they are represented as commands and applied on the event loop.
+Management actions are part of deterministic replay semantics because they are represented as typed requests and applied on the event loop.
 
 Implications:
 
@@ -145,11 +137,11 @@ For missing markets:
 When verifying management command behavior, confirm:
 
 - helper methods require upstream timestamps
-- helper methods require non-empty `commandID`
+- helper methods require non-empty `CommandID`
 - management timestamps must be strictly positive
 - create / suspend / resume / config updates are serialized through the engine event loop
-- duplicate or malformed management commands emit reject logs
-- successful management commands emit `LogTypeAdmin`
+- duplicate or malformed management requests emit reject logs
+- successful management requests emit `LogTypeAdmin`
 - reject logs keep the operator `UserID`
 - suspended state blocks place / amend but still allows cancel
 - snapshot / restore preserves state and lot-size configuration

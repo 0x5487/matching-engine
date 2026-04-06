@@ -136,19 +136,23 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 	case *protocol.AmendOrderRequest:
 		book.handleAmendOrder(ev, request)
 	default:
-		base, _ := requestBase(req)
+		base, _ := protocol.GetRequestBase(req)
+		reason := protocol.RejectReasonUnknownCommand
+		if base.Type >= protocol.CmdPlaceOrder && base.Type <= protocol.CmdUserEvent {
+			reason = protocol.RejectReasonInvalidPayload
+		}
 		book.rejectInvalidPayload(
 			base.CommandID,
 			book.marketID,
 			"unknown",
 			base.UserID,
-			protocol.RejectReasonUnknownCommand,
+			reason,
 			base.Timestamp,
 		)
 		book.sendResponse(ev.Resp, ErrUnknownCommand)
 	}
 
-	if base, ok := requestBase(req); ok && base.SeqID > 0 {
+	if base, ok := protocol.GetRequestBase(req); ok && base.SeqID > 0 {
 		book.lastCmdSeqID.Store(base.SeqID)
 	}
 }
@@ -243,6 +247,31 @@ func (book *OrderBook) handlePlaceOrder(ev *InputEvent, req *protocol.PlaceOrder
 	size := req.Size
 	visibleSize := req.VisibleSize
 	quoteSize := req.QuoteSize
+
+	// Basic validation
+	isValid := true
+	if req.OrderType == Market {
+		if size.IsZero() && quoteSize.IsZero() {
+			isValid = false
+		}
+	} else {
+		if price.IsZero() || size.IsZero() {
+			isValid = false
+		}
+	}
+
+	if !isValid {
+		book.rejectInvalidPayload(
+			req.CommandID,
+			book.marketID,
+			req.OrderID,
+			req.UserID,
+			protocol.RejectReasonInvalidPayload,
+			req.Timestamp,
+		)
+		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
+		return
+	}
 
 	// Check for duplicate ID
 	if book.bidQueue.order(req.OrderID) != nil || book.askQueue.order(req.OrderID) != nil {
@@ -379,6 +408,14 @@ func (book *OrderBook) handleAmendOrder(ev *InputEvent, req *protocol.AmendOrder
 		)
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonOrderNotFound)))
 		return
+	}
+
+	// 0 means no change
+	if newPrice.IsZero() {
+		newPrice = order.Price
+	}
+	if newSize.IsZero() {
+		newSize = order.Size.Add(order.HiddenSize)
 	}
 
 	myQueue := book.bidQueue

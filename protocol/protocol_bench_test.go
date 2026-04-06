@@ -5,11 +5,19 @@ import (
 	"time"
 
 	"github.com/quagmt/udecimal"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestMarshalUnmarshalCommand(t *testing.T) {
-	params := &PlaceOrderParams{
+func TestMarshalUnmarshalRequestBench(t *testing.T) {
+	req := &PlaceOrderRequest{
+		BaseCommand: BaseCommand{
+			Type:      CmdPlaceOrder,
+			SeqID:     123,
+			CommandID: "cmd-place",
+			UserID:    789,
+			MarketID:  "BTC-USDT",
+			Timestamp: time.Now().UnixNano(),
+		},
 		OrderID:     "order-123",
 		Side:        SideBuy,
 		OrderType:   OrderTypeLimit,
@@ -19,38 +27,25 @@ func TestMarshalUnmarshalCommand(t *testing.T) {
 		QuoteSize:   udecimal.Zero,
 	}
 
-	cmd := &Command{
-		Version:   1,
-		Type:      CmdPlaceOrder,
-		UserID:    1001,
-		MarketID:  "BTC-USDT",
-		CommandID: "cmd-001",
-		Timestamp: time.Now().UnixNano(),
-		Params:    params,
-	}
+	data, err := MarshalRequest(req)
+	require.NoError(t, err)
+	require.NotNil(t, data)
 
-	data, err := MarshalCommand(cmd)
-	assert.NoError(t, err)
-	assert.NotNil(t, data)
-
-	decoded, err := UnmarshalCommand(data)
-	assert.NoError(t, err)
-	assert.Equal(t, cmd.Version, decoded.Version)
-	assert.Equal(t, cmd.UserID, decoded.UserID)
-	assert.Equal(t, cmd.Type, decoded.Type)
-	assert.Equal(t, cmd.MarketID, decoded.MarketID)
-	assert.Equal(t, cmd.CommandID, decoded.CommandID)
-
-	decodedParams, ok := decoded.Params.(*PlaceOrderParams)
-	assert.True(t, ok)
-	assert.Equal(t, params.OrderID, decodedParams.OrderID)
-	assert.Equal(t, params.Price.String(), decodedParams.Price.String())
-	assert.Equal(t, params.Size.String(), decodedParams.Size.String())
-
+	decoded, err := UnmarshalRequest(data)
+	require.NoError(t, err)
+	require.Equal(t, req, decoded)
 }
 
-func BenchmarkMarshalCommand(b *testing.B) {
-	params := &PlaceOrderParams{
+func BenchmarkMarshalRequest(b *testing.B) {
+	req := &PlaceOrderRequest{
+		BaseCommand: BaseCommand{
+			Type:      CmdPlaceOrder,
+			SeqID:     123,
+			CommandID: "cmd-place",
+			UserID:    789,
+			MarketID:  "BTC-USDT",
+			Timestamp: time.Now().UnixNano(),
+		},
 		OrderID:     "order-123",
 		Side:        SideBuy,
 		OrderType:   OrderTypeLimit,
@@ -58,27 +53,25 @@ func BenchmarkMarshalCommand(b *testing.B) {
 		Size:        udecimal.MustFromInt64(10, 0),
 		VisibleSize: udecimal.MustFromInt64(5, 0),
 		QuoteSize:   udecimal.Zero,
-	}
-
-	cmd := &Command{
-		Version:   1,
-		Type:      CmdPlaceOrder,
-		UserID:    1001,
-		MarketID:  "BTC-USDT",
-		CommandID: "cmd-001",
-		Timestamp: time.Now().UnixNano(),
-		Params:    params,
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		_, _ = MarshalCommand(cmd)
+	for b.Loop() {
+		_, _ = MarshalRequest(req)
 	}
 }
 
-func BenchmarkUnmarshalCommand(b *testing.B) {
-	params := &PlaceOrderParams{
+func BenchmarkUnmarshalRequest(b *testing.B) {
+	req := &PlaceOrderRequest{
+		BaseCommand: BaseCommand{
+			Type:      CmdPlaceOrder,
+			SeqID:     123,
+			CommandID: "cmd-place",
+			UserID:    789,
+			MarketID:  "BTC-USDT",
+			Timestamp: time.Now().UnixNano(),
+		},
 		OrderID:     "order-123",
 		Side:        SideBuy,
 		OrderType:   OrderTypeLimit,
@@ -88,21 +81,11 @@ func BenchmarkUnmarshalCommand(b *testing.B) {
 		QuoteSize:   udecimal.Zero,
 	}
 
-	cmd := &Command{
-		Version:   1,
-		Type:      CmdPlaceOrder,
-		UserID:    1001,
-		MarketID:  "BTC-USDT",
-		CommandID: "cmd-001",
-		Timestamp: time.Now().UnixNano(),
-		Params:    params,
-	}
-
-	data, _ := MarshalCommand(cmd)
+	data, _ := MarshalRequest(req)
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		_, _ = UnmarshalCommand(data)
+	for b.Loop() {
+		_, _ = UnmarshalRequest(data)
 	}
 }

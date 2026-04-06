@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	benchmarkMarketBTC              = "BTC-USDT"
 	benchmarkBatchSize10            = 10
 	benchmarkWarmTopLevelCount      = 20
 	benchmarkWarmOuterLevelCount    = 80
@@ -30,16 +31,18 @@ func benchmarkNewEngine(b *testing.B, marketID string) (context.Context, *Matchi
 
 	ctx := context.Background()
 	engine := NewMatchingEngine("bench-engine", NewDiscardPublishLog())
-	cmd := &protocol.Command{
-		Type:      protocol.CmdCreateMarket,
-		UserID:    1,
-		MarketID:  marketID,
-		CommandID: "bench-market-create-" + marketID,
-		Timestamp: time.Now().UnixNano(),
+	req := &protocol.CreateMarketRequest{
+		BaseCommand: protocol.BaseCommand{
+			Type:      protocol.CmdCreateMarket,
+			UserID:    1,
+			MarketID:  marketID,
+			CommandID: "bench-market-create-" + marketID,
+			Timestamp: time.Now().UnixNano(),
+		},
+		MinLotSize: udecimal.Zero,
 	}
-	_ = cmd.SetPayload(&protocol.CreateMarketParams{MinLotSize: udecimal.Zero})
 
-	future, err := engine.Submit(ctx, cmd)
+	future, err := engine.CreateMarket(ctx, req)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -65,7 +68,6 @@ func benchmarkDrain(
 	query := &protocol.Query{
 		Type:     protocol.QueryGetStats,
 		MarketID: marketID,
-		Payload:  &protocol.GetStatsRequest{MarketID: marketID},
 	}
 
 	future, err := engine.Query(ctx, query)
@@ -107,79 +109,61 @@ func benchmarkReportOrdersPerSecond(b *testing.B, orderCount int) {
 	}
 }
 
-// benchmarkBuildPlaceOrderCommand creates a deterministic place-order command for benchmark flows.
-func benchmarkBuildPlaceOrderCommand(
-	marketID string,
-	commandID string,
-	orderID string,
-	userID uint64,
-	side Side,
-	price udecimal.Decimal,
-	timestamp int64,
-) *protocol.Command {
-	cmd := &protocol.Command{
-		Type:      protocol.CmdPlaceOrder,
-		UserID:    userID,
-		MarketID:  marketID,
-		CommandID: commandID,
-		Timestamp: timestamp,
-	}
-	_ = cmd.SetPayload(&protocol.PlaceOrderParams{
-		OrderID:   orderID,
-		Side:      side,
-		OrderType: protocol.OrderTypeLimit,
-		Price:     price,
-		Size:      benchmarkUnitSize,
-	})
-
-	return cmd
-}
-
-// benchmarkSubmitSingle submits commands one-by-one through SubmitAsync.
-func benchmarkSubmitSingle(ctx context.Context, engine *MatchingEngine, cmds []*protocol.Command) {
-	for _, cmd := range cmds {
-		_ = engine.SubmitAsync(ctx, cmd)
-	}
-}
-
-// benchmarkSubmitBatch10 submits commands in batches of ten through SubmitAsyncBatch.
-func benchmarkSubmitBatch10(ctx context.Context, engine *MatchingEngine, cmds []*protocol.Command) {
-	for i := 0; i < len(cmds); i += benchmarkBatchSize10 {
-		end := min(i+benchmarkBatchSize10, len(cmds))
-		_ = engine.SubmitAsyncBatch(ctx, cmds[i:end])
-	}
-}
-
 // benchmarkCrossingCommandPool builds a deterministic crossing stream where each pair matches immediately.
-func benchmarkCrossingCommandPool(marketID string, pairCount int) []*protocol.Command {
+func benchmarkCrossingCommandPool(marketID string, pairCount int) []*protocol.PlaceOrderRequest {
 	price := udecimal.MustFromInt64(10000, 0)
-	cmds := make([]*protocol.Command, pairCount*2)
+	reqs := make([]*protocol.PlaceOrderRequest, pairCount*2)
 
 	for i := range pairCount {
 		sellIndex := i * 2
-		cmds[sellIndex] = benchmarkBuildPlaceOrderCommand(
-			marketID,
-			fmt.Sprintf("cross-sell-cmd-%d", sellIndex),
-			fmt.Sprintf("cross-sell-order-%d", sellIndex),
-			1,
-			Sell,
-			price,
-			int64(sellIndex+1),
-		)
+		reqs[sellIndex] = &protocol.PlaceOrderRequest{
+			BaseCommand: protocol.BaseCommand{
+				Type:      protocol.CmdPlaceOrder,
+				UserID:    1,
+				MarketID:  marketID,
+				CommandID: fmt.Sprintf("cross-sell-cmd-%d", sellIndex),
+				Timestamp: int64(sellIndex + 1),
+			},
+			OrderID:   fmt.Sprintf("cross-sell-order-%d", sellIndex),
+			Side:      Sell,
+			OrderType: protocol.OrderTypeLimit,
+			Price:     price,
+			Size:      benchmarkUnitSize,
+		}
 
 		buyIndex := sellIndex + 1
-		cmds[buyIndex] = benchmarkBuildPlaceOrderCommand(
-			marketID,
-			fmt.Sprintf("cross-buy-cmd-%d", buyIndex),
-			fmt.Sprintf("cross-buy-order-%d", buyIndex),
-			2,
-			Buy,
-			price,
-			int64(buyIndex+1),
-		)
+		reqs[buyIndex] = &protocol.PlaceOrderRequest{
+			BaseCommand: protocol.BaseCommand{
+				Type:      protocol.CmdPlaceOrder,
+				UserID:    2,
+				MarketID:  marketID,
+				CommandID: fmt.Sprintf("cross-buy-cmd-%d", buyIndex),
+				Timestamp: int64(buyIndex + 1),
+			},
+			OrderID:   fmt.Sprintf("cross-buy-order-%d", buyIndex),
+			Side:      Buy,
+			OrderType: protocol.OrderTypeLimit,
+			Price:     price,
+			Size:      benchmarkUnitSize,
+		}
 	}
 
-	return cmds
+	return reqs
+}
+
+// benchmarkSubmitSingle submits commands one-by-one through PlaceOrderAsync.
+func benchmarkSubmitSingle(ctx context.Context, engine *MatchingEngine, reqs []*protocol.PlaceOrderRequest) {
+	for _, req := range reqs {
+		_ = engine.PlaceOrderAsync(ctx, req)
+	}
+}
+
+// benchmarkSubmitBatch10 submits commands in batches of ten through PlaceOrderBatchAsync.
+func benchmarkSubmitBatch10(ctx context.Context, engine *MatchingEngine, reqs []*protocol.PlaceOrderRequest) {
+	for i := 0; i < len(reqs); i += benchmarkBatchSize10 {
+		end := min(i+benchmarkBatchSize10, len(reqs))
+		_ = engine.PlaceOrderBatchAsync(ctx, reqs[i:end])
+	}
 }
 
 // benchmarkWarmBookCommandPool builds warmup and measured streams for the production-like benchmark.
@@ -187,35 +171,40 @@ func benchmarkWarmBookCommandPool(
 	marketID string,
 	warmupCount int,
 	measuredCount int,
-) ([]*protocol.Command, []*protocol.Command) {
+) (warmupReqs []*protocol.PlaceOrderRequest, measuredReqs []*protocol.PlaceOrderRequest) {
 	const midPrice = int64(10000)
 
-	warmup := make([]*protocol.Command, 0, warmupCount)
-	measured := make([]*protocol.Command, measuredCount)
+	warmup := make([]*protocol.PlaceOrderRequest, 0, warmupCount)
+	measured := make([]*protocol.PlaceOrderRequest, measuredCount)
 
 	nextTimestamp := int64(1)
 	nextOrderIndex := 0
 
-	buildCommand := func(
+	buildRequest := func(
 		prefix string,
 		userID uint64,
 		side Side,
 		price udecimal.Decimal,
-	) *protocol.Command {
+	) *protocol.PlaceOrderRequest {
 		commandID := fmt.Sprintf("%s-cmd-%d", prefix, nextOrderIndex)
 		orderID := fmt.Sprintf("%s-order-%d", prefix, nextOrderIndex)
 		nextOrderIndex++
-		cmd := benchmarkBuildPlaceOrderCommand(
-			marketID,
-			commandID,
-			orderID,
-			userID,
-			side,
-			price,
-			nextTimestamp,
-		)
+		req := &protocol.PlaceOrderRequest{
+			BaseCommand: protocol.BaseCommand{
+				Type:      protocol.CmdPlaceOrder,
+				UserID:    userID,
+				MarketID:  marketID,
+				CommandID: commandID,
+				Timestamp: nextTimestamp,
+			},
+			OrderID:   orderID,
+			Side:      side,
+			OrderType: protocol.OrderTypeLimit,
+			Price:     price,
+			Size:      benchmarkUnitSize,
+		}
 		nextTimestamp++
-		return cmd
+		return req
 	}
 
 	nearCount := warmupCount * 80 / 100
@@ -225,22 +214,22 @@ func benchmarkWarmBookCommandPool(
 		level := i % benchmarkWarmTopLevelCount
 		if i%2 == 0 {
 			price := udecimal.MustFromInt64(midPrice-1-int64(level), 0)
-			warmup = append(warmup, buildCommand("warm-near-bid", 1, Buy, price))
+			warmup = append(warmup, buildRequest("warm-near-bid", 1, Buy, price))
 			continue
 		}
 		price := udecimal.MustFromInt64(midPrice+1+int64(level), 0)
-		warmup = append(warmup, buildCommand("warm-near-ask", 2, Sell, price))
+		warmup = append(warmup, buildRequest("warm-near-ask", 2, Sell, price))
 	}
 
 	for i := range outerCount {
 		level := i % benchmarkWarmOuterLevelCount
 		if i%2 == 0 {
 			price := udecimal.MustFromInt64(midPrice-1-int64(benchmarkWarmTopLevelCount+level), 0)
-			warmup = append(warmup, buildCommand("warm-outer-bid", 3, Buy, price))
+			warmup = append(warmup, buildRequest("warm-outer-bid", 3, Buy, price))
 			continue
 		}
 		price := udecimal.MustFromInt64(midPrice+1+int64(benchmarkWarmTopLevelCount+level), 0)
-		warmup = append(warmup, buildCommand("warm-outer-ask", 4, Sell, price))
+		warmup = append(warmup, buildRequest("warm-outer-ask", 4, Sell, price))
 	}
 
 	for i := range measuredCount {
@@ -249,22 +238,22 @@ func benchmarkWarmBookCommandPool(
 		if patternPos < 14 {
 			if patternPos%2 == 0 {
 				price := udecimal.MustFromInt64(midPrice+1, 0)
-				measured[i] = buildCommand("prod-cross-buy", 10, Buy, price)
+				measured[i] = buildRequest("prod-cross-buy", 10, Buy, price)
 				continue
 			}
 			price := udecimal.MustFromInt64(midPrice-1, 0)
-			measured[i] = buildCommand("prod-cross-sell", 11, Sell, price)
+			measured[i] = buildRequest("prod-cross-sell", 11, Sell, price)
 			continue
 		}
 
 		replenishLevel := (i / benchmarkProductionPatternCount) % benchmarkWarmTopLevelCount
 		if patternPos%2 == 0 {
 			price := udecimal.MustFromInt64(midPrice-1-int64(replenishLevel), 0)
-			measured[i] = buildCommand("prod-rest-bid", 12, Buy, price)
+			measured[i] = buildRequest("prod-rest-bid", 12, Buy, price)
 			continue
 		}
 		price := udecimal.MustFromInt64(midPrice+1+int64(replenishLevel), 0)
-		measured[i] = buildCommand("prod-rest-ask", 13, Sell, price)
+		measured[i] = buildRequest("prod-rest-ask", 13, Sell, price)
 	}
 
 	return warmup, measured
@@ -370,18 +359,18 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 	engine := NewMatchingEngine("bench-engine", publishTrader)
 
 	ctx := context.Background()
-	marketID := marketBTC
-	cmd := &protocol.Command{
-		Type:      protocol.CmdCreateMarket,
-		UserID:    1,
-		MarketID:  marketID,
-		CommandID: "bench-market-create",
-		Timestamp: time.Now().UnixNano(),
-	}
-	_ = cmd.SetPayload(&protocol.CreateMarketParams{
+	marketID := benchmarkMarketBTC
+	req := &protocol.CreateMarketRequest{
+		BaseCommand: protocol.BaseCommand{
+			Type:      protocol.CmdCreateMarket,
+			UserID:    1,
+			MarketID:  marketID,
+			CommandID: "bench-market-create",
+			Timestamp: time.Now().UnixNano(),
+		},
 		MinLotSize: udecimal.Zero,
-	})
-	future, err := engine.Submit(ctx, cmd)
+	}
+	future, err := engine.CreateMarket(ctx, req)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -405,7 +394,7 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 	sizeOne := udecimal.MustFromInt64(1, 0)
 
 	const poolSize = 1000000
-	cmdPool := make([]*protocol.Command, poolSize)
+	cmdPool := make([]*protocol.PlaceOrderRequest, poolSize)
 
 	for i := range poolSize {
 		var side Side
@@ -432,37 +421,35 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 			}
 		}
 
-		c := &protocol.Command{
-			Type:      protocol.CmdPlaceOrder,
-			UserID:    uint64(rng.Intn(1000) + 1),
-			MarketID:  marketID,
-			CommandID: fmt.Sprintf("o-%d-%d", i, rng.Int63()),
-			Timestamp: time.Now().UnixNano(),
-		}
-		_ = c.SetPayload(&protocol.PlaceOrderParams{
-			OrderID:   c.CommandID,
+		cmdPool[i] = &protocol.PlaceOrderRequest{
+			BaseCommand: protocol.BaseCommand{
+				Type:      protocol.CmdPlaceOrder,
+				UserID:    (rng.Uint64() % 1000) + 1,
+				MarketID:  marketID,
+				CommandID: fmt.Sprintf("o-%d-%d", i, rng.Int63()),
+				Timestamp: time.Now().UnixNano(),
+			},
+			OrderID:   fmt.Sprintf("o-%d-%d", i, rng.Int63()),
 			Side:      side,
 			OrderType: protocol.OrderTypeLimit,
 			Price:     priceCache[priceIdx],
 			Size:      sizeOne,
-		})
-		cmdPool[i] = c
+		}
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	// Submit asynchronously and measure end-to-end processing through the engine.
+	// Enqueue orders asynchronously and measure end-to-end processing through the engine.
 	for i := range b.N {
 		cmdIdx := i % poolSize
-		_ = engine.SubmitAsync(ctx, cmdPool[cmdIdx])
+		_ = engine.PlaceOrderAsync(ctx, cmdPool[cmdIdx])
 	}
 
 	// Send a sentinel query to ensure all preceding commands are processed
 	query := &protocol.Query{
 		Type:     protocol.QueryGetStats,
 		MarketID: marketID,
-		Payload:  &protocol.GetStatsRequest{MarketID: marketID},
 	}
 	if f, err := engine.Query(ctx, query); err == nil {
 		_, _ = f.Wait(ctx)
@@ -503,18 +490,18 @@ func BenchmarkSubmitAsyncBatch(b *testing.B) {
 	engine := NewMatchingEngine("bench-engine", publishTrader)
 
 	ctx := context.Background()
-	marketID := marketBTC
-	cmd := &protocol.Command{
-		Type:      protocol.CmdCreateMarket,
-		UserID:    1,
-		MarketID:  marketID,
-		CommandID: "bench-market-create-2",
-		Timestamp: time.Now().UnixNano(),
-	}
-	_ = cmd.SetPayload(&protocol.CreateMarketParams{
+	marketID := benchmarkMarketBTC
+	req := &protocol.CreateMarketRequest{
+		BaseCommand: protocol.BaseCommand{
+			Type:      protocol.CmdCreateMarket,
+			UserID:    1,
+			MarketID:  marketID,
+			CommandID: "bench-market-create-2",
+			Timestamp: time.Now().UnixNano(),
+		},
 		MinLotSize: udecimal.Zero,
-	})
-	future, _ := engine.Submit(ctx, cmd)
+	}
+	future, _ := engine.CreateMarket(ctx, req)
 
 	// Start engine event loop
 	go engine.Run()
@@ -535,7 +522,7 @@ func BenchmarkSubmitAsyncBatch(b *testing.B) {
 	const poolSize = 5000000
 	const batchSize = 100 // Size of each batch
 
-	cmdPool := make([]*protocol.Command, poolSize)
+	cmdPool := make([]*protocol.PlaceOrderRequest, poolSize)
 
 	for i := range poolSize {
 		var side Side
@@ -562,21 +549,20 @@ func BenchmarkSubmitAsyncBatch(b *testing.B) {
 			}
 		}
 
-		c := &protocol.Command{
-			Type:      protocol.CmdPlaceOrder,
-			UserID:    (rng.Uint64() % 1000) + 1,
-			MarketID:  marketID,
-			CommandID: fmt.Sprintf("order-%d-%d", i, rng.Int63()),
-			Timestamp: time.Now().UnixNano(),
-		}
-		_ = c.SetPayload(&protocol.PlaceOrderParams{
-			OrderID:   c.CommandID,
+		cmdPool[i] = &protocol.PlaceOrderRequest{
+			BaseCommand: protocol.BaseCommand{
+				Type:      protocol.CmdPlaceOrder,
+				UserID:    (rng.Uint64() % 1000) + 1,
+				MarketID:  marketID,
+				CommandID: fmt.Sprintf("order-%d-%d", i, rng.Int63()),
+				Timestamp: time.Now().UnixNano(),
+			},
+			OrderID:   fmt.Sprintf("order-%d-%d", i, rng.Int63()),
 			Side:      side,
 			OrderType: protocol.OrderTypeLimit,
 			Price:     priceCache[priceIdx],
 			Size:      sizeOne,
-		})
-		cmdPool[i] = c
+		}
 	}
 
 	b.ResetTimer()
@@ -586,14 +572,13 @@ func BenchmarkSubmitAsyncBatch(b *testing.B) {
 	for i := range numBatches {
 		startIdx := (i * batchSize) % (poolSize - batchSize)
 		batch := cmdPool[startIdx : startIdx+batchSize]
-		_ = engine.SubmitAsyncBatch(ctx, batch)
+		_ = engine.PlaceOrderBatchAsync(ctx, batch)
 	}
 
 	// Wait for processing to finish
 	query := &protocol.Query{
 		Type:     protocol.QueryGetStats,
 		MarketID: marketID,
-		Payload:  &protocol.GetStatsRequest{MarketID: marketID},
 	}
 	if f, err := engine.Query(ctx, query); err == nil {
 		_, _ = f.Wait(ctx)
