@@ -42,7 +42,6 @@ func TestCommand_MarshalUnmarshalBinary(t *testing.T) {
 	require.Equal(t, "order-1", p.OrderID)
 	require.Equal(t, "100", p.Price.String())
 
-	ReleaseCommand(decoded)
 }
 
 func TestPlaceOrderParams_MarshalUnmarshalBinary(t *testing.T) {
@@ -205,5 +204,4 @@ func TestCommand_SetAndUnmarshalPayload(t *testing.T) {
 	require.Equal(t, params.OrderID, p.OrderID)
 	require.Equal(t, params.Price.String(), p.Price.String())
 
-	ReleaseCommand(decodedCmd)
 }

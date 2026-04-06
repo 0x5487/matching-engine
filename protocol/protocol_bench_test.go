@@ -47,7 +47,6 @@ func TestMarshalUnmarshalCommand(t *testing.T) {
 	assert.Equal(t, params.Price.String(), decodedParams.Price.String())
 	assert.Equal(t, params.Size.String(), decodedParams.Size.String())
 
-	ReleaseCommand(decoded)
 }
 
 func BenchmarkMarshalCommand(b *testing.B) {
@@ -104,7 +103,6 @@ func BenchmarkUnmarshalCommand(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		decoded, _ := UnmarshalCommand(data)
-		ReleaseCommand(decoded)
+		_, _ = UnmarshalCommand(data)
 	}
 }

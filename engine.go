@@ -532,7 +532,6 @@ func (engine *MatchingEngine) restoreMarket(f *os.File, segment MarketSegment, f
 
 func (engine *MatchingEngine) processCommand(ev *InputEvent) {
 	cmd := ev.Cmd
-	defer protocol.ReleaseCommand(cmd)
 
 	if cmd.CommandID == "" {
 		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)

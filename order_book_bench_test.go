@@ -58,7 +58,6 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 
 	const poolSize = 1000000
 	cmdPool := make([]*protocol.Command, poolSize)
-	binaryPool := make([][]byte, poolSize)
 
 	for i := range poolSize {
 		var side Side
@@ -100,19 +99,15 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 			Size:      sizeOne,
 		})
 		cmdPool[i] = c
-		binaryPool[i], _ = c.MarshalBinary()
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	// Submit asynchronously - using pre-parsed commands to measure core engine throughput.
-	// We acquire a fresh command envelope for each call to avoid pool recycling issues.
+	// Submit asynchronously and measure end-to-end processing through the engine.
 	for i := range b.N {
 		cmdIdx := i % poolSize
-		cmd := protocol.AcquireCommand()
-		*cmd = *cmdPool[cmdIdx]
-		_ = engine.SubmitAsync(ctx, cmd)
+		_ = engine.SubmitAsync(ctx, cmdPool[cmdIdx])
 	}
 
 	// Send a sentinel query to ensure all preceding commands are processed

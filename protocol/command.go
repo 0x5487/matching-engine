@@ -3,7 +3,6 @@ package protocol
 import (
 	"encoding/binary"
 	"io"
-	"sync"
 	"unsafe"
 
 	"github.com/quagmt/udecimal"
@@ -28,73 +27,6 @@ const (
 	stringLenSize  = 2
 	payloadLenSize = 4
 )
-
-// Object pools for zero-allocation reuse.
-var (
-	commandPool = sync.Pool{
-		New: func() any { return &Command{} },
-	}
-	placeOrderPool = sync.Pool{
-		New: func() any { return &PlaceOrderParams{} },
-	}
-	cancelOrderPool = sync.Pool{
-		New: func() any { return &CancelOrderParams{} },
-	}
-	amendOrderPool = sync.Pool{
-		New: func() any { return &AmendOrderParams{} },
-	}
-	createMarketPool = sync.Pool{
-		New: func() any { return &CreateMarketParams{} },
-	}
-	suspendMarketPool = sync.Pool{
-		New: func() any { return &SuspendMarketParams{} },
-	}
-	updateConfigPool = sync.Pool{
-		New: func() any { return &UpdateConfigParams{} },
-	}
-	userEventPool = sync.Pool{
-		New: func() any { return &UserEventParams{} },
-	}
-)
-
-// AcquireCommand gets a command from the pool.
-func AcquireCommand() *Command {
-	return commandPool.Get().(*Command)
-}
-
-// ReleaseCommand returns a command and its params to the pool.
-func ReleaseCommand(c *Command) {
-	if c == nil {
-		return
-	}
-	if c.Params != nil {
-		switch p := c.Params.(type) {
-		case *PlaceOrderParams:
-			*p = PlaceOrderParams{}
-			placeOrderPool.Put(p)
-		case *CancelOrderParams:
-			*p = CancelOrderParams{}
-			cancelOrderPool.Put(p)
-		case *AmendOrderParams:
-			*p = AmendOrderParams{}
-			amendOrderPool.Put(p)
-		case *CreateMarketParams:
-			*p = CreateMarketParams{}
-			createMarketPool.Put(p)
-		case *SuspendMarketParams:
-			*p = SuspendMarketParams{}
-			suspendMarketPool.Put(p)
-		case *UpdateConfigParams:
-			*p = UpdateConfigParams{}
-			updateConfigPool.Put(p)
-		case *UserEventParams:
-			*p = UserEventParams{}
-			userEventPool.Put(p)
-		}
-	}
-	*c = Command{}
-	commandPool.Put(c)
-}
 
 // Params is the common interface for all command parameters.
 type Params interface {
@@ -165,7 +97,7 @@ func UnmarshalCommand(data []byte) (*Command, error) {
 		return nil, io.ErrUnexpectedEOF
 	}
 
-	c := commandPool.Get().(*Command)
+	c := &Command{}
 	offset := 0
 	c.Version = data[offset]
 	offset++
@@ -182,19 +114,16 @@ func UnmarshalCommand(data []byte) (*Command, error) {
 	var err error
 	c.MarketID, n, err = readString(data[offset:])
 	if err != nil {
-		ReleaseCommand(c)
 		return nil, err
 	}
 	offset += n
 	c.CommandID, n, err = readString(data[offset:])
 	if err != nil {
-		ReleaseCommand(c)
 		return nil, err
 	}
 	offset += n
 
 	if len(data[offset:]) < 4 {
-		ReleaseCommand(c)
 		return nil, io.ErrUnexpectedEOF
 	}
 	payloadLen := int(binary.BigEndian.Uint32(data[offset:]))
@@ -202,64 +131,49 @@ func UnmarshalCommand(data []byte) (*Command, error) {
 
 	if payloadLen > 0 {
 		if len(data[offset:]) < payloadLen {
-			ReleaseCommand(c)
 			return nil, io.ErrUnexpectedEOF
 		}
 		pData := data[offset : offset+payloadLen]
 		switch c.Type {
 		case CmdPlaceOrder:
-			p := placeOrderPool.Get().(*PlaceOrderParams)
+			p := &PlaceOrderParams{}
 			if err := p.UnmarshalBinary(pData); err != nil {
-				placeOrderPool.Put(p)
-				ReleaseCommand(c)
 				return nil, err
 			}
 			c.Params = p
 		case CmdCancelOrder:
-			p := cancelOrderPool.Get().(*CancelOrderParams)
+			p := &CancelOrderParams{}
 			if err := p.UnmarshalBinary(pData); err != nil {
-				cancelOrderPool.Put(p)
-				ReleaseCommand(c)
 				return nil, err
 			}
 			c.Params = p
 		case CmdAmendOrder:
-			p := amendOrderPool.Get().(*AmendOrderParams)
+			p := &AmendOrderParams{}
 			if err := p.UnmarshalBinary(pData); err != nil {
-				amendOrderPool.Put(p)
-				ReleaseCommand(c)
 				return nil, err
 			}
 			c.Params = p
 		case CmdCreateMarket:
-			p := createMarketPool.Get().(*CreateMarketParams)
+			p := &CreateMarketParams{}
 			if err := p.UnmarshalBinary(pData); err != nil {
-				createMarketPool.Put(p)
-				ReleaseCommand(c)
 				return nil, err
 			}
 			c.Params = p
 		case CmdSuspendMarket:
-			p := suspendMarketPool.Get().(*SuspendMarketParams)
+			p := &SuspendMarketParams{}
 			if err := p.UnmarshalBinary(pData); err != nil {
-				suspendMarketPool.Put(p)
-				ReleaseCommand(c)
 				return nil, err
 			}
 			c.Params = p
 		case CmdUpdateConfig:
-			p := updateConfigPool.Get().(*UpdateConfigParams)
+			p := &UpdateConfigParams{}
 			if err := p.UnmarshalBinary(pData); err != nil {
-				updateConfigPool.Put(p)
-				ReleaseCommand(c)
 				return nil, err
 			}
 			c.Params = p
 		case CmdUserEvent:
-			p := userEventPool.Get().(*UserEventParams)
+			p := &UserEventParams{}
 			if err := p.UnmarshalBinary(pData); err != nil {
-				userEventPool.Put(p)
-				ReleaseCommand(c)
 				return nil, err
 			}
 			c.Params = p
@@ -280,57 +194,7 @@ func (c *Command) UnmarshalBinary(data []byte) error {
 	if err != nil {
 		return err
 	}
-	params := c.Params // Save current params if any
 	*c = *nc
-	c.Params = params // But UnmarshalCommand already set nc.Params
-	// Actually nc is from pool, we should just copy fields
-	return nil
-}
-
-// UnmarshalBinary implementation for Command to satisfy interface without pooling issues
-func (c *Command) unmarshalNoPool(data []byte) error {
-	// Internal helper for tests/compatibility where we don't want to use the pool for the envelope itself
-	if len(data) < 26 {
-		return io.ErrUnexpectedEOF
-	}
-	offset := 0
-	c.Version = data[offset]
-	offset++
-	c.UserID = binary.BigEndian.Uint64(data[offset:])
-	offset += 8
-	c.Type = CommandType(data[offset])
-	offset++
-	c.SeqID = binary.BigEndian.Uint64(data[offset:])
-	offset += 8
-	c.Timestamp = int64(binary.BigEndian.Uint64(data[offset:]))
-	offset += 8
-
-	var n int
-	var err error
-	c.MarketID, n, err = readString(data[offset:])
-	if err != nil {
-		return err
-	}
-	offset += n
-	c.CommandID, n, err = readString(data[offset:])
-	if err != nil {
-		return err
-	}
-	offset += n
-
-	payloadLen := int(binary.BigEndian.Uint32(data[offset:]))
-	offset += 4
-
-	if payloadLen > 0 {
-		pData := data[offset : offset+payloadLen]
-		switch c.Type {
-		case CmdPlaceOrder:
-			p := &PlaceOrderParams{}
-			_ = p.UnmarshalBinary(pData)
-			c.Params = p
-		// ... (omitted others for brevity in this helper)
-		}
-	}
 	return nil
 }
 
