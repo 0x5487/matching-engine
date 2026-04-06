@@ -121,60 +121,54 @@ func (book *OrderBook) Restore(snap *OrderBookSnapshot) {
 }
 
 func (book *OrderBook) processCommand(ev *InputEvent) {
-	cmd := ev.Cmd
-	switch cmd.Type {
-	case protocol.CmdSuspendMarket:
-		book.handleSuspendMarket(ev)
-	case protocol.CmdResumeMarket:
-		book.handleResumeMarket(ev)
-	case protocol.CmdUpdateConfig:
-		book.handleUpdateConfig(ev)
-	case protocol.CmdPlaceOrder:
-		book.handlePlaceOrder(ev)
-	case protocol.CmdCancelOrder:
-		book.handleCancelOrder(ev)
-	case protocol.CmdAmendOrder:
-		book.handleAmendOrder(ev)
+	req := ev.Request
+	switch request := req.(type) {
+	case *protocol.SuspendMarketRequest:
+		book.handleSuspendMarket(ev, request)
+	case *protocol.ResumeMarketRequest:
+		book.handleResumeMarket(ev, request)
+	case *protocol.UpdateConfigRequest:
+		book.handleUpdateConfig(ev, request)
+	case *protocol.PlaceOrderRequest:
+		book.handlePlaceOrder(ev, request)
+	case *protocol.CancelOrderRequest:
+		book.handleCancelOrder(ev, request)
+	case *protocol.AmendOrderRequest:
+		book.handleAmendOrder(ev, request)
 	default:
+		base, _ := requestBase(req)
 		book.rejectInvalidPayload(
-			cmd.CommandID,
+			base.CommandID,
 			book.marketID,
 			"unknown",
-			cmd.UserID,
+			base.UserID,
 			protocol.RejectReasonUnknownCommand,
-			cmd.Timestamp,
+			base.Timestamp,
 		)
 		book.sendResponse(ev.Resp, ErrUnknownCommand)
 	}
 
-	if cmd.SeqID > 0 {
-		book.lastCmdSeqID.Store(cmd.SeqID)
+	if base, ok := requestBase(req); ok && base.SeqID > 0 {
+		book.lastCmdSeqID.Store(base.SeqID)
 	}
 }
 
-func (book *OrderBook) handleSuspendMarket(ev *InputEvent) {
-	cmd := ev.Cmd
-	payload, _ := cmd.Params.(*protocol.SuspendMarketParams)
-
-	if !book.validateBasic(cmd.CommandID, cmd.UserID, "", cmd.Timestamp) {
+func (book *OrderBook) handleSuspendMarket(ev *InputEvent, req *protocol.SuspendMarketRequest) {
+	if !book.validateBasic(req.CommandID, req.UserID, "", req.Timestamp) {
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
 	book.state = protocol.OrderBookStateSuspended
 	batch := acquireLogBatch()
-	reason := ""
-	if payload != nil {
-		reason = payload.Reason
-	}
 	log := NewAdminLog(
 		book.seqID.Add(1),
-		cmd.CommandID,
+		req.CommandID,
 		book.engineID,
 		book.marketID,
-		cmd.UserID,
-		reason,
-		cmd.Timestamp,
+		req.UserID,
+		req.Reason,
+		req.Timestamp,
 	)
 	batch.Logs = append(batch.Logs, log)
 	book.publisher.Publish(batch.Logs)
@@ -184,9 +178,8 @@ func (book *OrderBook) handleSuspendMarket(ev *InputEvent) {
 	book.sendResponse(ev.Resp, true)
 }
 
-func (book *OrderBook) handleResumeMarket(ev *InputEvent) {
-	cmd := ev.Cmd
-	if !book.validateBasic(cmd.CommandID, cmd.UserID, "", cmd.Timestamp) {
+func (book *OrderBook) handleResumeMarket(ev *InputEvent, req *protocol.ResumeMarketRequest) {
+	if !book.validateBasic(req.CommandID, req.UserID, "", req.Timestamp) {
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
@@ -195,12 +188,12 @@ func (book *OrderBook) handleResumeMarket(ev *InputEvent) {
 	batch := acquireLogBatch()
 	log := NewAdminLog(
 		book.seqID.Add(1),
-		cmd.CommandID,
+		req.CommandID,
 		book.engineID,
 		book.marketID,
-		cmd.UserID,
+		req.UserID,
 		"market_resumed",
-		cmd.Timestamp,
+		req.Timestamp,
 	)
 	batch.Logs = append(batch.Logs, log)
 	book.publisher.Publish(batch.Logs)
@@ -210,30 +203,23 @@ func (book *OrderBook) handleResumeMarket(ev *InputEvent) {
 	book.sendResponse(ev.Resp, true)
 }
 
-func (book *OrderBook) handleUpdateConfig(ev *InputEvent) {
-	cmd := ev.Cmd
-	payload, ok := cmd.Params.(*protocol.UpdateConfigParams)
-	if !ok && cmd.Params != nil {
+func (book *OrderBook) handleUpdateConfig(ev *InputEvent, req *protocol.UpdateConfigRequest) {
+	if !book.validateBasic(req.CommandID, req.UserID, "", req.Timestamp) {
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
-	if !book.validateBasic(cmd.CommandID, cmd.UserID, "", cmd.Timestamp) {
-		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
-		return
-	}
-
-	if payload != nil && !payload.MinLotSize.IsZero() {
-		book.lotSize = payload.MinLotSize
+	if !req.MinLotSize.IsZero() {
+		book.lotSize = req.MinLotSize
 		batch := acquireLogBatch()
 		log := NewAdminLog(
 			book.seqID.Add(1),
-			cmd.CommandID,
+			req.CommandID,
 			book.engineID,
 			book.marketID,
-			cmd.UserID,
+			req.UserID,
 			"market_config_updated",
-			cmd.Timestamp,
+			req.Timestamp,
 		)
 		batch.Logs = append(batch.Logs, log)
 		book.publisher.Publish(batch.Logs)
@@ -246,55 +232,40 @@ func (book *OrderBook) handleUpdateConfig(ev *InputEvent) {
 	}
 }
 
-func (book *OrderBook) handlePlaceOrder(ev *InputEvent) {
-	cmd := ev.Cmd
-	payload, ok := cmd.Params.(*protocol.PlaceOrderParams)
-	if !ok {
-		book.rejectInvalidPayload(
-			cmd.CommandID,
-			book.marketID,
-			"unknown",
-			cmd.UserID,
-			protocol.RejectReasonInvalidPayload,
-			cmd.Timestamp,
-		)
-		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
-		return
-	}
-
-	if !book.validateState(cmd.CommandID, cmd.UserID, payload.OrderID, cmd.Timestamp) {
+func (book *OrderBook) handlePlaceOrder(ev *InputEvent, req *protocol.PlaceOrderRequest) {
+	if !book.validateState(req.CommandID, req.UserID, req.OrderID, req.Timestamp) {
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
 	// Use pre-parsed decimals directly from payload
-	price := payload.Price
-	size := payload.Size
-	visibleSize := payload.VisibleSize
-	quoteSize := payload.QuoteSize
+	price := req.Price
+	size := req.Size
+	visibleSize := req.VisibleSize
+	quoteSize := req.QuoteSize
 
 	// Check for duplicate ID
-	if book.bidQueue.order(payload.OrderID) != nil || book.askQueue.order(payload.OrderID) != nil {
+	if book.bidQueue.order(req.OrderID) != nil || book.askQueue.order(req.OrderID) != nil {
 		book.rejectInvalidPayload(
-			cmd.CommandID,
+			req.CommandID,
 			book.marketID,
-			payload.OrderID,
-			cmd.UserID,
+			req.OrderID,
+			req.UserID,
 			protocol.RejectReasonDuplicateID,
-			cmd.Timestamp,
+			req.Timestamp,
 		)
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonDuplicateID)))
 		return
 	}
 
 	order := acquireOrder()
-	order.ID = payload.OrderID
-	order.Side = payload.Side
+	order.ID = req.OrderID
+	order.Side = req.Side
 	order.Price = price
 	order.Size = size
-	order.Type = payload.OrderType
-	order.UserID = cmd.UserID
-	order.Timestamp = cmd.Timestamp
+	order.Type = req.OrderType
+	order.UserID = req.UserID
+	order.Timestamp = req.Timestamp
 
 	if visibleSize.GreaterThan(udecimal.Zero) && visibleSize.LessThan(size) {
 		order.VisibleLimit = visibleSize
@@ -306,15 +277,15 @@ func (book *OrderBook) handlePlaceOrder(ev *InputEvent) {
 	var batch *LogBatch
 	switch order.Type {
 	case Limit:
-		batch = book.handleLimitOrder(cmd.CommandID, order, cmd.Timestamp)
+		batch = book.handleLimitOrder(req.CommandID, order, req.Timestamp)
 	case FOK:
-		batch = book.handleFOKOrder(cmd.CommandID, order, cmd.Timestamp)
+		batch = book.handleFOKOrder(req.CommandID, order, req.Timestamp)
 	case IOC:
-		batch = book.handleIOCOrder(cmd.CommandID, order, cmd.Timestamp)
+		batch = book.handleIOCOrder(req.CommandID, order, req.Timestamp)
 	case PostOnly:
-		batch = book.handlePostOnlyOrder(cmd.CommandID, order, cmd.Timestamp)
+		batch = book.handlePostOnlyOrder(req.CommandID, order, req.Timestamp)
 	case Market:
-		batch = book.handleMarketOrder(cmd.CommandID, order, quoteSize, cmd.Timestamp)
+		batch = book.handleMarketOrder(req.CommandID, order, quoteSize, req.Timestamp)
 	default:
 	}
 
@@ -337,37 +308,22 @@ func (book *OrderBook) handlePlaceOrder(ev *InputEvent) {
 	book.sendResponse(ev.Resp, &orderCopy)
 }
 
-func (book *OrderBook) handleCancelOrder(ev *InputEvent) {
-	cmd := ev.Cmd
-	payload, ok := cmd.Params.(*protocol.CancelOrderParams)
-	if !ok {
-		book.rejectInvalidPayload(
-			cmd.CommandID,
-			book.marketID,
-			"unknown",
-			cmd.UserID,
-			protocol.RejectReasonInvalidPayload,
-			cmd.Timestamp,
-		)
-		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
-		return
-	}
-
+func (book *OrderBook) handleCancelOrder(ev *InputEvent, req *protocol.CancelOrderRequest) {
 	// Cancel is allowed in Suspended state
-	if !book.validateBasic(cmd.CommandID, cmd.UserID, payload.OrderID, cmd.Timestamp) {
+	if !book.validateBasic(req.CommandID, req.UserID, req.OrderID, req.Timestamp) {
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
-	order, ok := book.findOrder(payload.OrderID)
-	if !ok || order.UserID != cmd.UserID {
+	order, ok := book.findOrder(req.OrderID)
+	if !ok || order.UserID != req.UserID {
 		book.rejectInvalidPayload(
-			cmd.CommandID,
+			req.CommandID,
 			book.marketID,
-			payload.OrderID,
-			cmd.UserID,
+			req.OrderID,
+			req.UserID,
 			protocol.RejectReasonOrderNotFound,
-			cmd.Timestamp,
+			req.Timestamp,
 		)
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonOrderNotFound)))
 		return
@@ -383,7 +339,7 @@ func (book *OrderBook) handleCancelOrder(ev *InputEvent) {
 	totalSize := order.Size.Add(order.HiddenSize)
 	log := NewCancelLog(
 		book.seqID.Add(1),
-		cmd.CommandID,
+		req.CommandID,
 		book.engineID,
 		book.marketID,
 		order.ID,
@@ -392,7 +348,7 @@ func (book *OrderBook) handleCancelOrder(ev *InputEvent) {
 		order.Price,
 		totalSize,
 		order.Type,
-		cmd.Timestamp,
+		req.Timestamp,
 	)
 	batch.Logs = append(batch.Logs, log)
 	book.publisher.Publish(batch.Logs)
@@ -402,39 +358,24 @@ func (book *OrderBook) handleCancelOrder(ev *InputEvent) {
 	book.sendResponse(ev.Resp, true)
 }
 
-func (book *OrderBook) handleAmendOrder(ev *InputEvent) {
-	cmd := ev.Cmd
-	payload, ok := cmd.Params.(*protocol.AmendOrderParams)
-	if !ok {
-		book.rejectInvalidPayload(
-			cmd.CommandID,
-			book.marketID,
-			"unknown",
-			cmd.UserID,
-			protocol.RejectReasonInvalidPayload,
-			cmd.Timestamp,
-		)
+func (book *OrderBook) handleAmendOrder(ev *InputEvent, req *protocol.AmendOrderRequest) {
+	if !book.validateState(req.CommandID, req.UserID, req.OrderID, req.Timestamp) {
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
-	if !book.validateState(cmd.CommandID, cmd.UserID, payload.OrderID, cmd.Timestamp) {
-		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
-		return
-	}
+	newPrice := req.NewPrice
+	newSize := req.NewSize
 
-	newPrice := payload.NewPrice
-	newSize := payload.NewSize
-
-	order, ok := book.findOrder(payload.OrderID)
-	if !ok || order.UserID != cmd.UserID {
+	order, ok := book.findOrder(req.OrderID)
+	if !ok || order.UserID != req.UserID {
 		book.rejectInvalidPayload(
-			cmd.CommandID,
+			req.CommandID,
 			book.marketID,
-			payload.OrderID,
-			cmd.UserID,
+			req.OrderID,
+			req.UserID,
 			protocol.RejectReasonOrderNotFound,
-			cmd.Timestamp,
+			req.Timestamp,
 		)
 		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonOrderNotFound)))
 		return
@@ -455,7 +396,7 @@ func (book *OrderBook) handleAmendOrder(ev *InputEvent) {
 		// Path 1: Priority Loss (Re-match)
 		myQueue.removeOrder(oldPrice, order.ID)
 		order.Price = newPrice
-		order.Timestamp = cmd.Timestamp
+		order.Timestamp = req.Timestamp
 
 		// Recalculate Iceberg fields for the new total size
 		if order.VisibleLimit.IsZero() {
@@ -473,7 +414,7 @@ func (book *OrderBook) handleAmendOrder(ev *InputEvent) {
 
 		log := NewAmendLog(
 			book.seqID.Add(1),
-			cmd.CommandID,
+			req.CommandID,
 			book.engineID,
 			book.marketID,
 			order.ID,
@@ -484,7 +425,7 @@ func (book *OrderBook) handleAmendOrder(ev *InputEvent) {
 			oldPrice,
 			oldTotalSize,
 			order.Type,
-			cmd.Timestamp,
+			req.Timestamp,
 		)
 		amendBatch := acquireLogBatch()
 		amendBatch.Logs = append(amendBatch.Logs, log)
@@ -492,7 +433,7 @@ func (book *OrderBook) handleAmendOrder(ev *InputEvent) {
 		releaseBookLog(log)
 		amendBatch.Release()
 
-		batch := book.handleLimitOrder(cmd.CommandID, order, cmd.Timestamp)
+		batch := book.handleLimitOrder(req.CommandID, order, req.Timestamp)
 		if batch != nil {
 			if len(batch.Logs) > 0 {
 				book.publisher.Publish(batch.Logs)
@@ -520,7 +461,7 @@ func (book *OrderBook) handleAmendOrder(ev *InputEvent) {
 
 		log := NewAmendLog(
 			book.seqID.Add(1),
-			cmd.CommandID,
+			req.CommandID,
 			book.engineID,
 			book.marketID,
 			order.ID,
@@ -531,7 +472,7 @@ func (book *OrderBook) handleAmendOrder(ev *InputEvent) {
 			oldPrice,
 			oldTotalSize,
 			order.Type,
-			cmd.Timestamp,
+			req.Timestamp,
 		)
 		amendBatch := acquireLogBatch()
 		amendBatch.Logs = append(amendBatch.Logs, log)

@@ -75,8 +75,8 @@ type DepthChange struct {
 
 // InputEvent is the internal wrapper for all events entering the OrderBook Actor.
 type InputEvent struct {
-	// Cmd is the external command carrier.
-	Cmd *protocol.Command
+	// Request is the typed business request entering the write path.
+	Request any
 
 	// Internal Query fields (Read Path)
 	Query any // e.g. *protocol.GetDepthRequest

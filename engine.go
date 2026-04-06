@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/0x5487/matching-engine/protocol"
+	"github.com/quagmt/udecimal"
 )
 
 // MatchingEngine manages multiple order books for different markets.
@@ -74,7 +75,12 @@ func (engine *MatchingEngine) Submit(
 	}
 
 	respChan := engine.acquireResponseChannel()
-	if err := engine.enqueue(ctx, cmd, nil, respChan); err != nil {
+	req, err := bridgeCommandToRequest(cmd)
+	if err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+	if err := engine.enqueue(ctx, req, nil, respChan); err != nil {
 		engine.releaseResponseChannel(respChan)
 		return nil, err
 	}
@@ -90,8 +96,132 @@ func (engine *MatchingEngine) SubmitAsync(ctx context.Context, cmd *protocol.Com
 	if err := engine.validateCommand(ctx, cmd); err != nil {
 		return err
 	}
+	req, err := bridgeCommandToRequest(cmd)
+	if err != nil {
+		return err
+	}
+	return engine.enqueue(ctx, req, nil, nil)
+}
 
-	return engine.enqueue(ctx, cmd, nil, nil)
+// CreateMarket enqueues a typed create-market request and returns a future for completion.
+func (engine *MatchingEngine) CreateMarket(
+	ctx context.Context,
+	req *protocol.CreateMarketRequest,
+) (*Future[bool], error) {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
+		return nil, err
+	}
+	respChan := engine.acquireResponseChannel()
+	if err := engine.enqueue(ctx, req, nil, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+	return &Future[bool]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
+}
+
+// SuspendMarket enqueues a typed suspend-market request and returns a future for completion.
+func (engine *MatchingEngine) SuspendMarket(
+	ctx context.Context,
+	req *protocol.SuspendMarketRequest,
+) (*Future[bool], error) {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
+		return nil, err
+	}
+	respChan := engine.acquireResponseChannel()
+	if err := engine.enqueue(ctx, req, nil, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+	return &Future[bool]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
+}
+
+// ResumeMarket enqueues a typed resume-market request and returns a future for completion.
+func (engine *MatchingEngine) ResumeMarket(
+	ctx context.Context,
+	req *protocol.ResumeMarketRequest,
+) (*Future[bool], error) {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
+		return nil, err
+	}
+	respChan := engine.acquireResponseChannel()
+	if err := engine.enqueue(ctx, req, nil, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+	return &Future[bool]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
+}
+
+// UpdateConfig enqueues a typed update-config request and returns a future for completion.
+func (engine *MatchingEngine) UpdateConfig(
+	ctx context.Context,
+	req *protocol.UpdateConfigRequest,
+) (*Future[bool], error) {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
+		return nil, err
+	}
+	respChan := engine.acquireResponseChannel()
+	if err := engine.enqueue(ctx, req, nil, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+	return &Future[bool]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
+}
+
+// PlaceOrderAsync enqueues a typed place-order request without waiting for execution.
+func (engine *MatchingEngine) PlaceOrderAsync(ctx context.Context, req *protocol.PlaceOrderRequest) error {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
+		return err
+	}
+	return engine.enqueue(ctx, req, nil, nil)
+}
+
+// PlaceOrderBatchAsync enqueues a batch of typed place-order requests without waiting for execution.
+func (engine *MatchingEngine) PlaceOrderBatchAsync(
+	ctx context.Context,
+	reqs []*protocol.PlaceOrderRequest,
+) error {
+	if len(reqs) == 0 {
+		return nil
+	}
+	if ctx == nil {
+		return ErrInvalidParam
+	}
+	requests := make([]any, 0, len(reqs))
+	for _, req := range reqs {
+		if err := engine.validateTypedRequest(ctx, req); err != nil {
+			return err
+		}
+		requests = append(requests, req)
+	}
+	return engine.enqueueBatch(ctx, requests)
+}
+
+// CancelOrderAsync enqueues a typed cancel-order request without waiting for execution.
+func (engine *MatchingEngine) CancelOrderAsync(ctx context.Context, req *protocol.CancelOrderRequest) error {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
+		return err
+	}
+	return engine.enqueue(ctx, req, nil, nil)
+}
+
+// AmendOrderAsync enqueues a typed amend-order request without waiting for execution.
+func (engine *MatchingEngine) AmendOrderAsync(ctx context.Context, req *protocol.AmendOrderRequest) error {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
+		return err
+	}
+	return engine.enqueue(ctx, req, nil, nil)
 }
 
 // Run starts the engine's event loop. This is a blocking call.
@@ -134,50 +264,15 @@ func (engine *MatchingEngine) SubmitAsyncBatch(
 			return err
 		}
 	}
-
-	if engine.isShutdown.Load() {
-		return ErrShutdown
-	}
-
-	n := int64(len(cmds))
-
-	// Handle case where batch size exceeds ring buffer capacity limit
-	if n > engine.ring.capacity {
-		// Fallback to individual enqueues if batch is larger than capacity
-		for _, cmd := range cmds {
-			if err := engine.SubmitAsync(ctx, cmd); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	strategy := YieldingIdleStrategy{}
-	for {
-		startSeq, endSeq := engine.ring.TryClaimN(n)
-		if startSeq != -1 {
-			for i, cmd := range cmds {
-				seq := startSeq + int64(i)
-				slot := &engine.ring.buffer[seq&engine.ring.bufferMask]
-				slot.Cmd = cmd
-				slot.Query = nil
-				slot.Resp = nil
-			}
-
-			engine.ring.CommitN(startSeq, endSeq)
-			return nil
-		}
-
-		if engine.isShutdown.Load() {
-			return ErrShutdown
-		}
-
-		if err := ctx.Err(); err != nil {
+	requests := make([]any, 0, len(cmds))
+	for _, cmd := range cmds {
+		req, err := bridgeCommandToRequest(cmd)
+		if err != nil {
 			return err
 		}
-
-		strategy.Idle()
+		requests = append(requests, req)
 	}
+	return engine.enqueueBatch(ctx, requests)
 }
 
 // Query executes a read-only request against the matching engine.
@@ -305,9 +400,26 @@ func (engine *MatchingEngine) validateCommand(ctx context.Context, cmd *protocol
 	return nil
 }
 
+func (engine *MatchingEngine) validateTypedRequest(ctx context.Context, req any) error {
+	if ctx == nil || req == nil {
+		return ErrInvalidParam
+	}
+	base, ok := requestBase(req)
+	if !ok {
+		return ErrInvalidParam
+	}
+	if err := requireCommandID(base.CommandID); err != nil {
+		return err
+	}
+	if engine.isShutdown.Load() {
+		return ErrShutdown
+	}
+	return nil
+}
+
 func (engine *MatchingEngine) enqueue(
 	ctx context.Context,
-	cmd *protocol.Command,
+	request any,
 	query any,
 	resp chan any,
 ) error {
@@ -315,7 +427,7 @@ func (engine *MatchingEngine) enqueue(
 	for {
 		seq, ev := engine.ring.TryClaim()
 		if seq != -1 {
-			ev.Cmd = cmd
+			ev.Request = request
 			ev.Query = query
 			ev.Resp = resp
 
@@ -327,6 +439,50 @@ func (engine *MatchingEngine) enqueue(
 			return ErrShutdown
 		}
 
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		strategy.Idle()
+	}
+}
+
+func (engine *MatchingEngine) enqueueBatch(ctx context.Context, requests []any) error {
+	if len(requests) == 0 {
+		return nil
+	}
+	if engine.isShutdown.Load() {
+		return ErrShutdown
+	}
+
+	n := int64(len(requests))
+	if n > engine.ring.capacity {
+		for _, request := range requests {
+			if err := engine.enqueue(ctx, request, nil, nil); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	strategy := YieldingIdleStrategy{}
+	for {
+		startSeq, endSeq := engine.ring.TryClaimN(n)
+		if startSeq != -1 {
+			for i, request := range requests {
+				seq := startSeq + int64(i)
+				slot := &engine.ring.buffer[seq&engine.ring.bufferMask]
+				slot.Request = request
+				slot.Query = nil
+				slot.Resp = nil
+			}
+			engine.ring.CommitN(startSeq, endSeq)
+			return nil
+		}
+
+		if engine.isShutdown.Load() {
+			return ErrShutdown
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -531,36 +687,53 @@ func (engine *MatchingEngine) restoreMarket(f *os.File, segment MarketSegment, f
 }
 
 func (engine *MatchingEngine) processCommand(ev *InputEvent) {
-	cmd := ev.Cmd
-
-	if cmd.CommandID == "" {
-		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
+	req := ev.Request
+	base, ok := requestBase(req)
+	if !ok || base.CommandID == "" {
+		engine.rejectRequest(req, protocol.RejectReasonInvalidPayload)
 		engine.respondQueryError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
-	switch cmd.Type {
-	case protocol.CmdCreateMarket:
-		engine.handleCreateMarketCommand(cmd, ev.Resp)
-	case protocol.CmdUserEvent:
-		engine.handleUserEvent(cmd)
-	default:
-		book := engine.orderbooks[cmd.MarketID]
+	switch request := req.(type) {
+	case *protocol.CreateMarketRequest:
+		engine.handleCreateMarketRequest(request, ev.Resp)
+	case *protocol.UserEventRequest:
+		engine.handleUserEvent(request)
+	case *protocol.PlaceOrderRequest,
+		*protocol.CancelOrderRequest,
+		*protocol.AmendOrderRequest,
+		*protocol.SuspendMarketRequest,
+		*protocol.ResumeMarketRequest,
+		*protocol.UpdateConfigRequest:
+		book := engine.orderbooks[base.MarketID]
 		if book == nil {
-			engine.rejectCommand(cmd, protocol.RejectReasonMarketNotFound)
+			engine.rejectRequest(req, protocol.RejectReasonMarketNotFound)
 			engine.respondQueryError(ev, ErrNotFound)
 			return
 		}
 		book.processCommand(ev)
-		if cmd.SeqID > 0 {
-			book.lastCmdSeqID.Store(cmd.SeqID)
+		if base.SeqID > 0 {
+			book.lastCmdSeqID.Store(base.SeqID)
 		}
+	default:
+		engine.rejectRequest(req, protocol.RejectReasonUnknownCommand)
+		engine.respondQueryError(ev, ErrUnknownCommand)
 	}
 }
 
-func (engine *MatchingEngine) handleCreateMarketCommand(cmd *protocol.Command, resp chan<- any) {
-	params, _ := cmd.Params.(*protocol.CreateMarketParams)
-	engine.handleCreateMarket(cmd.CommandID, cmd.Timestamp, cmd.MarketID, cmd.UserID, params, resp)
+func (engine *MatchingEngine) handleCreateMarketRequest(
+	req *protocol.CreateMarketRequest,
+	resp chan<- any,
+) {
+	engine.handleCreateMarket(
+		req.CommandID,
+		req.Timestamp,
+		req.MarketID,
+		req.UserID,
+		req.MinLotSize,
+		resp,
+	)
 }
 
 func (engine *MatchingEngine) processQuery(ev *InputEvent) {
@@ -610,7 +783,7 @@ func (engine *MatchingEngine) handleCreateMarket(
 	ts int64,
 	marketID string,
 	userID uint64,
-	params *protocol.CreateMarketParams,
+	minLotSize udecimal.Decimal,
 	resp chan<- any,
 ) {
 	if ts <= 0 {
@@ -631,8 +804,8 @@ func (engine *MatchingEngine) handleCreateMarket(
 
 	// Create and Store (no goroutine, no individual RingBuffer)
 	opts := []OrderBookOption{}
-	if params != nil && !params.MinLotSize.IsZero() {
-		opts = append(opts, WithLotSize(params.MinLotSize))
+	if !minLotSize.IsZero() {
+		opts = append(opts, WithLotSize(minLotSize))
 	}
 
 	newbook := newOrderBook(engine.engineID, marketID, engine.publishTrader, opts...)
@@ -662,31 +835,22 @@ func (engine *MatchingEngine) handleCreateMarket(
 }
 
 // handleUserEvent processes a generic user event.
-func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
-	payload, ok := cmd.Params.(*protocol.UserEventParams)
-	if !ok {
-		// Only reject if payload was expected but missing/wrong type
-		if cmd.Params != nil {
-			engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
-			return
-		}
-	}
-
-	if cmd.Timestamp <= 0 {
-		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
+func (engine *MatchingEngine) handleUserEvent(req *protocol.UserEventRequest) {
+	if req.Timestamp <= 0 {
+		engine.rejectRequest(req, protocol.RejectReasonInvalidPayload)
 		return
 	}
 
 	// Create and Publish Log
 	log := NewUserEventLog(
-		cmd.SeqID,
-		cmd.CommandID,
+		req.SeqID,
+		req.CommandID,
 		engine.engineID,
-		cmd.UserID,
-		payload.EventType,
-		payload.Key,
-		payload.Data,
-		cmd.Timestamp,
+		req.UserID,
+		req.EventType,
+		req.Key,
+		req.Data,
+		req.Timestamp,
 	)
 
 	// Publish via the shared publishTrader
@@ -731,17 +895,21 @@ func (engine *MatchingEngine) respondQueryError(ev *InputEvent, err error) {
 	}
 }
 
-// rejectCommand emits a standardized reject log for engine-level command failures.
-func (engine *MatchingEngine) rejectCommand(cmd *protocol.Command, reason protocol.RejectReason) {
+// rejectRequest emits a standardized reject log for engine-level command failures.
+func (engine *MatchingEngine) rejectRequest(req any, reason protocol.RejectReason) {
+	base, ok := requestBase(req)
+	if !ok {
+		return
+	}
 	log := NewRejectLog(
 		0,
-		cmd.CommandID,
+		base.CommandID,
 		engine.engineID,
-		cmd.MarketID,
-		engine.commandOrderID(cmd),
-		cmd.UserID,
+		base.MarketID,
+		engine.requestOrderID(req),
+		base.UserID,
 		reason,
-		cmd.Timestamp,
+		base.Timestamp,
 	)
 	batch := acquireLogBatch()
 	batch.Logs = append(batch.Logs, log)
@@ -750,21 +918,17 @@ func (engine *MatchingEngine) rejectCommand(cmd *protocol.Command, reason protoc
 	batch.Release()
 }
 
-// commandOrderID extracts the business identifier used for reject logs.
-func (engine *MatchingEngine) commandOrderID(cmd *protocol.Command) string {
-	if cmd.Params == nil {
-		return "unknown"
-	}
-
-	switch p := cmd.Params.(type) {
-	case *protocol.PlaceOrderParams:
-		return p.OrderID
-	case *protocol.CancelOrderParams:
-		return p.OrderID
-	case *protocol.AmendOrderParams:
-		return p.OrderID
-	case *protocol.UserEventParams:
-		return p.Key
+// requestOrderID extracts the business identifier used for reject logs.
+func (engine *MatchingEngine) requestOrderID(req any) string {
+	switch r := req.(type) {
+	case *protocol.PlaceOrderRequest:
+		return r.OrderID
+	case *protocol.CancelOrderRequest:
+		return r.OrderID
+	case *protocol.AmendOrderRequest:
+		return r.OrderID
+	case *protocol.UserEventRequest:
+		return r.Key
 	}
 	return "unknown"
 }
@@ -789,7 +953,7 @@ func (engine *MatchingEngine) releaseResponseChannel(ch chan any) {
 }
 
 func (engine *MatchingEngine) onEvent(ev *InputEvent) {
-	if ev.Cmd != nil {
+	if ev.Request != nil {
 		engine.processCommand(ev)
 		return
 	}
@@ -800,9 +964,104 @@ func (engine *MatchingEngine) onEvent(ev *InputEvent) {
 	}
 }
 
+func requestBase(req any) (protocol.BaseCommand, bool) {
+	switch r := req.(type) {
+	case *protocol.PlaceOrderRequest:
+		return r.BaseCommand, true
+	case *protocol.CancelOrderRequest:
+		return r.BaseCommand, true
+	case *protocol.AmendOrderRequest:
+		return r.BaseCommand, true
+	case *protocol.CreateMarketRequest:
+		return r.BaseCommand, true
+	case *protocol.SuspendMarketRequest:
+		return r.BaseCommand, true
+	case *protocol.ResumeMarketRequest:
+		return r.BaseCommand, true
+	case *protocol.UpdateConfigRequest:
+		return r.BaseCommand, true
+	case *protocol.UserEventRequest:
+		return r.BaseCommand, true
+	default:
+		return protocol.BaseCommand{}, false
+	}
+}
+
 func requireCommandID(commandID string) error {
 	if commandID == "" {
 		return ErrInvalidParam
 	}
 	return nil
+}
+
+// bridgeCommandToRequest converts the legacy command envelope into a typed protocol request.
+func bridgeCommandToRequest(cmd *protocol.Command) (any, error) {
+	if cmd == nil {
+		return nil, ErrInvalidParam
+	}
+
+	base := protocol.BaseCommand{
+		Type:      cmd.Type,
+		SeqID:     cmd.SeqID,
+		CommandID: cmd.CommandID,
+		UserID:    cmd.UserID,
+		MarketID:  cmd.MarketID,
+		Timestamp: cmd.Timestamp,
+	}
+
+	switch p := cmd.Params.(type) {
+	case *protocol.PlaceOrderParams:
+		return &protocol.PlaceOrderRequest{
+			BaseCommand: base,
+			OrderID:     p.OrderID,
+			Side:        p.Side,
+			OrderType:   p.OrderType,
+			Price:       p.Price,
+			Size:        p.Size,
+			VisibleSize: p.VisibleSize,
+			QuoteSize:   p.QuoteSize,
+		}, nil
+	case *protocol.CancelOrderParams:
+		return &protocol.CancelOrderRequest{
+			BaseCommand: base,
+			OrderID:     p.OrderID,
+		}, nil
+	case *protocol.AmendOrderParams:
+		return &protocol.AmendOrderRequest{
+			BaseCommand: base,
+			OrderID:     p.OrderID,
+			NewPrice:    p.NewPrice,
+			NewSize:     p.NewSize,
+		}, nil
+	case *protocol.CreateMarketParams:
+		return &protocol.CreateMarketRequest{
+			BaseCommand: base,
+			MinLotSize:  p.MinLotSize,
+		}, nil
+	case *protocol.SuspendMarketParams:
+		return &protocol.SuspendMarketRequest{
+			BaseCommand: base,
+			Reason:      p.Reason,
+		}, nil
+	case *protocol.ResumeMarketParams:
+		return &protocol.ResumeMarketRequest{
+			BaseCommand: base,
+		}, nil
+	case *protocol.UpdateConfigParams:
+		return &protocol.UpdateConfigRequest{
+			BaseCommand: base,
+			MinLotSize:  p.MinLotSize,
+		}, nil
+	case *protocol.UserEventParams:
+		return &protocol.UserEventRequest{
+			BaseCommand: base,
+			EventType:   p.EventType,
+			Key:         p.Key,
+			Data:        p.Data,
+		}, nil
+	case nil:
+		return nil, ErrInvalidParam
+	default:
+		return nil, ErrInvalidParam
+	}
 }

@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"unsafe"
 
@@ -27,6 +28,18 @@ const (
 	stringLenSize  = 2
 	payloadLenSize = 4
 )
+
+var errUnknownRequest = errors.New("unknown request")
+
+// BaseCommand contains the shared metadata for all command requests.
+type BaseCommand struct {
+	Type      CommandType
+	SeqID     uint64 // Upstream-assigned monotonic sequence used to preserve logical command ordering.
+	CommandID string
+	UserID    uint64
+	MarketID  string
+	Timestamp int64
+}
 
 // Params is the common interface for all command parameters.
 type Params interface {
@@ -206,6 +219,18 @@ func (c *Command) SetPayload(p Params) error {
 
 // --- Specialized Params (Business Payloads) ---
 
+// PlaceOrderRequest represents a typed place-order command.
+type PlaceOrderRequest struct {
+	BaseCommand
+	OrderID     string           `json:"order_id"`
+	Side        Side             `json:"side"`
+	OrderType   OrderType        `json:"order_type"`
+	Price       udecimal.Decimal `json:"price"`
+	Size        udecimal.Decimal `json:"size"`
+	VisibleSize udecimal.Decimal `json:"visible_size,omitempty"`
+	QuoteSize   udecimal.Decimal `json:"quote_size,omitempty"`
+}
+
 type PlaceOrderParams struct {
 	OrderID     string           `json:"order_id"`
 	Side        Side             `json:"side"`
@@ -286,6 +311,12 @@ func (c *PlaceOrderParams) UnmarshalBinary(data []byte) error {
 	return err
 }
 
+// CancelOrderRequest represents a typed cancel-order command.
+type CancelOrderRequest struct {
+	BaseCommand
+	OrderID string `json:"order_id"`
+}
+
 type CancelOrderParams struct {
 	OrderID string `json:"order_id"`
 }
@@ -304,6 +335,14 @@ func (c *CancelOrderParams) UnmarshalBinary(data []byte) error {
 	var err error
 	c.OrderID, _, err = readString(data)
 	return err
+}
+
+// AmendOrderRequest represents a typed amend-order command.
+type AmendOrderRequest struct {
+	BaseCommand
+	OrderID  string           `json:"order_id"`
+	NewPrice udecimal.Decimal `json:"new_price"`
+	NewSize  udecimal.Decimal `json:"new_size"`
 }
 
 type AmendOrderParams struct {
@@ -345,6 +384,12 @@ func (c *AmendOrderParams) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
+// CreateMarketRequest represents a typed create-market command.
+type CreateMarketRequest struct {
+	BaseCommand
+	MinLotSize udecimal.Decimal `json:"min_lot_size"`
+}
+
 type CreateMarketParams struct {
 	MinLotSize udecimal.Decimal `json:"min_lot_size"`
 }
@@ -367,6 +412,12 @@ func (c *CreateMarketParams) UnmarshalBinary(data []byte) error {
 	return err
 }
 
+// SuspendMarketRequest represents a typed suspend-market command.
+type SuspendMarketRequest struct {
+	BaseCommand
+	Reason string `json:"reason"`
+}
+
 type SuspendMarketParams struct {
 	Reason string `json:"reason"`
 }
@@ -387,6 +438,11 @@ func (c *SuspendMarketParams) UnmarshalBinary(data []byte) error {
 	return err
 }
 
+// ResumeMarketRequest represents a typed resume-market command.
+type ResumeMarketRequest struct {
+	BaseCommand
+}
+
 type ResumeMarketParams struct{}
 
 func (c *ResumeMarketParams) MarshalBinary() ([]byte, error) {
@@ -399,6 +455,12 @@ func (c *ResumeMarketParams) BinarySize() int {
 
 func (c *ResumeMarketParams) UnmarshalBinary(_ []byte) error {
 	return nil
+}
+
+// UpdateConfigRequest represents a typed update-config command.
+type UpdateConfigRequest struct {
+	BaseCommand
+	MinLotSize udecimal.Decimal `json:"min_lot_size"`
 }
 
 type UpdateConfigParams struct {
@@ -421,6 +483,14 @@ func (c *UpdateConfigParams) UnmarshalBinary(data []byte) error {
 		c.MinLotSize, _ = udecimal.Parse(s)
 	}
 	return err
+}
+
+// UserEventRequest represents a typed user-event command.
+type UserEventRequest struct {
+	BaseCommand
+	EventType string `json:"event_type"`
+	Key       string `json:"key"`
+	Data      []byte `json:"data"`
 }
 
 type UserEventParams struct {
@@ -472,6 +542,24 @@ func (c *UserEventParams) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
+// MarshalRequest serializes a typed request through the current command bridge.
+func MarshalRequest(req any) ([]byte, error) {
+	cmd, err := requestToCommand(req)
+	if err != nil {
+		return nil, err
+	}
+	return MarshalCommand(cmd)
+}
+
+// UnmarshalRequest deserializes bytes into a typed request through the current command bridge.
+func UnmarshalRequest(data []byte) (any, error) {
+	cmd, err := UnmarshalCommand(data)
+	if err != nil {
+		return nil, err
+	}
+	return commandToRequest(cmd)
+}
+
 // --- Query Types ---
 
 type QueryType uint8
@@ -496,6 +584,193 @@ type GetDepthRequest struct {
 
 type GetStatsRequest struct {
 	MarketID string `json:"market_id"`
+}
+
+// requestToCommand converts a typed request into the legacy command envelope.
+func requestToCommand(req any) (*Command, error) {
+	switch r := req.(type) {
+	case *PlaceOrderRequest:
+		return &Command{
+			Type:      r.Type,
+			SeqID:     r.SeqID,
+			UserID:    r.UserID,
+			MarketID:  r.MarketID,
+			CommandID: r.CommandID,
+			Timestamp: r.Timestamp,
+			Params: &PlaceOrderParams{
+				OrderID:     r.OrderID,
+				Side:        r.Side,
+				OrderType:   r.OrderType,
+				Price:       r.Price,
+				Size:        r.Size,
+				VisibleSize: r.VisibleSize,
+				QuoteSize:   r.QuoteSize,
+			},
+		}, nil
+	case *CancelOrderRequest:
+		return &Command{
+			Type:      r.Type,
+			SeqID:     r.SeqID,
+			UserID:    r.UserID,
+			MarketID:  r.MarketID,
+			CommandID: r.CommandID,
+			Timestamp: r.Timestamp,
+			Params: &CancelOrderParams{
+				OrderID: r.OrderID,
+			},
+		}, nil
+	case *AmendOrderRequest:
+		return &Command{
+			Type:      r.Type,
+			SeqID:     r.SeqID,
+			UserID:    r.UserID,
+			MarketID:  r.MarketID,
+			CommandID: r.CommandID,
+			Timestamp: r.Timestamp,
+			Params: &AmendOrderParams{
+				OrderID:  r.OrderID,
+				NewPrice: r.NewPrice,
+				NewSize:  r.NewSize,
+			},
+		}, nil
+	case *CreateMarketRequest:
+		return &Command{
+			Type:      r.Type,
+			SeqID:     r.SeqID,
+			UserID:    r.UserID,
+			MarketID:  r.MarketID,
+			CommandID: r.CommandID,
+			Timestamp: r.Timestamp,
+			Params: &CreateMarketParams{
+				MinLotSize: r.MinLotSize,
+			},
+		}, nil
+	case *SuspendMarketRequest:
+		return &Command{
+			Type:      r.Type,
+			SeqID:     r.SeqID,
+			UserID:    r.UserID,
+			MarketID:  r.MarketID,
+			CommandID: r.CommandID,
+			Timestamp: r.Timestamp,
+			Params: &SuspendMarketParams{
+				Reason: r.Reason,
+			},
+		}, nil
+	case *ResumeMarketRequest:
+		return &Command{
+			Type:      r.Type,
+			SeqID:     r.SeqID,
+			UserID:    r.UserID,
+			MarketID:  r.MarketID,
+			CommandID: r.CommandID,
+			Timestamp: r.Timestamp,
+			Params:    &ResumeMarketParams{},
+		}, nil
+	case *UpdateConfigRequest:
+		return &Command{
+			Type:      r.Type,
+			SeqID:     r.SeqID,
+			UserID:    r.UserID,
+			MarketID:  r.MarketID,
+			CommandID: r.CommandID,
+			Timestamp: r.Timestamp,
+			Params: &UpdateConfigParams{
+				MinLotSize: r.MinLotSize,
+			},
+		}, nil
+	case *UserEventRequest:
+		return &Command{
+			Type:      r.Type,
+			SeqID:     r.SeqID,
+			UserID:    r.UserID,
+			MarketID:  r.MarketID,
+			CommandID: r.CommandID,
+			Timestamp: r.Timestamp,
+			Params: &UserEventParams{
+				EventType: r.EventType,
+				Key:       r.Key,
+				Data:      r.Data,
+			},
+		}, nil
+	default:
+		return nil, errUnknownRequest
+	}
+}
+
+// commandToRequest converts the legacy command envelope into a typed request.
+func commandToRequest(cmd *Command) (any, error) {
+	base := BaseCommand{
+		Type:      cmd.Type,
+		SeqID:     cmd.SeqID,
+		CommandID: cmd.CommandID,
+		UserID:    cmd.UserID,
+		MarketID:  cmd.MarketID,
+		Timestamp: cmd.Timestamp,
+	}
+
+	switch p := cmd.Params.(type) {
+	case *PlaceOrderParams:
+		return &PlaceOrderRequest{
+			BaseCommand: base,
+			OrderID:     p.OrderID,
+			Side:        p.Side,
+			OrderType:   p.OrderType,
+			Price:       p.Price,
+			Size:        p.Size,
+			VisibleSize: p.VisibleSize,
+			QuoteSize:   p.QuoteSize,
+		}, nil
+	case *CancelOrderParams:
+		return &CancelOrderRequest{
+			BaseCommand: base,
+			OrderID:     p.OrderID,
+		}, nil
+	case *AmendOrderParams:
+		return &AmendOrderRequest{
+			BaseCommand: base,
+			OrderID:     p.OrderID,
+			NewPrice:    p.NewPrice,
+			NewSize:     p.NewSize,
+		}, nil
+	case *CreateMarketParams:
+		return &CreateMarketRequest{
+			BaseCommand: base,
+			MinLotSize:  p.MinLotSize,
+		}, nil
+	case *SuspendMarketParams:
+		return &SuspendMarketRequest{
+			BaseCommand: base,
+			Reason:      p.Reason,
+		}, nil
+	case *ResumeMarketParams:
+		return &ResumeMarketRequest{
+			BaseCommand: base,
+		}, nil
+	case *UpdateConfigParams:
+		return &UpdateConfigRequest{
+			BaseCommand: base,
+			MinLotSize:  p.MinLotSize,
+		}, nil
+	case *UserEventParams:
+		return &UserEventRequest{
+			BaseCommand: base,
+			EventType:   p.EventType,
+			Key:         p.Key,
+			Data:        p.Data,
+		}, nil
+	case nil:
+		return &BaseCommand{
+			Type:      cmd.Type,
+			SeqID:     cmd.SeqID,
+			CommandID: cmd.CommandID,
+			UserID:    cmd.UserID,
+			MarketID:  cmd.MarketID,
+			Timestamp: cmd.Timestamp,
+		}, nil
+	default:
+		return nil, errUnknownRequest
+	}
 }
 
 func writeString(buf []byte, s string) int {

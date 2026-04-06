@@ -205,3 +205,39 @@ func TestCommand_SetAndUnmarshalPayload(t *testing.T) {
 	require.Equal(t, params.Price.String(), p.Price.String())
 
 }
+
+func TestMarshalUnmarshalRequest(t *testing.T) {
+	req := &PlaceOrderRequest{
+		BaseCommand: BaseCommand{
+			Type:      CmdPlaceOrder,
+			SeqID:     123,
+			CommandID: "cmd-456",
+			UserID:    789,
+			MarketID:  "BTC-USDT",
+			Timestamp: 1678901234,
+		},
+		OrderID:   "order-1",
+		Side:      SideBuy,
+		OrderType: OrderTypeLimit,
+		Price:     udecimal.MustFromInt64(100, 0),
+		Size:      udecimal.MustFromInt64(1, 0),
+	}
+
+	data, err := MarshalRequest(req)
+	require.NoError(t, err)
+
+	decoded, err := UnmarshalRequest(data)
+	require.NoError(t, err)
+
+	placeReq, ok := decoded.(*PlaceOrderRequest)
+	require.True(t, ok)
+	require.Equal(t, req.Type, placeReq.Type)
+	require.Equal(t, req.SeqID, placeReq.SeqID)
+	require.Equal(t, req.CommandID, placeReq.CommandID)
+	require.Equal(t, req.UserID, placeReq.UserID)
+	require.Equal(t, req.MarketID, placeReq.MarketID)
+	require.Equal(t, req.Timestamp, placeReq.Timestamp)
+	require.Equal(t, req.OrderID, placeReq.OrderID)
+	require.Equal(t, req.Price.String(), placeReq.Price.String())
+	require.Equal(t, req.Size.String(), placeReq.Size.String())
+}

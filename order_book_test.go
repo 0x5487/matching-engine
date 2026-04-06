@@ -46,16 +46,23 @@ func testPlace(
 	ts int64,
 	params *protocol.PlaceOrderParams,
 ) {
-	cmd := &protocol.Command{
-		MarketID:  book.marketID,
-		Type:      protocol.CmdPlaceOrder,
-		UserID:    userID,
-		CommandID: commandID,
-		Timestamp: ts,
-		Params:    params,
-	}
 	book.processCommand(&InputEvent{
-		Cmd: cmd,
+		Request: &protocol.PlaceOrderRequest{
+			BaseCommand: protocol.BaseCommand{
+				MarketID:  book.marketID,
+				Type:      protocol.CmdPlaceOrder,
+				UserID:    userID,
+				CommandID: commandID,
+				Timestamp: ts,
+			},
+			OrderID:     params.OrderID,
+			Side:        params.Side,
+			OrderType:   params.OrderType,
+			Price:       params.Price,
+			Size:        params.Size,
+			VisibleSize: params.VisibleSize,
+			QuoteSize:   params.QuoteSize,
+		},
 	})
 }
 
@@ -67,16 +74,17 @@ func testCancel(
 	ts int64,
 	params *protocol.CancelOrderParams,
 ) {
-	cmd := &protocol.Command{
-		MarketID:  book.marketID,
-		Type:      protocol.CmdCancelOrder,
-		UserID:    userID,
-		CommandID: commandID,
-		Timestamp: ts,
-		Params:    params,
-	}
 	book.processCommand(&InputEvent{
-		Cmd: cmd,
+		Request: &protocol.CancelOrderRequest{
+			BaseCommand: protocol.BaseCommand{
+				MarketID:  book.marketID,
+				Type:      protocol.CmdCancelOrder,
+				UserID:    userID,
+				CommandID: commandID,
+				Timestamp: ts,
+			},
+			OrderID: params.OrderID,
+		},
 	})
 }
 
@@ -88,16 +96,19 @@ func testAmend(
 	ts int64,
 	params *protocol.AmendOrderParams,
 ) {
-	cmd := &protocol.Command{
-		MarketID:  book.marketID,
-		Type:      protocol.CmdAmendOrder,
-		UserID:    userID,
-		CommandID: commandID,
-		Timestamp: ts,
-		Params:    params,
-	}
 	book.processCommand(&InputEvent{
-		Cmd: cmd,
+		Request: &protocol.AmendOrderRequest{
+			BaseCommand: protocol.BaseCommand{
+				MarketID:  book.marketID,
+				Type:      protocol.CmdAmendOrder,
+				UserID:    userID,
+				CommandID: commandID,
+				Timestamp: ts,
+			},
+			OrderID:  params.OrderID,
+			NewPrice: params.NewPrice,
+			NewSize:  params.NewSize,
+		},
 	})
 }
 
@@ -135,14 +146,20 @@ func TestLimitOrders(t *testing.T) {
 			Size:      udecimal.MustFromInt64(10, 0),
 		}
 		testOrderBook.processCommand(&InputEvent{
-			Cmd: &protocol.Command{
-				MarketID:  testOrderBook.marketID,
-				CommandID: "cmd-buyAll",
-				UserID:    300,
-				Timestamp: 1,
-				SeqID:     100,
-				Type:      protocol.CmdPlaceOrder,
-				Params:    params,
+			Request: &protocol.PlaceOrderRequest{
+				BaseCommand: protocol.BaseCommand{
+					MarketID:  testOrderBook.marketID,
+					CommandID: "cmd-buyAll",
+					UserID:    300,
+					Timestamp: 1,
+					SeqID:     100,
+					Type:      protocol.CmdPlaceOrder,
+				},
+				OrderID:   params.OrderID,
+				OrderType: params.OrderType,
+				Side:      params.Side,
+				Price:     params.Price,
+				Size:      params.Size,
 			},
 		})
 
@@ -282,7 +299,6 @@ func TestMarketOrder(t *testing.T) {
 			Price:     udecimal.Zero,
 			Size:      udecimal.MustFromInt64(10, 0),
 			QuoteSize: udecimal.Zero,
-
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -301,7 +317,6 @@ func TestMarketOrder(t *testing.T) {
 			Price:     udecimal.Zero,
 			Size:      udecimal.MustFromInt64(10, 0),
 			QuoteSize: udecimal.Zero,
-
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -330,7 +345,6 @@ func TestMarketOrder(t *testing.T) {
 			Price:     udecimal.Zero,
 			Size:      udecimal.MustFromInt64(10, 0),
 			QuoteSize: udecimal.Zero,
-
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -355,7 +369,6 @@ func TestMarketOrder(t *testing.T) {
 			Price:     udecimal.Zero,
 			Size:      udecimal.MustFromInt64(10, 0),
 			QuoteSize: udecimal.Zero,
-
 		})
 
 		assert.Equal(t, 1, publishTrader.Count())
@@ -1277,13 +1290,12 @@ func TestOrderValidation(t *testing.T) {
 		_, _ = (payload).MarshalBinary()
 
 		book.processCommand(&InputEvent{
-			Cmd: &protocol.Command{
+			Request: &protocol.BaseCommand{
 				MarketID:  "BTC-USDT",
 				UserID:    5,
 				CommandID: "cmd-bad-place",
 				Timestamp: 999,
 				Type:      protocol.CmdPlaceOrder,
-				Params:    nil,
 			},
 		})
 
