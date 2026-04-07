@@ -70,33 +70,28 @@ type BaseCommand struct {
 	Timestamp int64
 }
 
+// CommandRequest is the interface that all typed command requests must implement.
+type CommandRequest interface {
+	Base() BaseCommand
+}
+
 // GetRequestBase returns the shared metadata for a typed request and a boolean indicating success.
 func GetRequestBase(req any) (BaseCommand, bool) {
+	if cr, ok := req.(CommandRequest); ok {
+		return cr.Base(), true
+	}
+	// Handle BaseCommand directly (used in tests)
 	switch r := req.(type) {
-	case *PlaceOrderRequest:
-		return r.BaseCommand, true
-	case *CancelOrderRequest:
-		return r.BaseCommand, true
-	case *AmendOrderRequest:
-		return r.BaseCommand, true
-	case *CreateMarketRequest:
-		return r.BaseCommand, true
-	case *SuspendMarketRequest:
-		return r.BaseCommand, true
-	case *ResumeMarketRequest:
-		return r.BaseCommand, true
-	case *UpdateConfigRequest:
-		return r.BaseCommand, true
-	case *UserEventRequest:
-		return r.BaseCommand, true
 	case *BaseCommand:
 		return *r, true
 	case BaseCommand:
 		return r, true
-	default:
-		return BaseCommand{}, false
 	}
+	return BaseCommand{}, false
 }
+
+// Base returns the embedded BaseCommand (implements CommandRequest).
+func (r *BaseCommand) Base() BaseCommand { return *r }
 
 // --- Specialized Requests (Typed Payloads) ---
 
@@ -113,12 +108,18 @@ type PlaceOrderRequest struct {
 	QuoteSize   udecimal.Decimal `json:"quote_size"`
 }
 
+// Base returns the embedded BaseCommand.
+func (r *PlaceOrderRequest) Base() BaseCommand { return r.BaseCommand }
+
 // CancelOrderRequest represents a typed cancel-order command.
 type CancelOrderRequest struct {
 	BaseCommand
 
 	OrderID string `json:"order_id"`
 }
+
+// Base returns the embedded BaseCommand.
+func (r *CancelOrderRequest) Base() BaseCommand { return r.BaseCommand }
 
 // AmendOrderRequest represents a typed amend-order command.
 type AmendOrderRequest struct {
@@ -129,12 +130,18 @@ type AmendOrderRequest struct {
 	NewSize  udecimal.Decimal `json:"new_size"`
 }
 
+// Base returns the embedded BaseCommand.
+func (r *AmendOrderRequest) Base() BaseCommand { return r.BaseCommand }
+
 // CreateMarketRequest represents a typed create-market command.
 type CreateMarketRequest struct {
 	BaseCommand
 
 	MinLotSize udecimal.Decimal `json:"min_lot_size"`
 }
+
+// Base returns the embedded BaseCommand.
+func (r *CreateMarketRequest) Base() BaseCommand { return r.BaseCommand }
 
 // SuspendMarketRequest represents a typed suspend-market command.
 type SuspendMarketRequest struct {
@@ -143,10 +150,16 @@ type SuspendMarketRequest struct {
 	Reason string `json:"reason"`
 }
 
+// Base returns the embedded BaseCommand.
+func (r *SuspendMarketRequest) Base() BaseCommand { return r.BaseCommand }
+
 // ResumeMarketRequest represents a typed resume-market command.
 type ResumeMarketRequest struct {
 	BaseCommand
 }
+
+// Base returns the embedded BaseCommand.
+func (r *ResumeMarketRequest) Base() BaseCommand { return r.BaseCommand }
 
 // UpdateConfigRequest represents a typed update-config command.
 type UpdateConfigRequest struct {
@@ -154,6 +167,9 @@ type UpdateConfigRequest struct {
 
 	MinLotSize udecimal.Decimal `json:"min_lot_size"`
 }
+
+// Base returns the embedded BaseCommand.
+func (r *UpdateConfigRequest) Base() BaseCommand { return r.BaseCommand }
 
 // UserEventRequest represents a typed user-event command.
 type UserEventRequest struct {
@@ -163,6 +179,9 @@ type UserEventRequest struct {
 	Key       string `json:"key"`
 	Data      []byte `json:"data"`
 }
+
+// Base returns the embedded BaseCommand.
+func (r *UserEventRequest) Base() BaseCommand { return r.BaseCommand }
 
 // MarshalRequest serializes a typed request into binary format.
 // It follows the wire format: version(1), user_id(8), type(1), seq_id(8), timestamp(8), market_id(string), command_id(string), payload_len(4), payload(n).
