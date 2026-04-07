@@ -1,6 +1,6 @@
 # Matching Engine SDK
 
-A high-performance, in-memory order matching engine written in Go. Designed for crypto exchanges, trading simulations, and financial systems requiring precise and fast order execution.
+A high-performance, in-memory matching engine SDK written in Go. Designed for crypto exchanges, trading simulations, and financial systems requiring precise and fast order execution.
 
 ## 🚀 Features
 
@@ -56,17 +56,18 @@ func main() {
 	}()
 
 	// 4. Create a Market
-	createCmd := &protocol.Command{
-		CommandID: "create-btc-usdt",
-		MarketID:  "BTC-USDT",
-		UserID:    9001,
-		Timestamp: time.Now().UnixNano(),
+	createReq := &protocol.CreateMarketRequest{
+		BaseCommand: protocol.BaseCommand{
+			CommandID: "create-btc-usdt",
+			MarketID:  "BTC-USDT",
+			UserID:    9001,
+			Timestamp: time.Now().UnixNano(),
+		},
+		MinLotSize: udecimal.MustFromInt64(1, 8), // 0.00000001
 	}
-	_ = createCmd.SetPayload(&protocol.CreateMarketParams{
-		MinLotSize: "0.00000001",
-	})
+
 	// Management commands return a Future for synchronous-like waiting.
-	future, err := engine.Submit(ctx, createCmd)
+	future, err := engine.CreateMarket(ctx, createReq)
 	if err != nil {
 		panic(err)
 	}
@@ -77,38 +78,38 @@ func main() {
 	}
 
 	// 5. Place a Sell Limit Order
-	sellCmd := &protocol.Command{
-		CommandID: "sell-1-cmd",
-		MarketID:  "BTC-USDT",
-		UserID:    1001,
-		Timestamp: time.Now().UnixNano(),
-	}
-	_ = sellCmd.SetPayload(&protocol.PlaceOrderParams{
+	sellReq := &protocol.PlaceOrderRequest{
+		BaseCommand: protocol.BaseCommand{
+			CommandID: "sell-1-cmd",
+			MarketID:  "BTC-USDT",
+			UserID:    1001,
+			Timestamp: time.Now().UnixNano(),
+		},
 		OrderID:   "sell-1",
 		OrderType: protocol.OrderTypeLimit,
 		Side:      protocol.SideSell,
-		Price:     udecimal.MustFromInt64(50000, 0).String(), // 50000
-		Size:      udecimal.MustFromInt64(1, 0).String(),     // 1.0
-	})
-	if err := engine.SubmitAsync(ctx, sellCmd); err != nil {
+		Price:     udecimal.MustFromInt64(50000, 0), // 50000
+		Size:      udecimal.MustFromInt64(1, 0),     // 1.0
+	}
+	if err := engine.PlaceOrderAsync(ctx, sellReq); err != nil {
 		fmt.Printf("Error placing sell order: %v\n", err)
 	}
 
 	// 6. Place a Buy Limit Order (Matches immediately)
-	buyCmd := &protocol.Command{
-		CommandID: "buy-1-cmd",
-		MarketID:  "BTC-USDT",
-		UserID:    1002,
-		Timestamp: time.Now().UnixNano(),
-	}
-	_ = buyCmd.SetPayload(&protocol.PlaceOrderParams{
+	buyReq := &protocol.PlaceOrderRequest{
+		BaseCommand: protocol.BaseCommand{
+			CommandID: "buy-1-cmd",
+			MarketID:  "BTC-USDT",
+			UserID:    1002,
+			Timestamp: time.Now().UnixNano(),
+		},
 		OrderID:   "buy-1",
 		OrderType: protocol.OrderTypeLimit,
 		Side:      protocol.SideBuy,
-		Price:     udecimal.MustFromInt64(50000, 0).String(), // 50000
-		Size:      udecimal.MustFromInt64(1, 0).String(),     // 1.0
-	})
-	if err := engine.SubmitAsync(ctx, buyCmd); err != nil {
+		Price:     udecimal.MustFromInt64(50000, 0), // 50000
+		Size:      udecimal.MustFromInt64(1, 0),     // 1.0
+	}
+	if err := engine.PlaceOrderAsync(ctx, buyReq); err != nil {
 		fmt.Printf("Error placing buy order: %v\n", err)
 	}
 
@@ -130,56 +131,118 @@ func main() {
 }
 ```
 
-### Command Semantics
+### Wire Transport (MQ / Cross-Process)
 
-- `PlaceOrder`, `CancelOrder`, `AmendOrder`, and management commands enqueue work into the engine event loop. A returned `error` means enqueue/serialization failure, not business rejection.
-- Every command must carry an upstream-assigned non-empty `CommandID`. Engine helpers reject empty command IDs before enqueue.
-- Every state-changing command must carry an upstream-assigned logical `Timestamp`. `Timestamp <= 0` is rejected as `invalid_payload`. For engine helper methods such as `CreateMarket`, `SuspendMarket`, `ResumeMarket`, `UpdateConfig`, and `SendUserEvent`, pass the timestamp explicitly from your Gateway / Sequencer / OMS.
+`MarshalRequest` and `UnmarshalRequest` serialize typed requests to and from a compact binary format for use in message queues and cross-process communication.
+
+```go
+// Serialize a request for MQ publishing.
+// MarshalRequest derives the wire CommandType from the concrete Go type,
+// so cross-process dispatch is always correct.
+req := &protocol.PlaceOrderRequest{
+    BaseCommand: protocol.BaseCommand{
+        CommandID: "sell-1-cmd",
+        MarketID:  "BTC-USDT",
+        UserID:    1001,
+        Timestamp: time.Now().UnixNano(),
+    },
+    OrderID:   "sell-1",
+    OrderType: protocol.OrderTypeLimit,
+    Side:      protocol.SideSell,
+    Price:     udecimal.MustFromInt64(50000, 0),
+    Size:      udecimal.MustFromInt64(1, 0),
+}
+
+data, err := protocol.MarshalRequest(req)
+// ... publish data to MQ ...
+
+// On the consumer side:
+decoded, err := protocol.UnmarshalRequest(data)
+// decoded is typed as any; use GetRequestBase or a type switch to dispatch.
+```
+
+### Request Semantics
+
+- `PlaceOrderAsync`, `CancelOrderAsync`, `AmendOrderAsync`, and management commands enqueue work into the engine event loop. A returned `error` means enqueue failure, not business rejection.
+- Every request must carry an upstream-assigned non-empty `CommandID`. Engine helpers reject empty command IDs before enqueue.
+- Every state-changing request must carry an upstream-assigned logical `Timestamp`. `Timestamp <= 0` is rejected as `invalid_payload`.
 - Business-level failures are emitted as `OrderBookLog` entries with `Type == protocol.LogTypeReject`.
-- Commands sent to a missing market generate a reject event with `RejectReasonMarketNotFound`.
-- The `Query()` method (e.g., for `protocol.GetStatsRequest` or `protocol.GetDepthRequest`) returns `ErrNotFound` immediately when the market does not exist.
+- Requests sent to a missing market generate a reject event with `RejectReasonMarketNotFound`.
+- Unknown query types will return `ErrUnknownQuery` through the `Future.Wait()` call.
+- The `Query()` method uses a `*protocol.Query` request and returns `ErrNotFound` immediately when the market does not exist.
+
+### Querying Market State
+
+Query the engine for read-only state such as order book depth or statistics:
+
+```go
+// 1. Query Market Statistics
+statsQuery := &protocol.Query{
+	Type:     protocol.QueryGetStats,
+	MarketID: "BTC-USDT",
+}
+future, err := engine.Query(ctx, statsQuery)
+res, err := future.Wait(ctx)
+if err == nil {
+	stats := res.(*protocol.GetStatsResponse)
+	fmt.Printf("Bids: %d, Asks: %d\n", stats.BidOrderCount, stats.AskOrderCount)
+}
+
+// 2. Query Order Book Depth
+depthQuery := &protocol.Query{
+	Type:     protocol.QueryGetDepth,
+	MarketID: "BTC-USDT",
+	Payload:  &protocol.GetDepthRequest{Limit: 10},
+}
+future, err = engine.Query(ctx, depthQuery)
+res, err = future.Wait(ctx)
+if err == nil {
+	depth := res.(*protocol.GetDepthResponse)
+	fmt.Printf("Top Bid: %s\n", depth.Bids[0].Price)
+}
+```
 
 ### Management Commands
 
-The engine supports dynamic market management:
+The engine supports dynamic market management through typed facade methods:
 
 ```go
 // Suspend a market (rejects new Place/Amend orders)
-suspendCmd := &protocol.Command{
-	CommandID: "suspend-btc-usdt",
-	MarketID:  "BTC-USDT",
-	UserID:    9001,
-	Timestamp: time.Now().UnixNano(),
-}
-_ = suspendCmd.SetPayload(&protocol.SuspendMarketParams{
+suspendReq := &protocol.SuspendMarketRequest{
+	BaseCommand: protocol.BaseCommand{
+		CommandID: "suspend-btc-usdt",
+		MarketID:  "BTC-USDT",
+		UserID:    9001,
+		Timestamp: time.Now().UnixNano(),
+	},
 	Reason: "maintenance",
-})
-future, err := engine.Submit(ctx, suspendCmd)
+}
+future, err := engine.SuspendMarket(ctx, suspendReq)
 _, err = future.Wait(ctx)
 
 // Resume a market
-resumeCmd := &protocol.Command{
-	CommandID: "resume-btc-usdt",
-	MarketID:  "BTC-USDT",
-	UserID:    9001,
-	Timestamp: time.Now().UnixNano(),
+resumeReq := &protocol.ResumeMarketRequest{
+	BaseCommand: protocol.BaseCommand{
+		CommandID: "resume-btc-usdt",
+		MarketID:  "BTC-USDT",
+		UserID:    9001,
+		Timestamp: time.Now().UnixNano(),
+	},
 }
-_ = resumeCmd.SetPayload(&protocol.ResumeMarketParams{})
-future, err = engine.Submit(ctx, resumeCmd)
+future, err = engine.ResumeMarket(ctx, resumeReq)
 _, err = future.Wait(ctx)
 
 // Update market configuration (e.g. MinLotSize)
-newLotSize := "0.01"
-updateCmd := &protocol.Command{
-	CommandID: "update-btc-usdt-lot",
-	MarketID:  "BTC-USDT",
-	UserID:    9001,
-	Timestamp: time.Now().UnixNano(),
+updateReq := &protocol.UpdateConfigRequest{
+	BaseCommand: protocol.BaseCommand{
+		CommandID: "update-btc-usdt-lot",
+		MarketID:  "BTC-USDT",
+		UserID:    9001,
+		Timestamp: time.Now().UnixNano(),
+	},
+	MinLotSize: udecimal.MustFromInt64(1, 2), // 0.01
 }
-_ = updateCmd.SetPayload(&protocol.UpdateConfigParams{
-	MinLotSize: newLotSize,
-})
-future, err = engine.Submit(ctx, updateCmd)
+future, err = engine.UpdateConfig(ctx, updateReq)
 _, err = future.Wait(ctx)
 ```
 
@@ -194,7 +257,7 @@ Successful management commands are emitted as `LogTypeAdmin`. Invalid management
 | Type | Description |
 |------|-------------|
 | `Limit` | Buy/sell at a specific price or better |
-| `Market` | Execute immediately at best available price. Supports `Size` (base currency) or `QuoteSize` (quote currency). |
+| `Market` | Execute immediately at best available price using either `Size` or `QuoteSize`. |
 | `IOC` | Fill immediately, cancel unfilled portion. |
 | `FOK` | Fill entirely immediately or cancel completely. |
 | `PostOnly` | Add to book as maker only, reject if would match immediately. |
@@ -206,9 +269,8 @@ Implement `Publisher` interface to handle order book events:
 ```go
 type MyHandler struct{}
 
-func (h *MyHandler) Publish(logs []*match.OrderBookLog) {
+func (h *MyHandler) Publish(logs []*protocol.OrderBookLog) {
 	for _, log := range logs {
-		// If you need local ingest / publish time, add it here instead of relying on engine-generated fields.
 		if log.Type == protocol.LogTypeUser {
 			fmt.Printf("User Event: %s, Data: %s\n", log.EventType, string(log.Data))
 		} else if log.Type == protocol.LogTypeAdmin {
@@ -222,25 +284,22 @@ func (h *MyHandler) Publish(logs []*match.OrderBookLog) {
 
 ### Generic User Events (Extension Protocol)
 
-Inject custom events into the matching engine's log stream. These events are processed sequentially with trades, ensuring deterministic ordering for valid use cases like **L1 Block Boundaries**, **Audit Checkpoints**, or **Oracle Updates**.
+Inject custom events into the matching engine's log stream. 
 
 ```go
-// Example: Sending an End-Of-Block signal from an L1 Blockchain
-blockHash := []byte("0x123abc...")
-userEventCmd := &protocol.Command{
-	CommandID: "block-100-event",
-	UserID:    999,
-	Timestamp: time.Now().UnixNano(),
-}
-_ = userEventCmd.SetPayload(&protocol.UserEventParams{
+// Example: Sending an End-Of-Block signal
+userEventReq := &protocol.UserEventRequest{
+	BaseCommand: protocol.BaseCommand{
+		CommandID: "block-100-event",
+		UserID:    999,
+		Timestamp: time.Now().UnixNano(),
+	},
 	EventType: "EndOfBlock",
 	Key:       "block-100",
-	Data:      blockHash,
-})
-err := engine.SubmitAsync(ctx, userEventCmd)
+	Data:      []byte("0x123abc..."),
+}
+err := engine.SendUserEvent(ctx, userEventReq)
 ```
-
-The event will appear in the `PublishLog` stream as `LogTypeUser` with your custom data payload. Malformed user-event payloads are emitted as `LogTypeReject` with `RejectReasonInvalidPayload`.
 
 ### Snapshot and Restore
 

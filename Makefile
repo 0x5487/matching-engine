@@ -1,10 +1,10 @@
 .PHONY: test
 
 bench:
-	go test -v -run=none -benchmem -bench . -count 1
+	go test -run=none -benchmem -bench "^(BenchmarkCrossing_EndToEnd_Single|BenchmarkCrossing_EndToEnd_Batch10|BenchmarkProductionWarmBook_EndToEnd_Single|BenchmarkProductionWarmBook_EndToEnd_Batch10)$$" -count 1 .
 
 lint:
-	go tool golangci-lint run ./... -v
+	go tool golangci-lint run ./...
 
 test:
 	go test -race -coverprofile=cover.out -covermode=atomic ./...

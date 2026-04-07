@@ -1,9 +1,9 @@
-# Design Specification: Async Command Synchronization (Future Pattern)
+# Design Specification: Async Request Synchronization (Future Pattern)
 
 ## 1. Background & Objective
-Currently, management commands in the `MatchingEngine` (e.g., `CreateMarket`) follow a "fire-and-forget" asynchronous model. This forces developers to manually poll the state (e.g., via `GetStats`) to confirm when a resource is ready, leading to a suboptimal developer experience.
+Management requests in the `MatchingEngine` (e.g., `CreateMarket`) are executed asynchronously on the engine event loop. Without a completion handle, developers would need to manually poll the state (e.g., via `QueryGetStats`) to confirm when a resource is ready, leading to a suboptimal developer experience.
 
-This design introduces the **Future Pattern** to provide a synchronous-like experience for waiting on command execution results while preserving the high-performance asynchronous nature of the underlying Actor model.
+This design introduces the **Future Pattern** to provide a synchronous-like experience for waiting on request execution results while preserving the high-performance asynchronous nature of the underlying Actor model.
 
 ## 2. Core Architecture
 
@@ -25,7 +25,7 @@ type Future[T any] struct {
 
 ### 2.2 Error Classification
 - **Submission Error (Enqueue Error)**: If the RingBuffer is full or the engine is shut down, `CreateMarket` returns an error immediately, and the `Future` object is `nil`.
-- **Execution Error (Business Error)**: The command entered the queue successfully but failed during execution (e.g., `MarketAlreadyExists`). This type of error is returned via `future.Wait()`.
+- **Execution Error (Business Error)**: The request entered the queue successfully but failed during execution (e.g., `MarketAlreadyExists`). This type of error is returned via `future.Wait()`.
 
 ## 3. Implementation Details
 
@@ -44,8 +44,16 @@ Modify `MatchingEngine.processCommand` and specific handlers (e.g., `handleCreat
 ## 4. Usage Example (Expected README Improvement)
 
 ```go
-// 1. Submit the create market command
-future, err := engine.CreateMarket(ctx, "cmd-1", 1001, "BTC-USDT", "0.01", time.Now().UnixNano())
+// 1. Submit the create-market request
+future, err := engine.CreateMarket(ctx, &protocol.CreateMarketRequest{
+    BaseCommand: protocol.BaseCommand{
+        CommandID: "cmd-1",
+        UserID:    1001,
+        MarketID:  "BTC-USDT",
+        Timestamp: time.Now().UnixNano(),
+    },
+    MinLotSize: udecimal.MustFromInt64(1, 2), // 0.01
+})
 if err != nil {
     panic(err) // Submission failed (e.g., queue full)
 }
@@ -61,7 +69,8 @@ if _, err := future.Wait(ctx); err != nil {
 ## 5. Extensibility
 While the initial focus is on `CreateMarket`, the generic `Future[T]` design can easily be extended to other management commands:
 - `SuspendMarket` -> `Future[bool]`
-- `UpdateConfig` -> `Future[ConfigSnapshot]`
+- `ResumeMarket` -> `Future[bool]`
+- `UpdateConfig` -> `Future[bool]`
 
 ## 6. Testing Strategy
 - **Unit Tests**: Validate `Wait()` behavior under normal execution, timeout, and context cancellation.

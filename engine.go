@@ -66,90 +66,133 @@ func (h *engineEventHandler) OnEvent(ev *InputEvent) {
 	h.engine.onEvent(ev)
 }
 
-// Submit sends a command to the engine and returns a Future for the result.
-func (engine *MatchingEngine) Submit(
+// CreateMarket enqueues a typed create-market request and returns a future for completion.
+func (engine *MatchingEngine) CreateMarket(
 	ctx context.Context,
-	cmd *protocol.Command,
-) (*Future[any], error) {
-	if ctx == nil || cmd == nil {
-		return nil, ErrInvalidParam
-	}
-	if err := requireCommandID(cmd.CommandID); err != nil {
+	req *protocol.CreateMarketRequest,
+) (*Future[bool], error) {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
 		return nil, err
 	}
-	if engine.isShutdown.Load() {
-		return nil, ErrShutdown
-	}
-
 	respChan := engine.acquireResponseChannel()
-
-	strategy := YieldingIdleStrategy{}
-	for {
-		seq, ev := engine.ring.TryClaim()
-		if seq != -1 {
-			ev.Cmd = cmd
-			ev.Query = nil
-			ev.Resp = respChan
-
-			engine.ring.Commit(seq)
-			break
-		}
-
-		if engine.isShutdown.Load() {
-			engine.releaseResponseChannel(respChan)
-			return nil, ErrShutdown
-		}
-
-		if err := ctx.Err(); err != nil {
-			engine.releaseResponseChannel(respChan)
-			return nil, err
-		}
-
-		strategy.Idle()
+	if err := engine.enqueue(ctx, req, nil, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
 	}
-
-	return &Future[any]{
+	return &Future[bool]{
 		engine:   engine,
 		respChan: respChan,
 	}, nil
 }
 
-// SubmitAsync sends a command to the engine without waiting for a result.
-func (engine *MatchingEngine) SubmitAsync(ctx context.Context, cmd *protocol.Command) error {
-	if ctx == nil || cmd == nil {
-		return ErrInvalidParam
+// SuspendMarket enqueues a typed suspend-market request and returns a future for completion.
+func (engine *MatchingEngine) SuspendMarket(
+	ctx context.Context,
+	req *protocol.SuspendMarketRequest,
+) (*Future[bool], error) {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
+		return nil, err
 	}
-	if err := requireCommandID(cmd.CommandID); err != nil {
+	respChan := engine.acquireResponseChannel()
+	if err := engine.enqueue(ctx, req, nil, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+	return &Future[bool]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
+}
+
+// ResumeMarket enqueues a typed resume-market request and returns a future for completion.
+func (engine *MatchingEngine) ResumeMarket(
+	ctx context.Context,
+	req *protocol.ResumeMarketRequest,
+) (*Future[bool], error) {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
+		return nil, err
+	}
+	respChan := engine.acquireResponseChannel()
+	if err := engine.enqueue(ctx, req, nil, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+	return &Future[bool]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
+}
+
+// UpdateConfig enqueues a typed update-config request and returns a future for completion.
+func (engine *MatchingEngine) UpdateConfig(
+	ctx context.Context,
+	req *protocol.UpdateConfigRequest,
+) (*Future[bool], error) {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
+		return nil, err
+	}
+	respChan := engine.acquireResponseChannel()
+	if err := engine.enqueue(ctx, req, nil, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+	return &Future[bool]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
+}
+
+// PlaceOrderAsync enqueues a typed place-order request without waiting for execution.
+func (engine *MatchingEngine) PlaceOrderAsync(ctx context.Context, req *protocol.PlaceOrderRequest) error {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
 		return err
 	}
+	return engine.enqueue(ctx, req, nil, nil)
+}
 
-	if engine.isShutdown.Load() {
-		return ErrShutdown
+// PlaceOrderBatchAsync enqueues a batch of typed place-order requests without waiting for execution.
+func (engine *MatchingEngine) PlaceOrderBatchAsync(
+	ctx context.Context,
+	reqs []*protocol.PlaceOrderRequest,
+) error {
+	if len(reqs) == 0 {
+		return nil
 	}
-
-	strategy := YieldingIdleStrategy{}
-	for {
-		// All commands go through the shared RingBuffer
-		seq, ev := engine.ring.TryClaim()
-		if seq != -1 {
-			ev.Cmd = cmd
-			ev.Query = nil
-			ev.Resp = nil
-
-			engine.ring.Commit(seq)
-			return nil
-		}
-
-		if engine.isShutdown.Load() {
-			return ErrShutdown
-		}
-
-		if err := ctx.Err(); err != nil {
+	if ctx == nil {
+		return ErrInvalidParam
+	}
+	requests := make([]any, 0, len(reqs))
+	for _, req := range reqs {
+		if err := engine.validateTypedRequest(ctx, req); err != nil {
 			return err
 		}
-
-		strategy.Idle()
+		requests = append(requests, req)
 	}
+	return engine.enqueueBatch(ctx, requests)
+}
+
+// CancelOrderAsync enqueues a typed cancel-order request without waiting for execution.
+func (engine *MatchingEngine) CancelOrderAsync(ctx context.Context, req *protocol.CancelOrderRequest) error {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
+		return err
+	}
+	return engine.enqueue(ctx, req, nil, nil)
+}
+
+// AmendOrderAsync enqueues a typed amend-order request without waiting for execution.
+func (engine *MatchingEngine) AmendOrderAsync(ctx context.Context, req *protocol.AmendOrderRequest) error {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
+		return err
+	}
+	return engine.enqueue(ctx, req, nil, nil)
+}
+
+// SendUserEvent enqueues a typed user event request without waiting for execution.
+func (engine *MatchingEngine) SendUserEvent(ctx context.Context, req *protocol.UserEventRequest) error {
+	if err := engine.validateTypedRequest(ctx, req); err != nil {
+		return err
+	}
+	return engine.enqueue(ctx, req, nil, nil)
 }
 
 // Run starts the engine's event loop. This is a blocking call.
@@ -168,124 +211,51 @@ func (engine *MatchingEngine) Run() error {
 	return nil
 }
 
-// onEvent implements EventHandler[InputEvent] for the Engine's shared RingBuffer.
-// It routes events to the appropriate OrderBook based on MarketID.
-
-func requireCommandID(commandID string) error {
-	if commandID == "" {
-		return ErrInvalidParam
-	}
-	return nil
-}
-
-// SubmitAsyncBatch sends a batch of commands to the engine without waiting for results.
-// This is the fastest way to insert multiple commands (e.g., placing/canceling multiple orders)
-// into the queue atomically. It guarantees "all or nothing" semantics: if any command
-// fails validation, an error is returned immediately and NOTHING is inserted into the queue.
-func (engine *MatchingEngine) SubmitAsyncBatch(
+// GetDepth executes a read-only depth query against the matching engine.
+func (engine *MatchingEngine) GetDepth(
 	ctx context.Context,
-	cmds []*protocol.Command,
-) error {
-	if len(cmds) == 0 {
-		return nil
+	query *protocol.GetDepthQuery,
+) (*Future[*protocol.GetDepthResponse], error) {
+	if query == nil {
+		return nil, ErrInvalidParam
 	}
 
-	if ctx == nil {
-		return ErrInvalidParam
-	}
-
-	for _, cmd := range cmds {
-		if cmd == nil {
-			return ErrInvalidParam
-		}
-		if err := requireCommandID(cmd.CommandID); err != nil {
-			return err
-		}
-	}
-
-	if engine.isShutdown.Load() {
-		return ErrShutdown
-	}
-
-	n := int64(len(cmds))
-
-	// Handle case where batch size exceeds ring buffer capacity limit
-	if n > engine.ring.capacity {
-		// Fallback to individual enqueues if batch is larger than capacity
-		for _, cmd := range cmds {
-			if err := engine.SubmitAsync(ctx, cmd); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	strategy := YieldingIdleStrategy{}
-	for {
-		startSeq, endSeq := engine.ring.TryClaimN(n)
-		if startSeq != -1 {
-			for i, cmd := range cmds {
-				seq := startSeq + int64(i)
-				slot := &engine.ring.buffer[seq&engine.ring.bufferMask]
-				slot.Cmd = cmd
-				slot.Query = nil
-				slot.Resp = nil
-			}
-
-			engine.ring.CommitN(startSeq, endSeq)
-			return nil
-		}
-
-		if engine.isShutdown.Load() {
-			return ErrShutdown
-		}
-
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		strategy.Idle()
-	}
-}
-
-// Query executes a read-only request against the matching engine.
-// Supported requests include *protocol.GetDepthRequest and *protocol.GetStatsRequest.
-func (engine *MatchingEngine) Query(
-	ctx context.Context,
-	req any,
-) (*Future[any], error) {
 	if engine.isShutdown.Load() {
 		return nil, ErrShutdown
 	}
 
 	respChan := engine.acquireResponseChannel()
-
-	strategy := YieldingIdleStrategy{}
-	for {
-		seq, ev := engine.ring.TryClaim()
-		if seq != -1 {
-			ev.Cmd = nil
-			ev.Query = req
-			ev.Resp = respChan
-
-			engine.ring.Commit(seq)
-			break
-		}
-
-		if engine.isShutdown.Load() {
-			engine.releaseResponseChannel(respChan)
-			return nil, ErrShutdown
-		}
-
-		if err := ctx.Err(); err != nil {
-			engine.releaseResponseChannel(respChan)
-			return nil, err
-		}
-
-		strategy.Idle()
+	if err := engine.enqueue(ctx, nil, query, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
 	}
 
-	return &Future[any]{
+	return &Future[*protocol.GetDepthResponse]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
+}
+
+// GetStats executes a read-only statistics query against the matching engine.
+func (engine *MatchingEngine) GetStats(
+	ctx context.Context,
+	query *protocol.GetStatsQuery,
+) (*Future[*protocol.GetStatsResponse], error) {
+	if query == nil {
+		return nil, ErrInvalidParam
+	}
+
+	if engine.isShutdown.Load() {
+		return nil, ErrShutdown
+	}
+
+	respChan := engine.acquireResponseChannel()
+	if err := engine.enqueue(ctx, nil, query, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+
+	return &Future[*protocol.GetStatsResponse]{
 		engine:   engine,
 		respChan: respChan,
 	}, nil
@@ -305,6 +275,8 @@ type snapshotResult struct {
 	err  error
 }
 
+type snapshotQuery struct{}
+
 // TakeSnapshot captures a consistent snapshot of all order books and writes them to the specified directory.
 // It generates two files: `snapshot.bin` (binary data) and `metadata.json` (metadata).
 // Returns the metadata object or an error.
@@ -316,39 +288,13 @@ func (engine *MatchingEngine) TakeSnapshot(
 		return nil, ErrShutdown
 	}
 
-	// Request snapshots from all OrderBooks through the RingBuffer
-	// This ensures snapshots are taken on the consumer goroutine (no race conditions)
 	respChan := engine.acquireResponseChannel()
-	var success bool
-	defer func() {
-		if success {
-			engine.releaseResponseChannel(respChan)
-		}
-	}()
+	defer engine.releaseResponseChannel(respChan)
 
-	strategy := YieldingIdleStrategy{}
-	for {
-		seq, ev := engine.ring.TryClaim()
-		if seq != -1 {
-			ev.Cmd = nil
-			ev.Query = &engineSnapshotQuery{}
-			ev.Resp = respChan
+	query := &snapshotQuery{}
 
-			engine.ring.Commit(seq)
-			break
-		}
-
-		if engine.isShutdown.Load() {
-			engine.releaseResponseChannel(respChan)
-			return nil, ErrShutdown
-		}
-
-		if err := ctx.Err(); err != nil {
-			engine.releaseResponseChannel(respChan)
-			return nil, err
-		}
-
-		strategy.Idle()
+	if err := engine.enqueue(ctx, nil, query, respChan); err != nil {
+		return nil, err
 	}
 
 	var results []snapshotResult
@@ -359,25 +305,151 @@ func (engine *MatchingEngine) TakeSnapshot(
 			return nil, errors.New("unexpected response type for snapshot")
 		}
 		results = r
-		success = true
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 
-	// Use a temporary directory for atomic writes
+	return engine.writeSnapshot(outputDir, results)
+}
+
+// RestoreFromSnapshot restores the entire matching engine state from a snapshot.
+func (engine *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMetadata, error) {
+	meta, err := engine.readMetadata(inputDir)
+	if err != nil {
+		return nil, err
+	}
+
+	binPath := filepath.Join(inputDir, "snapshot.bin")
+	fileChecksum, err := calculateFileCRC32(binPath)
+	if err != nil {
+		return nil, err
+	}
+	if fileChecksum != meta.SnapshotChecksum {
+		return nil, errors.New("snapshot.bin checksum mismatch")
+	}
+
+	binFile, err := os.Open(filepath.Clean(binPath))
+	if err != nil {
+		return nil, err
+	}
+	defer binFile.Close()
+
+	footer, footerOffset, err := engine.readFooter(binFile)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, segment := range footer.Markets {
+		if err := engine.restoreMarket(binFile, segment, footerOffset); err != nil {
+			return nil, err
+		}
+	}
+
+	return meta, nil
+}
+
+func (engine *MatchingEngine) validateTypedRequest(ctx context.Context, req any) error {
+	if ctx == nil || req == nil {
+		return ErrInvalidParam
+	}
+	base, ok := protocol.GetRequestBase(req)
+	if !ok {
+		return ErrInvalidParam
+	}
+	if err := requireCommandID(base.CommandID); err != nil {
+		return err
+	}
+	if engine.isShutdown.Load() {
+		return ErrShutdown
+	}
+	return nil
+}
+
+func (engine *MatchingEngine) enqueue(
+	ctx context.Context,
+	request any,
+	query any,
+	resp chan any,
+) error {
+	strategy := YieldingIdleStrategy{}
+	for {
+		seq, ev := engine.ring.TryClaim()
+		if seq != -1 {
+			ev.Request = request
+			ev.Query = query
+			ev.Resp = resp
+
+			engine.ring.Commit(seq)
+			return nil
+		}
+
+		if engine.isShutdown.Load() {
+			return ErrShutdown
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		strategy.Idle()
+	}
+}
+
+func (engine *MatchingEngine) enqueueBatch(ctx context.Context, requests []any) error {
+	if len(requests) == 0 {
+		return nil
+	}
+	if engine.isShutdown.Load() {
+		return ErrShutdown
+	}
+
+	n := int64(len(requests))
+	if n > engine.ring.capacity {
+		for _, request := range requests {
+			if err := engine.enqueue(ctx, request, nil, nil); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	strategy := YieldingIdleStrategy{}
+	for {
+		startSeq, endSeq := engine.ring.TryClaimN(n)
+		if startSeq != -1 {
+			for i, request := range requests {
+				seq := startSeq + int64(i)
+				slot := &engine.ring.buffer[seq&engine.ring.bufferMask]
+				slot.Request = request
+				slot.Query = nil
+				slot.Resp = nil
+			}
+			engine.ring.CommitN(startSeq, endSeq)
+			return nil
+		}
+
+		if engine.isShutdown.Load() {
+			return ErrShutdown
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		strategy.Idle()
+	}
+}
+
+func (engine *MatchingEngine) writeSnapshot(
+	outputDir string,
+	results []snapshotResult,
+) (*SnapshotMetadata, error) {
 	tmpDir := outputDir + ".tmp"
 	if err := os.RemoveAll(tmpDir); err != nil {
 		return nil, err
 	}
-	// G301: permissions 0750
 	if err := os.MkdirAll(tmpDir, tmpDirPerm); err != nil {
 		return nil, err
 	}
-
-	// Track GlobalLastCmdSeqID as max of all snapshots
-	var globalSeqID uint64
-
-	// Open snapshot.bin
 
 	binPath := filepath.Join(tmpDir, "snapshot.bin")
 	binFile, err := os.Create(filepath.Clean(binPath))
@@ -385,12 +457,11 @@ func (engine *MatchingEngine) TakeSnapshot(
 		return nil, err
 	}
 
-	// Prepare Footer info
-	markets := make([]MarketSegment, 0)
+	var globalSeqID uint64
+	markets := make([]MarketSegment, 0, len(results))
 	currentOffset := int64(0)
 	var snapshotErrors []error
 
-	// Write snapshots
 	for _, result := range results {
 		if result.err != nil {
 			snapshotErrors = append(snapshotErrors, result.err)
@@ -398,93 +469,55 @@ func (engine *MatchingEngine) TakeSnapshot(
 		}
 
 		snap := result.snap
-
-		// Serialize Market Data
-		var data []byte
-		data, err = json.Marshal(snap)
-		if err != nil {
+		snapData, errMarshal := json.Marshal(snap)
+		if errMarshal != nil {
 			_ = binFile.Close()
-			return nil, err
+			return nil, errMarshal
 		}
 
-		var n int
-		n, err = binFile.Write(data)
-		if err != nil {
+		n, errWrite := binFile.Write(snapData)
+		if errWrite != nil {
 			_ = binFile.Close()
-			return nil, err
+			return nil, errWrite
 		}
 
 		length := int64(n)
-
-		// Record Segment
-		checksum := crc32.ChecksumIEEE(data)
-
 		markets = append(markets, MarketSegment{
 			MarketID: snap.MarketID,
 			Offset:   currentOffset,
 			Length:   length,
-			Checksum: checksum,
+			Checksum: crc32.ChecksumIEEE(snapData),
 		})
-
 		currentOffset += length
 
-		// Update GlobalLastCmdSeqID to max observed
 		if snap.LastCmdSeqID > globalSeqID {
 			globalSeqID = snap.LastCmdSeqID
 		}
 	}
 
-	// If any snapshots failed, return error
 	if len(snapshotErrors) > 0 {
 		_ = binFile.Close()
 		return nil, errors.Join(snapshotErrors...)
 	}
 
-	// Write Footer
-	footer := SnapshotFileFooter{Markets: markets}
-	var footerData []byte
-	footerData, err = json.Marshal(footer)
-	if err != nil {
+	if errFooter := engine.writeFooter(binFile, markets); errFooter != nil {
 		_ = binFile.Close()
-		return nil, err
+		return nil, errFooter
 	}
 
-	// Write Footer JSON
-	if _, err = binFile.Write(footerData); err != nil {
+	if errSync := binFile.Sync(); errSync != nil {
 		_ = binFile.Close()
-		return nil, err
+		return nil, errSync
+	}
+	if errClose := binFile.Close(); errClose != nil {
+		return nil, errClose
 	}
 
-	// Write Footer Length (4 bytes, Big Endian)
-	if len(footerData) > footerSizeLimit {
-		_ = binFile.Close()
-		return nil, errors.New("footer too large")
-	}
-	//nolint:gosec // Verified length above
-	footerLen := uint32(len(footerData))
-	if err = binary.Write(binFile, binary.BigEndian, footerLen); err != nil {
-		_ = binFile.Close()
-		return nil, err
+	snapshotChecksum, errCRC := calculateFileCRC32(binPath)
+	if errCRC != nil {
+		return nil, errCRC
 	}
 
-	// Sync to ensure data is flushed to disk before checksum calculation
-	if err = binFile.Sync(); err != nil {
-		_ = binFile.Close()
-		return nil, err
-	}
-
-	// Close file before calculating checksum
-	if err = binFile.Close(); err != nil {
-		return nil, err
-	}
-
-	// Calculate full file checksum
-	snapshotChecksum, err := calculateFileCRC32(binPath)
-	if err != nil {
-		return nil, err
-	}
-
-	// Write metadata.json
 	meta := &SnapshotMetadata{
 		SchemaVersion:      SnapshotSchemaVersion,
 		Timestamp:          time.Now().UnixNano(),
@@ -493,32 +526,46 @@ func (engine *MatchingEngine) TakeSnapshot(
 		SnapshotChecksum:   snapshotChecksum,
 	}
 
-	metaBytes, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return nil, err
+	if errMeta := engine.writeMetadata(tmpDir, meta); errMeta != nil {
+		return nil, errMeta
 	}
 
-	metaPath := filepath.Join(tmpDir, "metadata.json")
-	if err = os.WriteFile(metaPath, metaBytes, metaFilePerm); err != nil {
-		return nil, err
+	if errRemove := os.RemoveAll(outputDir); errRemove != nil {
+		return nil, errRemove
 	}
-
-	// Atomic rename: remove old dir and rename temp to final
-	if err := os.RemoveAll(outputDir); err != nil {
-		return nil, err
-	}
-	if err := os.Rename(tmpDir, outputDir); err != nil {
-		return nil, err
-	}
-
-	return meta, nil
+	return meta, os.Rename(tmpDir, outputDir)
 }
 
-// RestoreFromSnapshot restores the entire matching engine state from a snapshot in the specified directory.
-// Returns the metadata from the snapshot for MQ replay positioning.
-func (engine *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMetadata, error) {
-	// 1. Read metadata.json
-	metaPath := filepath.Join(inputDir, "metadata.json")
+func (engine *MatchingEngine) writeFooter(f *os.File, markets []MarketSegment) error {
+	footer := SnapshotFileFooter{Markets: markets}
+	footerData, err := json.Marshal(footer)
+	if err != nil {
+		return err
+	}
+
+	if _, err = f.Write(footerData); err != nil {
+		return err
+	}
+
+	if len(footerData) > footerSizeLimit {
+		return errors.New("footer too large")
+	}
+
+	/* #nosec G115 */
+	return binary.Write(f, binary.BigEndian, uint32(len(footerData)))
+}
+
+func (engine *MatchingEngine) writeMetadata(dir string, meta *SnapshotMetadata) error {
+	metaBytes, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	metaPath := filepath.Join(dir, "metadata.json")
+	return os.WriteFile(metaPath, metaBytes, metaFilePerm)
+}
+
+func (engine *MatchingEngine) readMetadata(dir string) (*SnapshotMetadata, error) {
+	metaPath := filepath.Join(dir, "metadata.json")
 	metaBytes, err := os.ReadFile(filepath.Clean(metaPath))
 	if err != nil {
 		return nil, err
@@ -528,165 +575,136 @@ func (engine *MatchingEngine) RestoreFromSnapshot(inputDir string) (*SnapshotMet
 	if err = json.Unmarshal(metaBytes, &meta); err != nil {
 		return nil, err
 	}
+	return &meta, nil
+}
 
-	// 2. Open snapshot.bin
-	binPath := filepath.Join(inputDir, "snapshot.bin")
-	binFile, err := os.Open(filepath.Clean(binPath))
+func (engine *MatchingEngine) readFooter(f *os.File) (*SnapshotFileFooter, int64, error) {
+	stat, err := f.Stat()
 	if err != nil {
-		return nil, err
-	}
-	defer binFile.Close()
-
-	// 2.5 Verify full file checksum
-	fileChecksum, err := calculateFileCRC32(binPath)
-	if err != nil {
-		return nil, err
-	}
-	if fileChecksum != meta.SnapshotChecksum {
-		return nil, errors.New("snapshot.bin checksum mismatch")
-	}
-
-	// 3. Read Footer Length (last 4 bytes)
-	footerLenBytes := make([]byte, footerLenSize)
-	stat, err := binFile.Stat()
-	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	fileSize := stat.Size()
 
-	if _, err = binFile.ReadAt(footerLenBytes, fileSize-int64(footerLenSize)); err != nil {
-		return nil, err
+	footerLenBytes := make([]byte, footerLenSize)
+	if _, err = f.ReadAt(footerLenBytes, fileSize-int64(footerLenSize)); err != nil {
+		return nil, 0, err
 	}
 	footerLen := binary.BigEndian.Uint32(footerLenBytes)
-	if fileSize < int64(footerLenSize) || int64(footerLen) > fileSize-int64(footerLenSize) {
-		return nil, errors.New("invalid snapshot footer length")
-	}
 
-	// 4. Read Footer JSON
 	footerOffset := fileSize - int64(footerLenSize) - int64(footerLen)
 	if footerOffset < 0 {
-		return nil, errors.New("invalid snapshot footer offset")
+		return nil, 0, errors.New("invalid snapshot footer offset")
 	}
-	footerBytes := make([]byte, footerLen)
 
-	if _, err := binFile.ReadAt(footerBytes, footerOffset); err != nil {
-		return nil, err
+	footerBytes := make([]byte, footerLen)
+	if _, err := f.ReadAt(footerBytes, footerOffset); err != nil {
+		return nil, 0, err
 	}
 
 	var footer SnapshotFileFooter
 	if err := json.Unmarshal(footerBytes, &footer); err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	return &footer, footerOffset, nil
+}
+
+func (engine *MatchingEngine) restoreMarket(f *os.File, segment MarketSegment, footerOffset int64) error {
+	if segment.Offset < 0 || segment.Length < 0 ||
+		segment.Offset > footerOffset || segment.Length > footerOffset-segment.Offset {
+		return errors.New("invalid snapshot segment bounds")
 	}
 
-	// 5. Restore OrderBooks (as managed books, no individual RingBuffers)
-	for _, segment := range footer.Markets {
-		if segment.Offset < 0 || segment.Length < 0 {
-			return nil, errors.New("invalid snapshot segment bounds")
-		}
-		if segment.Offset > footerOffset || segment.Length > footerOffset-segment.Offset {
-			return nil, errors.New("invalid snapshot segment bounds")
-		}
-
-		// Read segment data
-		segmentData := make([]byte, segment.Length)
-		if _, err := binFile.ReadAt(segmentData, segment.Offset); err != nil {
-			return nil, err
-		}
-
-		// Checksum verification
-		if crc32.ChecksumIEEE(segmentData) != segment.Checksum {
-			return nil, errors.New("checksum mismatch for market " + segment.MarketID)
-		}
-
-		// Deserialize
-		var snap OrderBookSnapshot
-		if err := json.Unmarshal(segmentData, &snap); err != nil {
-			return nil, err
-		}
-
-		// Create managed OrderBook (no individual RingBuffer) and restore
-		book := newOrderBook(engine.engineID, segment.MarketID, engine.publishTrader)
-		book.Restore(&snap)
-
-		// Add to engine map (no goroutine needed)
-		engine.orderbooks[segment.MarketID] = book
+	segmentData := make([]byte, segment.Length)
+	if _, err := f.ReadAt(segmentData, segment.Offset); err != nil {
+		return err
 	}
 
-	return &meta, nil
+	if crc32.ChecksumIEEE(segmentData) != segment.Checksum {
+		return errors.New("checksum mismatch for market " + segment.MarketID)
+	}
+
+	var snap OrderBookSnapshot
+	if err := json.Unmarshal(segmentData, &snap); err != nil {
+		return err
+	}
+
+	book := newOrderBook(engine.engineID, segment.MarketID, engine.publishTrader)
+	book.Restore(&snap)
+	engine.orderbooks[segment.MarketID] = book
+	return nil
 }
 
 func (engine *MatchingEngine) processCommand(ev *InputEvent) {
-	cmd := ev.Cmd
-	if cmd.CommandID == "" {
-		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
+	req := ev.Request
+	base, ok := protocol.GetRequestBase(req)
+	if !ok || base.CommandID == "" {
+		engine.rejectRequest(req, protocol.RejectReasonInvalidPayload)
 		engine.respondQueryError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
 		return
 	}
 
-	if cmd.Type == protocol.CmdCreateMarket {
-		params := &protocol.CreateMarketParams{}
-		if err := params.UnmarshalBinary(cmd.Payload); err != nil {
-			engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
-			engine.respondQueryError(ev, errors.New(string(protocol.RejectReasonInvalidPayload)))
+	switch request := req.(type) {
+	case *protocol.CreateMarketRequest:
+		engine.handleCreateMarketRequest(request, ev.Resp)
+	case *protocol.UserEventRequest:
+		engine.handleUserEvent(request)
+	case *protocol.PlaceOrderRequest,
+		*protocol.CancelOrderRequest,
+		*protocol.AmendOrderRequest,
+		*protocol.SuspendMarketRequest,
+		*protocol.ResumeMarketRequest,
+		*protocol.UpdateConfigRequest:
+		book := engine.orderbooks[base.MarketID]
+		if book == nil {
+			engine.rejectRequest(req, protocol.RejectReasonMarketNotFound)
+			engine.respondQueryError(ev, ErrNotFound)
 			return
 		}
-		engine.handleCreateMarket(
-			cmd.CommandID,
-			cmd.Timestamp,
-			cmd.MarketID,
-			cmd.UserID,
-			params,
-			ev.Resp,
-		)
-		return
+		book.processCommand(ev)
+		if base.SeqID > 0 {
+			book.lastCmdSeqID.Store(base.SeqID)
+		}
+	default:
+		engine.rejectRequest(req, protocol.RejectReasonUnknownCommand)
+		engine.respondQueryError(ev, ErrUnknownCommand)
 	}
+}
 
-	if cmd.Type == protocol.CmdUserEvent {
-		engine.handleUserEvent(cmd)
-		return
-	}
-
-	book := engine.orderbooks[cmd.MarketID]
-	if book == nil {
-		engine.rejectCommand(cmd, protocol.RejectReasonMarketNotFound)
-		engine.respondQueryError(ev, ErrNotFound)
-		return
-	}
-	book.processCommand(ev)
-
-	if cmd.SeqID > 0 {
-		book.lastCmdSeqID.Store(cmd.SeqID)
-	}
+func (engine *MatchingEngine) handleCreateMarketRequest(
+	req *protocol.CreateMarketRequest,
+	resp chan<- any,
+) {
+	engine.handleCreateMarket(
+		req.CommandID,
+		req.Timestamp,
+		req.MarketID,
+		req.UserID,
+		req.MinLotSize,
+		resp,
+	)
 }
 
 func (engine *MatchingEngine) processQuery(ev *InputEvent) {
 	switch q := ev.Query.(type) {
-	case *protocol.GetDepthRequest:
+	case *protocol.GetDepthQuery:
 		book := engine.orderbooks[q.MarketID]
 		if book != nil {
 			book.processQuery(ev)
 		} else {
 			engine.respondQueryError(ev, ErrNotFound)
 		}
-	case *protocol.GetStatsRequest:
+	case *protocol.GetStatsQuery:
 		book := engine.orderbooks[q.MarketID]
 		if book != nil {
 			book.processQuery(ev)
 		} else {
 			engine.respondQueryError(ev, ErrNotFound)
 		}
-	case *OrderBookSnapshot:
-		book := engine.orderbooks[q.MarketID]
-		if book != nil {
-			book.processQuery(ev)
-		} else {
-			engine.respondQueryError(ev, ErrNotFound)
-		}
-	case *engineSnapshotQuery:
+	case *snapshotQuery:
 		engine.handleSnapshotQuery(ev)
 	default:
 		// Unsupported query type
-		engine.respondQueryError(ev, ErrInvalidParam)
+		engine.respondQueryError(ev, ErrUnknownQuery)
 	}
 }
 
@@ -714,7 +732,7 @@ func (engine *MatchingEngine) handleCreateMarket(
 	ts int64,
 	marketID string,
 	userID uint64,
-	params *protocol.CreateMarketParams,
+	minLotSize udecimal.Decimal,
 	resp chan<- any,
 ) {
 	if ts <= 0 {
@@ -735,16 +753,8 @@ func (engine *MatchingEngine) handleCreateMarket(
 
 	// Create and Store (no goroutine, no individual RingBuffer)
 	opts := []OrderBookOption{}
-	if params.MinLotSize != "" {
-		size, err := udecimal.Parse(params.MinLotSize)
-		if err != nil {
-			engine.rejectLog(cmdID, marketID, userID, protocol.RejectReasonInvalidPayload, ts)
-			if resp != nil {
-				resp <- err
-			}
-			return
-		}
-		opts = append(opts, WithLotSize(size))
+	if !minLotSize.IsZero() {
+		opts = append(opts, WithLotSize(minLotSize))
 	}
 
 	newbook := newOrderBook(engine.engineID, marketID, engine.publishTrader, opts...)
@@ -774,27 +784,22 @@ func (engine *MatchingEngine) handleCreateMarket(
 }
 
 // handleUserEvent processes a generic user event.
-func (engine *MatchingEngine) handleUserEvent(cmd *protocol.Command) {
-	payload := &protocol.UserEventParams{}
-	if err := payload.UnmarshalBinary(cmd.Payload); err != nil {
-		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
-		return
-	}
-	if cmd.Timestamp <= 0 {
-		engine.rejectCommand(cmd, protocol.RejectReasonInvalidPayload)
+func (engine *MatchingEngine) handleUserEvent(req *protocol.UserEventRequest) {
+	if req.Timestamp <= 0 {
+		engine.rejectRequest(req, protocol.RejectReasonInvalidPayload)
 		return
 	}
 
 	// Create and Publish Log
 	log := NewUserEventLog(
-		cmd.SeqID,
-		cmd.CommandID,
+		req.SeqID,
+		req.CommandID,
 		engine.engineID,
-		cmd.UserID,
-		payload.EventType,
-		payload.Key,
-		payload.Data,
-		cmd.Timestamp,
+		req.UserID,
+		req.EventType,
+		req.Key,
+		req.Data,
+		req.Timestamp,
 	)
 
 	// Publish via the shared publishTrader
@@ -839,17 +844,21 @@ func (engine *MatchingEngine) respondQueryError(ev *InputEvent, err error) {
 	}
 }
 
-// rejectCommand emits a standardized reject log for engine-level command failures.
-func (engine *MatchingEngine) rejectCommand(cmd *protocol.Command, reason protocol.RejectReason) {
+// rejectRequest emits a standardized reject log for engine-level command failures.
+func (engine *MatchingEngine) rejectRequest(req any, reason protocol.RejectReason) {
+	base, ok := protocol.GetRequestBase(req)
+	if !ok {
+		return
+	}
 	log := NewRejectLog(
 		0,
-		cmd.CommandID,
+		base.CommandID,
 		engine.engineID,
-		cmd.MarketID,
-		engine.commandOrderID(cmd),
-		cmd.UserID,
+		base.MarketID,
+		engine.requestOrderID(req),
+		base.UserID,
 		reason,
-		cmd.Timestamp,
+		base.Timestamp,
 	)
 	batch := acquireLogBatch()
 	batch.Logs = append(batch.Logs, log)
@@ -858,31 +867,17 @@ func (engine *MatchingEngine) rejectCommand(cmd *protocol.Command, reason protoc
 	batch.Release()
 }
 
-// commandOrderID extracts the business identifier used for reject logs.
-func (engine *MatchingEngine) commandOrderID(cmd *protocol.Command) string {
-	switch cmd.Type {
-	case protocol.CmdPlaceOrder:
-		payload := &protocol.PlaceOrderParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.OrderID
-		}
-	case protocol.CmdCancelOrder:
-		payload := &protocol.CancelOrderParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.OrderID
-		}
-	case protocol.CmdAmendOrder:
-		payload := &protocol.AmendOrderParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.OrderID
-		}
-	case protocol.CmdUserEvent:
-		payload := &protocol.UserEventParams{}
-		if err := payload.UnmarshalBinary(cmd.Payload); err == nil {
-			return payload.Key
-		}
-	default:
-		return "unknown"
+// requestOrderID extracts the business identifier used for reject logs.
+func (engine *MatchingEngine) requestOrderID(req any) string {
+	switch r := req.(type) {
+	case *protocol.PlaceOrderRequest:
+		return r.OrderID
+	case *protocol.CancelOrderRequest:
+		return r.OrderID
+	case *protocol.AmendOrderRequest:
+		return r.OrderID
+	case *protocol.UserEventRequest:
+		return r.Key
 	}
 	return "unknown"
 }
@@ -907,7 +902,7 @@ func (engine *MatchingEngine) releaseResponseChannel(ch chan any) {
 }
 
 func (engine *MatchingEngine) onEvent(ev *InputEvent) {
-	if ev.Cmd != nil {
+	if ev.Request != nil {
 		engine.processCommand(ev)
 		return
 	}
@@ -916,4 +911,11 @@ func (engine *MatchingEngine) onEvent(ev *InputEvent) {
 		engine.processQuery(ev)
 		return
 	}
+}
+
+func requireCommandID(commandID string) error {
+	if commandID == "" {
+		return ErrInvalidParam
+	}
+	return nil
 }

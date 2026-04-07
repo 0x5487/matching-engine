@@ -159,6 +159,8 @@ const (
 	RejectReasonOrderNotFound RejectReason = "order_not_found"
 	// RejectReasonInvalidPayload indicates invalid command payload.
 	RejectReasonInvalidPayload RejectReason = "invalid_payload"
+	// RejectReasonUnknownCommand is returned when the command type is not supported.
+	RejectReasonUnknownCommand RejectReason = "unknown_command"
 
 	// RejectReasonMarketNotFound is returned when the target market does not exist.
 	RejectReasonMarketNotFound RejectReason = "market_not_found"
