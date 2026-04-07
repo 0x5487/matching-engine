@@ -59,6 +59,7 @@ var (
 	errStringTooLong   = errors.New("string too long")
 	errPayloadTooLarge = errors.New("payload too large")
 	errInvalidRequest  = errors.New("invalid request")
+	errInvalidDecimal  = errors.New("invalid decimal")
 )
 
 // BaseCommand contains the shared metadata for all command requests.
@@ -219,11 +220,30 @@ func MarshalRequest(req any) ([]byte, error) {
 		offset++
 		buf[offset] = r.OrderType.ToUint8()
 		offset++
-		offset += mustWriteString(buf[offset:], r.OrderID)
-		offset += mustWriteString(buf[offset:], priceStr)
-		offset += mustWriteString(buf[offset:], sizeStr)
-		offset += mustWriteString(buf[offset:], visStr)
-		mustWriteString(buf[offset:], quoteStr)
+		n, err := writeString(buf[offset:], r.OrderID)
+		if err != nil {
+			return nil, err
+		}
+		offset += n
+		n, err = writeString(buf[offset:], priceStr)
+		if err != nil {
+			return nil, err
+		}
+		offset += n
+		n, err = writeString(buf[offset:], sizeStr)
+		if err != nil {
+			return nil, err
+		}
+		offset += n
+		n, err = writeString(buf[offset:], visStr)
+		if err != nil {
+			return nil, err
+		}
+		offset += n
+		_, err = writeString(buf[offset:], quoteStr)
+		if err != nil {
+			return nil, err
+		}
 		payload = buf
 	case *CancelOrderRequest:
 		wireType = CmdCancelOrder
@@ -232,7 +252,10 @@ func MarshalRequest(req any) ([]byte, error) {
 			return nil, errStringTooLong
 		}
 		buf := make([]byte, stringLenSize+len(r.OrderID))
-		mustWriteString(buf, r.OrderID)
+		_, err := writeString(buf, r.OrderID)
+		if err != nil {
+			return nil, err
+		}
 		payload = buf
 	case *AmendOrderRequest:
 		wireType = CmdAmendOrder
@@ -244,15 +267,29 @@ func MarshalRequest(req any) ([]byte, error) {
 		sizeStr := r.NewSize.String()
 		buf := make([]byte, stringLenSize*3+len(r.OrderID)+len(priceStr)+len(sizeStr))
 		offset := 0
-		offset += mustWriteString(buf[offset:], r.OrderID)
-		offset += mustWriteString(buf[offset:], priceStr)
-		mustWriteString(buf[offset:], sizeStr)
+		n, err := writeString(buf[offset:], r.OrderID)
+		if err != nil {
+			return nil, err
+		}
+		offset += n
+		n, err = writeString(buf[offset:], priceStr)
+		if err != nil {
+			return nil, err
+		}
+		offset += n
+		_, err = writeString(buf[offset:], sizeStr)
+		if err != nil {
+			return nil, err
+		}
 		payload = buf
 	case *CreateMarketRequest:
 		wireType = CmdCreateMarket
 		s := r.MinLotSize.String()
 		buf := make([]byte, stringLenSize+len(s))
-		mustWriteString(buf, s)
+		_, err := writeString(buf, s)
+		if err != nil {
+			return nil, err
+		}
 		payload = buf
 	case *SuspendMarketRequest:
 		wireType = CmdSuspendMarket
@@ -261,7 +298,10 @@ func MarshalRequest(req any) ([]byte, error) {
 			return nil, errStringTooLong
 		}
 		buf := make([]byte, stringLenSize+len(r.Reason))
-		mustWriteString(buf, r.Reason)
+		_, err := writeString(buf, r.Reason)
+		if err != nil {
+			return nil, err
+		}
 		payload = buf
 	case *ResumeMarketRequest:
 		wireType = CmdResumeMarket
@@ -270,7 +310,10 @@ func MarshalRequest(req any) ([]byte, error) {
 		wireType = CmdUpdateConfig
 		s := r.MinLotSize.String()
 		buf := make([]byte, stringLenSize+len(s))
-		mustWriteString(buf, s)
+		_, err := writeString(buf, s)
+		if err != nil {
+			return nil, err
+		}
 		payload = buf
 	case *UserEventRequest:
 		wireType = CmdUserEvent
@@ -281,9 +324,21 @@ func MarshalRequest(req any) ([]byte, error) {
 		pSize := stringLenSize + len(r.EventType) + stringLenSize + len(r.Key) + payloadLenSize + len(r.Data)
 		buf := make([]byte, pSize)
 		offset := 0
-		offset += mustWriteString(buf[offset:], r.EventType)
-		offset += mustWriteString(buf[offset:], r.Key)
-		binary.BigEndian.PutUint32(buf[offset:], safeUint32Len(len(r.Data)))
+		n, err := writeString(buf[offset:], r.EventType)
+		if err != nil {
+			return nil, err
+		}
+		offset += n
+		n, err = writeString(buf[offset:], r.Key)
+		if err != nil {
+			return nil, err
+		}
+		offset += n
+		l, err := safeUint32Len(len(r.Data))
+		if err != nil {
+			return nil, err
+		}
+		binary.BigEndian.PutUint32(buf[offset:], l)
 		offset += payloadLenSize
 		copy(buf[offset:], r.Data)
 		payload = buf
@@ -318,8 +373,16 @@ func MarshalRequest(req any) ([]byte, error) {
 	binary.BigEndian.PutUint64(buf[offset:], uint64(base.Timestamp))
 	offset += 8
 
-	offset += mustWriteString(buf[offset:], base.MarketID)
-	offset += mustWriteString(buf[offset:], base.CommandID)
+	n, err := writeString(buf[offset:], base.MarketID)
+	if err != nil {
+		return nil, err
+	}
+	offset += n
+	n, err = writeString(buf[offset:], base.CommandID)
+	if err != nil {
+		return nil, err
+	}
+	offset += n
 
 	binary.BigEndian.PutUint32(buf[offset:], uint32(payloadSize))
 	offset += 4
@@ -402,25 +465,37 @@ func UnmarshalRequest(data []byte) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		price, _ := udecimal.Parse(priceStr)
+		price, err := udecimal.Parse(priceStr)
+		if err != nil {
+			return nil, errInvalidDecimal
+		}
 		pOffset += n
 		sizeStr, n, err := readString(pData[pOffset:])
 		if err != nil {
 			return nil, err
 		}
-		size, _ := udecimal.Parse(sizeStr)
+		size, err := udecimal.Parse(sizeStr)
+		if err != nil {
+			return nil, errInvalidDecimal
+		}
 		pOffset += n
 		visStr, n, err := readString(pData[pOffset:])
 		if err != nil {
 			return nil, err
 		}
-		visibleSize, _ := udecimal.Parse(visStr)
+		visibleSize, err := udecimal.Parse(visStr)
+		if err != nil {
+			return nil, errInvalidDecimal
+		}
 		pOffset += n
 		quoteStr, _, err := readString(pData[pOffset:])
 		if err != nil {
 			return nil, err
 		}
-		quoteSize, _ := udecimal.Parse(quoteStr)
+		quoteSize, err := udecimal.Parse(quoteStr)
+		if err != nil {
+			return nil, errInvalidDecimal
+		}
 
 		return &PlaceOrderRequest{
 			BaseCommand: base,
@@ -452,13 +527,19 @@ func UnmarshalRequest(data []byte) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		price, _ := udecimal.Parse(priceStr)
+		price, err := udecimal.Parse(priceStr)
+		if err != nil {
+			return nil, errInvalidDecimal
+		}
 		pOffset += n
 		sizeStr, _, err := readString(pData[pOffset:])
 		if err != nil {
 			return nil, err
 		}
-		size, _ := udecimal.Parse(sizeStr)
+		size, err := udecimal.Parse(sizeStr)
+		if err != nil {
+			return nil, errInvalidDecimal
+		}
 		return &AmendOrderRequest{
 			BaseCommand: base,
 			OrderID:     orderID,
@@ -470,7 +551,10 @@ func UnmarshalRequest(data []byte) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		minLotSize, _ := udecimal.Parse(s)
+		minLotSize, err := udecimal.Parse(s)
+		if err != nil {
+			return nil, errInvalidDecimal
+		}
 		return &CreateMarketRequest{
 			BaseCommand: base,
 			MinLotSize:  minLotSize,
@@ -491,7 +575,10 @@ func UnmarshalRequest(data []byte) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		minLotSize, _ := udecimal.Parse(s)
+		minLotSize, err := udecimal.Parse(s)
+		if err != nil {
+			return nil, errInvalidDecimal
+		}
 		return &UpdateConfigRequest{
 			BaseCommand: base,
 			MinLotSize:  minLotSize,
@@ -529,16 +616,15 @@ func UnmarshalRequest(data []byte) (any, error) {
 	}
 }
 
-// mustWriteString writes a length-prefixed string into buf.
-// Callers MUST validate len(s) <= maxUint16Value before calling this function;
-// it panics if the string is too long as a last-resort programming-error guard.
-func mustWriteString(buf []byte, s string) int {
-	if len(s) > maxUint16Value {
-		panic(errStringTooLong)
+// writeString writes a length-prefixed string into buf.
+func writeString(buf []byte, s string) (int, error) {
+	l, err := safeUint16Len(len(s))
+	if err != nil {
+		return 0, err
 	}
-	binary.BigEndian.PutUint16(buf, safeUint16Len(len(s)))
+	binary.BigEndian.PutUint16(buf, l)
 	copy(buf[stringLenSize:], s)
-	return stringLenSize + len(s)
+	return stringLenSize + len(s), nil
 }
 
 // readString reads a length-prefixed string from buf.
@@ -566,19 +652,19 @@ func sideToUint8(side Side) uint8 {
 }
 
 // safeUint16Len converts a validated length into uint16 for wire encoding.
-func safeUint16Len(length int) uint16 {
+func safeUint16Len(length int) (uint16, error) {
 	if length > maxUint16Value {
-		panic(errStringTooLong)
+		return 0, errStringTooLong
 	}
 	//nolint:gosec // length is bounded by maxUint16Value above.
-	return uint16(length)
+	return uint16(length), nil
 }
 
 // safeUint32Len converts a validated length into uint32 for wire encoding.
-func safeUint32Len(length int) uint32 {
+func safeUint32Len(length int) (uint32, error) {
 	if length > maxUint32Value {
-		panic(errPayloadTooLarge)
+		return 0, errPayloadTooLarge
 	}
 	//nolint:gosec // length is bounded by maxUint32Value above.
-	return uint32(length)
+	return uint32(length), nil
 }
