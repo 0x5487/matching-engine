@@ -16,34 +16,28 @@ const (
 
 func newPlaceCmd(id string, ot protocol.OrderType, s protocol.Side, price, size float64) *protocol.PlaceOrderRequest {
 	return &protocol.PlaceOrderRequest{
-		BaseCommand: protocol.BaseCommand{
-			Type: protocol.CmdPlaceOrder,
-		},
-		OrderID:   id,
-		OrderType: ot,
-		Side:      s,
-		Price:     udecimal.MustFromFloat64(price),
-		Size:      udecimal.MustFromFloat64(size),
+		BaseCommand: protocol.BaseCommand{},
+		OrderID:     id,
+		OrderType:   ot,
+		Side:        s,
+		Price:       udecimal.MustFromFloat64(price),
+		Size:        udecimal.MustFromFloat64(size),
 	}
 }
 
 func newAmendCmd(id string, price, size float64) *protocol.AmendOrderRequest { //nolint:unparam
 	return &protocol.AmendOrderRequest{
-		BaseCommand: protocol.BaseCommand{
-			Type: protocol.CmdAmendOrder,
-		},
-		OrderID:  id,
-		NewPrice: udecimal.MustFromFloat64(price),
-		NewSize:  udecimal.MustFromFloat64(size),
+		BaseCommand: protocol.BaseCommand{},
+		OrderID:     id,
+		NewPrice:    udecimal.MustFromFloat64(price),
+		NewSize:     udecimal.MustFromFloat64(size),
 	}
 }
 
 func newCancelCmd(id string) *protocol.CancelOrderRequest {
 	return &protocol.CancelOrderRequest{
-		BaseCommand: protocol.BaseCommand{
-			Type: protocol.CmdCancelOrder,
-		},
-		OrderID: id,
+		BaseCommand: protocol.BaseCommand{},
+		OrderID:     id,
 	}
 }
 
@@ -133,7 +127,6 @@ func TestLimitOrders(t *testing.T) {
 					UserID:    300,
 					Timestamp: 1,
 					SeqID:     100,
-					Type:      protocol.CmdPlaceOrder,
 				},
 				OrderID:   params.OrderID,
 				OrderType: params.OrderType,
@@ -1271,7 +1264,6 @@ func TestOrderValidation(t *testing.T) {
 				UserID:    5,
 				CommandID: "cmd-bad-place",
 				Timestamp: 999,
-				Type:      protocol.CmdPlaceOrder,
 			},
 		})
 
@@ -1279,7 +1271,7 @@ func TestOrderValidation(t *testing.T) {
 		require.Len(t, logs, 1)
 		assert.Equal(t, protocol.LogTypeReject, logs[0].Type)
 		assert.Equal(t, "unknown", logs[0].OrderID)
-		assert.Equal(t, protocol.RejectReasonInvalidPayload, logs[0].RejectReason)
+		assert.Equal(t, protocol.RejectReasonUnknownCommand, logs[0].RejectReason)
 		assert.Equal(t, int64(999), logs[0].Timestamp)
 	})
 

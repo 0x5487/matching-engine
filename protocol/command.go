@@ -63,7 +63,6 @@ var (
 
 // BaseCommand contains the shared metadata for all command requests.
 type BaseCommand struct {
-	Type      CommandType
 	SeqID     uint64 // Upstream-assigned monotonic sequence used to preserve logical command ordering.
 	CommandID string
 	UserID    uint64
@@ -167,7 +166,7 @@ type UserEventRequest struct {
 
 // MarshalRequest serializes a typed request into binary format.
 // It follows the wire format: version(1), user_id(8), type(1), seq_id(8), timestamp(8), market_id(string), command_id(string), payload_len(4), payload(n).
-// The wire CommandType is always derived from the concrete request type, regardless of the value in BaseCommand.Type.
+// The wire CommandType is always derived from the concrete request type.
 func MarshalRequest(req any) ([]byte, error) {
 	base, ok := GetRequestBase(req)
 	if !ok {
@@ -179,7 +178,7 @@ func MarshalRequest(req any) ([]byte, error) {
 
 	var (
 		payload  []byte
-		wireType CommandType // always derived from the concrete type, not base.Type
+		wireType CommandType
 	)
 
 	switch r := req.(type) {
@@ -293,8 +292,6 @@ func MarshalRequest(req any) ([]byte, error) {
 	offset++
 	binary.BigEndian.PutUint64(buf[offset:], base.UserID)
 	offset += 8
-	// Write the derived wire type, not base.Type, to guarantee correctness even
-	// when the caller leaves BaseCommand.Type at its zero value (CmdUnknown).
 	buf[offset] = uint8(wireType)
 	offset++
 	binary.BigEndian.PutUint64(buf[offset:], base.SeqID)
@@ -360,7 +357,6 @@ func UnmarshalRequest(data []byte) (any, error) {
 	pData := data[offset : offset+payloadLen]
 
 	base := BaseCommand{
-		Type:      cmdType,
 		SeqID:     seqID,
 		CommandID: commandID,
 		UserID:    userID,

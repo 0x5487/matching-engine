@@ -137,16 +137,12 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 		book.handleAmendOrder(ev, request)
 	default:
 		base, _ := protocol.GetRequestBase(req)
-		reason := protocol.RejectReasonUnknownCommand
-		if base.Type >= protocol.CmdPlaceOrder && base.Type <= protocol.CmdUserEvent {
-			reason = protocol.RejectReasonInvalidPayload
-		}
 		book.rejectInvalidPayload(
 			base.CommandID,
 			book.marketID,
 			"unknown",
 			base.UserID,
-			reason,
+			protocol.RejectReasonUnknownCommand,
 			base.Timestamp,
 		)
 		book.sendResponse(ev.Resp, ErrUnknownCommand)

@@ -9,9 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// happyPathRequests contains one valid instance of every supported request type,
-// with Type deliberately set to CmdUnknown to verify that MarshalRequest derives
-// the correct wire type from the concrete Go type (fix for issue #2).
+// happyPathRequests contains one valid instance of every supported request type.
 var happyPathRequests = []struct {
 	name string
 	req  any
@@ -20,7 +18,6 @@ var happyPathRequests = []struct {
 		name: "PlaceOrderRequest",
 		req: &PlaceOrderRequest{
 			BaseCommand: BaseCommand{
-				Type:      CmdPlaceOrder,
 				SeqID:     123,
 				CommandID: "cmd-place",
 				UserID:    789,
@@ -38,7 +35,6 @@ var happyPathRequests = []struct {
 		name: "CancelOrderRequest",
 		req: &CancelOrderRequest{
 			BaseCommand: BaseCommand{
-				Type:      CmdCancelOrder,
 				SeqID:     124,
 				CommandID: "cmd-cancel",
 				UserID:    789,
@@ -52,7 +48,6 @@ var happyPathRequests = []struct {
 		name: "AmendOrderRequest",
 		req: &AmendOrderRequest{
 			BaseCommand: BaseCommand{
-				Type:      CmdAmendOrder,
 				SeqID:     125,
 				CommandID: "cmd-amend",
 				UserID:    789,
@@ -68,7 +63,6 @@ var happyPathRequests = []struct {
 		name: "CreateMarketRequest",
 		req: &CreateMarketRequest{
 			BaseCommand: BaseCommand{
-				Type:      CmdCreateMarket,
 				SeqID:     126,
 				CommandID: "cmd-create",
 				UserID:    1,
@@ -82,7 +76,6 @@ var happyPathRequests = []struct {
 		name: "SuspendMarketRequest",
 		req: &SuspendMarketRequest{
 			BaseCommand: BaseCommand{
-				Type:      CmdSuspendMarket,
 				SeqID:     127,
 				CommandID: "cmd-suspend",
 				UserID:    1,
@@ -96,7 +89,6 @@ var happyPathRequests = []struct {
 		name: "ResumeMarketRequest",
 		req: &ResumeMarketRequest{
 			BaseCommand: BaseCommand{
-				Type:      CmdResumeMarket,
 				SeqID:     128,
 				CommandID: "cmd-resume",
 				UserID:    1,
@@ -109,7 +101,6 @@ var happyPathRequests = []struct {
 		name: "UpdateConfigRequest",
 		req: &UpdateConfigRequest{
 			BaseCommand: BaseCommand{
-				Type:      CmdUpdateConfig,
 				SeqID:     129,
 				CommandID: "cmd-update",
 				UserID:    1,
@@ -123,7 +114,6 @@ var happyPathRequests = []struct {
 		name: "UserEventRequest",
 		req: &UserEventRequest{
 			BaseCommand: BaseCommand{
-				Type:      CmdUserEvent,
 				SeqID:     130,
 				CommandID: "cmd-user-event",
 				UserID:    99,
@@ -152,8 +142,9 @@ func TestMarshalUnmarshalRequest(t *testing.T) {
 }
 
 // TestMarshalRequest_DerivedWireType verifies that MarshalRequest always writes the
-// correct CommandType on the wire, even when BaseCommand.Type is left at CmdUnknown.
-// This guards against the MQ-dispatch bug described in code-review issue #2.
+// correct CommandType on the wire, and that UnmarshalRequest reconstructs the
+// correct concrete Go type. This guards against the MQ-dispatch bug described
+// in code-review issue #2.
 func TestMarshalRequest_DerivedWireType(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -161,10 +152,9 @@ func TestMarshalRequest_DerivedWireType(t *testing.T) {
 		wantWireType CommandType
 	}{
 		{
-			name: "PlaceOrderRequest with zero Type",
+			name: "PlaceOrderRequest",
 			req: &PlaceOrderRequest{
 				BaseCommand: BaseCommand{
-					// Type intentionally omitted (zero value = CmdUnknown)
 					CommandID: "cmd-1",
 					UserID:    1,
 					MarketID:  "BTC-USDT",
@@ -174,10 +164,9 @@ func TestMarshalRequest_DerivedWireType(t *testing.T) {
 				Side:      SideBuy,
 				OrderType: OrderTypeLimit,
 			},
-			wantWireType: CmdPlaceOrder,
 		},
 		{
-			name: "CancelOrderRequest with zero Type",
+			name: "CancelOrderRequest",
 			req: &CancelOrderRequest{
 				BaseCommand: BaseCommand{
 					CommandID: "cmd-2",
@@ -187,10 +176,9 @@ func TestMarshalRequest_DerivedWireType(t *testing.T) {
 				},
 				OrderID: "o1",
 			},
-			wantWireType: CmdCancelOrder,
 		},
 		{
-			name: "CreateMarketRequest with zero Type",
+			name: "CreateMarketRequest",
 			req: &CreateMarketRequest{
 				BaseCommand: BaseCommand{
 					CommandID: "cmd-3",
@@ -199,10 +187,9 @@ func TestMarshalRequest_DerivedWireType(t *testing.T) {
 					Timestamp: 1,
 				},
 			},
-			wantWireType: CmdCreateMarket,
 		},
 		{
-			name: "SuspendMarketRequest with zero Type",
+			name: "SuspendMarketRequest",
 			req: &SuspendMarketRequest{
 				BaseCommand: BaseCommand{
 					CommandID: "cmd-4",
@@ -212,10 +199,9 @@ func TestMarshalRequest_DerivedWireType(t *testing.T) {
 				},
 				Reason: "maintenance",
 			},
-			wantWireType: CmdSuspendMarket,
 		},
 		{
-			name: "ResumeMarketRequest with zero Type",
+			name: "ResumeMarketRequest",
 			req: &ResumeMarketRequest{
 				BaseCommand: BaseCommand{
 					CommandID: "cmd-5",
@@ -224,10 +210,9 @@ func TestMarshalRequest_DerivedWireType(t *testing.T) {
 					Timestamp: 1,
 				},
 			},
-			wantWireType: CmdResumeMarket,
 		},
 		{
-			name: "UserEventRequest with zero Type",
+			name: "UserEventRequest",
 			req: &UserEventRequest{
 				BaseCommand: BaseCommand{
 					CommandID: "cmd-6",
@@ -237,7 +222,6 @@ func TestMarshalRequest_DerivedWireType(t *testing.T) {
 				EventType: "EndOfBlock",
 				Key:       "block-1",
 			},
-			wantWireType: CmdUserEvent,
 		},
 	}
 
@@ -249,10 +233,21 @@ func TestMarshalRequest_DerivedWireType(t *testing.T) {
 			decoded, err := UnmarshalRequest(data)
 			require.NoError(t, err, "UnmarshalRequest must not fail on well-formed bytes")
 
-			base, ok := GetRequestBase(decoded)
-			require.True(t, ok)
-			require.Equal(t, tt.wantWireType, base.Type,
-				"wire type must be derived from concrete request type, not BaseCommand.Type")
+			// Verify the decoded type matches the original type.
+			switch tt.req.(type) {
+			case *PlaceOrderRequest:
+				require.IsType(t, &PlaceOrderRequest{}, decoded)
+			case *CancelOrderRequest:
+				require.IsType(t, &CancelOrderRequest{}, decoded)
+			case *CreateMarketRequest:
+				require.IsType(t, &CreateMarketRequest{}, decoded)
+			case *SuspendMarketRequest:
+				require.IsType(t, &SuspendMarketRequest{}, decoded)
+			case *ResumeMarketRequest:
+				require.IsType(t, &ResumeMarketRequest{}, decoded)
+			case *UserEventRequest:
+				require.IsType(t, &UserEventRequest{}, decoded)
+			}
 		})
 	}
 }
@@ -422,7 +417,6 @@ func TestUnmarshalRequest_TruncatedPayloads(t *testing.T) {
 	// Build a valid wire frame first, then truncate it at various offsets.
 	validReq := &PlaceOrderRequest{
 		BaseCommand: BaseCommand{
-			Type:      CmdPlaceOrder,
 			CommandID: "cmd-trunc",
 			UserID:    1,
 			MarketID:  "BTC-USDT",
@@ -455,7 +449,6 @@ func TestUnmarshalRequest_UnknownCommandType(t *testing.T) {
 	// command-type byte with an unrecognized value.
 	validReq := &ResumeMarketRequest{
 		BaseCommand: BaseCommand{
-			Type:      CmdResumeMarket,
 			CommandID: "cmd-unk",
 			UserID:    1,
 			MarketID:  "X",
@@ -479,7 +472,6 @@ func TestUnmarshalRequest_UnknownCommandType(t *testing.T) {
 func TestUnmarshalRequest_InvalidTimestamp(t *testing.T) {
 	validReq := &ResumeMarketRequest{
 		BaseCommand: BaseCommand{
-			Type:      CmdResumeMarket,
 			CommandID: "cmd-ts",
 			UserID:    1,
 			MarketID:  "X",

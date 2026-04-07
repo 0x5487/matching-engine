@@ -137,12 +137,10 @@ func main() {
 
 ```go
 // Serialize a request for MQ publishing.
-// MarshalRequest always derives the wire CommandType from the concrete Go type,
-// so dispatch will be correct even if BaseCommand.Type is left at its zero value.
-// Setting Type explicitly is still recommended for documentation clarity.
+// MarshalRequest derives the wire CommandType from the concrete Go type,
+// so cross-process dispatch is always correct.
 req := &protocol.PlaceOrderRequest{
     BaseCommand: protocol.BaseCommand{
-        Type:      protocol.CmdPlaceOrder, // recommended: set for clarity
         CommandID: "sell-1-cmd",
         MarketID:  "BTC-USDT",
         UserID:    1001,
@@ -162,8 +160,6 @@ data, err := protocol.MarshalRequest(req)
 decoded, err := protocol.UnmarshalRequest(data)
 // decoded is typed as any; use GetRequestBase or a type switch to dispatch.
 ```
-
-> **Note**: `MarshalRequest` auto-derives the `CommandType` written to the wire from the concrete request type, so cross-process dispatch is always correct. However, it is still good practice to set `BaseCommand.Type` explicitly in your structs so that the intent is clear to readers of the code.
 
 ### Request Semantics
 

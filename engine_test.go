@@ -34,7 +34,6 @@ func createMarket(t *testing.T, engine *MatchingEngine, marketID, minLotSize str
 	}
 	req := &protocol.CreateMarketRequest{
 		BaseCommand: protocol.BaseCommand{
-			Type:      protocol.CmdCreateMarket,
 			UserID:    1,
 			MarketID:  marketID,
 			CommandID: "setup-create-" + marketID,
@@ -98,7 +97,6 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		marketID := "BTC-USDT--" + "CreateMarketRequiresCommandID" + t.Name()
 		req := &protocol.CreateMarketRequest{
 			BaseCommand: protocol.BaseCommand{
-				Type:      protocol.CmdCreateMarket,
 				UserID:    1,
 				MarketID:  marketID,
 				CommandID: "",
@@ -122,7 +120,6 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		reqOrder1 := &protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
-				Type:      protocol.CmdPlaceOrder,
 				UserID:    1,
 				MarketID:  market1,
 				CommandID: "cmd-1",
@@ -141,7 +138,6 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		reqOrder2 := &protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
-				Type:      protocol.CmdPlaceOrder,
 				UserID:    2,
 				MarketID:  market2,
 				CommandID: "cmd-2",
@@ -169,7 +165,6 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		reqPlace1 := &protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
-				Type:      protocol.CmdPlaceOrder,
 				UserID:    1,
 				MarketID:  market1,
 				CommandID: "cancel-order-1",
@@ -187,7 +182,6 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		reqCancel1 := &protocol.CancelOrderRequest{
 			BaseCommand: protocol.BaseCommand{
-				Type:      protocol.CmdCancelOrder,
 				UserID:    1,
 				MarketID:  market1,
 				CommandID: "cancel-order-1-cancel",
@@ -209,7 +203,6 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		reqPlace := &protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
-				Type:      protocol.CmdPlaceOrder,
 				UserID:    7,
 				MarketID:  market,
 				CommandID: "missing-market-order-cmd",
@@ -254,7 +247,6 @@ func TestMatchingEngineShutdown(t *testing.T) {
 
 		reqAfter := &protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
-				Type:      protocol.CmdPlaceOrder,
 				UserID:    1,
 				MarketID:  "BTC-USDT-1",
 				CommandID: "after-shutdown",
@@ -281,7 +273,6 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 	reqPlace1 := &protocol.PlaceOrderRequest{
 		BaseCommand: protocol.BaseCommand{
-			Type:      protocol.CmdPlaceOrder,
 			UserID:    1,
 			MarketID:  marketID,
 			CommandID: "suspend-order-1",
@@ -299,7 +290,6 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 	reqSuspend := &protocol.SuspendMarketRequest{
 		BaseCommand: protocol.BaseCommand{
-			Type:      protocol.CmdSuspendMarket,
 			UserID:    1,
 			MarketID:  marketID,
 			CommandID: "suspend-market-1",
@@ -311,7 +301,6 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 	reqPlace2 := &protocol.PlaceOrderRequest{
 		BaseCommand: protocol.BaseCommand{
-			Type:      protocol.CmdPlaceOrder,
 			UserID:    2,
 			MarketID:  marketID,
 			CommandID: "suspend-order-2",
@@ -336,7 +325,6 @@ func TestManagement_SuspendResume(t *testing.T) {
 
 	reqResume := &protocol.ResumeMarketRequest{
 		BaseCommand: protocol.BaseCommand{
-			Type:      protocol.CmdResumeMarket,
 			UserID:    1,
 			MarketID:  marketID,
 			CommandID: "resume-market-1",
@@ -357,7 +345,6 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 
 	reqOrder1 := &protocol.PlaceOrderRequest{
 		BaseCommand: protocol.BaseCommand{
-			Type:      protocol.CmdPlaceOrder,
 			UserID:    1,
 			MarketID:  market1,
 			CommandID: "cmd-1",
@@ -373,7 +360,6 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 
 	reqUser1 := &protocol.UserEventRequest{
 		BaseCommand: protocol.BaseCommand{
-			Type:      protocol.CmdUserEvent,
 			UserID:    99,
 			MarketID:  market1,
 			CommandID: "user-event-1",
@@ -387,7 +373,6 @@ func TestUserEvent_GenericPayload(t *testing.T) {
 
 	reqOrder2 := &protocol.PlaceOrderRequest{
 		BaseCommand: protocol.BaseCommand{
-			Type:      protocol.CmdPlaceOrder,
 			UserID:    1,
 			MarketID:  market1,
 			CommandID: "cmd-2",

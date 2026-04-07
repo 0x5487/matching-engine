@@ -33,7 +33,6 @@ func benchmarkNewEngine(b *testing.B, marketID string) (context.Context, *Matchi
 	engine := NewMatchingEngine("bench-engine", NewDiscardPublishLog())
 	req := &protocol.CreateMarketRequest{
 		BaseCommand: protocol.BaseCommand{
-			Type:      protocol.CmdCreateMarket,
 			UserID:    1,
 			MarketID:  marketID,
 			CommandID: "bench-market-create-" + marketID,
@@ -118,7 +117,6 @@ func benchmarkCrossingCommandPool(marketID string, pairCount int) []*protocol.Pl
 		sellIndex := i * 2
 		reqs[sellIndex] = &protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
-				Type:      protocol.CmdPlaceOrder,
 				UserID:    1,
 				MarketID:  marketID,
 				CommandID: fmt.Sprintf("cross-sell-cmd-%d", sellIndex),
@@ -134,7 +132,6 @@ func benchmarkCrossingCommandPool(marketID string, pairCount int) []*protocol.Pl
 		buyIndex := sellIndex + 1
 		reqs[buyIndex] = &protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
-				Type:      protocol.CmdPlaceOrder,
 				UserID:    2,
 				MarketID:  marketID,
 				CommandID: fmt.Sprintf("cross-buy-cmd-%d", buyIndex),
@@ -191,7 +188,6 @@ func benchmarkWarmBookCommandPool(
 		nextOrderIndex++
 		req := &protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
-				Type:      protocol.CmdPlaceOrder,
 				UserID:    userID,
 				MarketID:  marketID,
 				CommandID: commandID,
@@ -362,7 +358,6 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 	marketID := benchmarkMarketBTC
 	req := &protocol.CreateMarketRequest{
 		BaseCommand: protocol.BaseCommand{
-			Type:      protocol.CmdCreateMarket,
 			UserID:    1,
 			MarketID:  marketID,
 			CommandID: "bench-market-create",
@@ -423,7 +418,6 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 
 		cmdPool[i] = &protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
-				Type:      protocol.CmdPlaceOrder,
 				UserID:    (rng.Uint64() % 1000) + 1,
 				MarketID:  marketID,
 				CommandID: fmt.Sprintf("o-%d-%d", i, rng.Int63()),
@@ -493,7 +487,6 @@ func BenchmarkSubmitAsyncBatch(b *testing.B) {
 	marketID := benchmarkMarketBTC
 	req := &protocol.CreateMarketRequest{
 		BaseCommand: protocol.BaseCommand{
-			Type:      protocol.CmdCreateMarket,
 			UserID:    1,
 			MarketID:  marketID,
 			CommandID: "bench-market-create-2",
@@ -551,7 +544,6 @@ func BenchmarkSubmitAsyncBatch(b *testing.B) {
 
 		cmdPool[i] = &protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
-				Type:      protocol.CmdPlaceOrder,
 				UserID:    (rng.Uint64() % 1000) + 1,
 				MarketID:  marketID,
 				CommandID: fmt.Sprintf("order-%d-%d", i, rng.Int63()),
