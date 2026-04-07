@@ -211,11 +211,11 @@ func (engine *MatchingEngine) Run() error {
 	return nil
 }
 
-// Query executes a read-only request against the matching engine.
-func (engine *MatchingEngine) Query(
+// GetDepth executes a read-only depth query against the matching engine.
+func (engine *MatchingEngine) GetDepth(
 	ctx context.Context,
-	query *protocol.Query,
-) (*Future[any], error) {
+	query *protocol.GetDepthQuery,
+) (*Future[*protocol.GetDepthResponse], error) {
 	if query == nil {
 		return nil, ErrInvalidParam
 	}
@@ -230,7 +230,32 @@ func (engine *MatchingEngine) Query(
 		return nil, err
 	}
 
-	return &Future[any]{
+	return &Future[*protocol.GetDepthResponse]{
+		engine:   engine,
+		respChan: respChan,
+	}, nil
+}
+
+// GetStats executes a read-only statistics query against the matching engine.
+func (engine *MatchingEngine) GetStats(
+	ctx context.Context,
+	query *protocol.GetStatsQuery,
+) (*Future[*protocol.GetStatsResponse], error) {
+	if query == nil {
+		return nil, ErrInvalidParam
+	}
+
+	if engine.isShutdown.Load() {
+		return nil, ErrShutdown
+	}
+
+	respChan := engine.acquireResponseChannel()
+	if err := engine.enqueue(ctx, nil, query, respChan); err != nil {
+		engine.releaseResponseChannel(respChan)
+		return nil, err
+	}
+
+	return &Future[*protocol.GetStatsResponse]{
 		engine:   engine,
 		respChan: respChan,
 	}, nil
@@ -250,6 +275,8 @@ type snapshotResult struct {
 	err  error
 }
 
+type snapshotQuery struct{}
+
 // TakeSnapshot captures a consistent snapshot of all order books and writes them to the specified directory.
 // It generates two files: `snapshot.bin` (binary data) and `metadata.json` (metadata).
 // Returns the metadata object or an error.
@@ -264,9 +291,7 @@ func (engine *MatchingEngine) TakeSnapshot(
 	respChan := engine.acquireResponseChannel()
 	defer engine.releaseResponseChannel(respChan)
 
-	query := &protocol.Query{
-		Type: protocol.QuerySnapshot,
-	}
+	query := &snapshotQuery{}
 
 	if err := engine.enqueue(ctx, nil, query, respChan); err != nil {
 		return nil, err
@@ -660,21 +685,22 @@ func (engine *MatchingEngine) handleCreateMarketRequest(
 }
 
 func (engine *MatchingEngine) processQuery(ev *InputEvent) {
-	q, ok := ev.Query.(*protocol.Query)
-	if !ok {
-		engine.respondQueryError(ev, ErrInvalidParam)
-		return
-	}
-
-	switch q.Type {
-	case protocol.QueryGetDepth, protocol.QueryGetStats:
+	switch q := ev.Query.(type) {
+	case *protocol.GetDepthQuery:
 		book := engine.orderbooks[q.MarketID]
 		if book != nil {
 			book.processQuery(ev)
 		} else {
 			engine.respondQueryError(ev, ErrNotFound)
 		}
-	case protocol.QuerySnapshot:
+	case *protocol.GetStatsQuery:
+		book := engine.orderbooks[q.MarketID]
+		if book != nil {
+			book.processQuery(ev)
+		} else {
+			engine.respondQueryError(ev, ErrNotFound)
+		}
+	case *snapshotQuery:
 		engine.handleSnapshotQuery(ev)
 	default:
 		// Unsupported query type

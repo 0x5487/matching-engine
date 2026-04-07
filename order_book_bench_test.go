@@ -64,12 +64,11 @@ func benchmarkDrain(
 ) *protocol.GetStatsResponse {
 	b.Helper()
 
-	query := &protocol.Query{
-		Type:     protocol.QueryGetStats,
-		MarketID: marketID,
+	query := &protocol.GetStatsQuery{
+		BaseQuery: protocol.BaseQuery{MarketID: marketID},
 	}
 
-	future, err := engine.Query(ctx, query)
+	future, err := engine.GetStats(ctx, query)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -79,11 +78,7 @@ func benchmarkDrain(
 		b.Fatal(err)
 	}
 
-	stats, ok := result.(*protocol.GetStatsResponse)
-	if !ok {
-		b.Fatalf("unexpected stats response type %T", result)
-	}
-
+	stats := result
 	return stats
 }
 
@@ -441,26 +436,24 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 	}
 
 	// Send a sentinel query to ensure all preceding commands are processed
-	query := &protocol.Query{
-		Type:     protocol.QueryGetStats,
-		MarketID: marketID,
+	query := &protocol.GetStatsQuery{
+		BaseQuery: protocol.BaseQuery{MarketID: marketID},
 	}
-	if f, err := engine.Query(ctx, query); err == nil {
+	if f, err := engine.GetStats(ctx, query); err == nil {
 		_, _ = f.Wait(ctx)
 	}
 
 	b.StopTimer()
 
 	// Report final state of the order book
-	if f, err := engine.Query(ctx, query); err == nil {
+	if f, err := engine.GetStats(ctx, query); err == nil {
 		if res, err := f.Wait(context.Background()); err == nil {
-			if stats, ok := res.(*protocol.GetStatsResponse); ok {
-				b.Logf(
-					"\nFinal Order Book State: Bids=%d levels, Asks=%d levels\n",
-					stats.BidDepthCount,
-					stats.AskDepthCount,
-				)
-			}
+			stats := res
+			b.Logf(
+				"\nFinal Order Book State: Bids=%d levels, Asks=%d levels\n",
+				stats.BidDepthCount,
+				stats.AskDepthCount,
+			)
 		}
 	}
 
@@ -568,11 +561,10 @@ func BenchmarkSubmitAsyncBatch(b *testing.B) {
 	}
 
 	// Wait for processing to finish
-	query := &protocol.Query{
-		Type:     protocol.QueryGetStats,
-		MarketID: marketID,
+	query := &protocol.GetStatsQuery{
+		BaseQuery: protocol.BaseQuery{MarketID: marketID},
 	}
-	if f, err := engine.Query(ctx, query); err == nil {
+	if f, err := engine.GetStats(ctx, query); err == nil {
 		_, _ = f.Wait(ctx)
 	}
 

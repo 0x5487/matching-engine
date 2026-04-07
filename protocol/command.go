@@ -529,32 +529,6 @@ func UnmarshalRequest(data []byte) (any, error) {
 	}
 }
 
-// QueryType identifies a read-only query handled by the engine.
-type QueryType uint8
-
-const (
-	// QueryUnknown represents an unknown query type.
-	QueryUnknown QueryType = 0
-	// QueryGetDepth returns order-book depth.
-	QueryGetDepth QueryType = 1
-	// QueryGetStats returns order-book statistics.
-	QueryGetStats QueryType = 2
-	// QuerySnapshot returns in-memory snapshots for all books.
-	QuerySnapshot QueryType = 3
-)
-
-// Query represents a read-only request against the matching engine.
-type Query struct {
-	Type     QueryType
-	MarketID string
-	Payload  any
-}
-
-// GetDepthRequest contains parameters for a depth query.
-type GetDepthRequest struct {
-	Limit uint32
-}
-
 // mustWriteString writes a length-prefixed string into buf.
 // Callers MUST validate len(s) <= maxUint16Value before calling this function;
 // it panics if the string is too long as a last-resort programming-error guard.

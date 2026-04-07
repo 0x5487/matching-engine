@@ -518,23 +518,12 @@ func (book *OrderBook) handleAmendOrder(ev *InputEvent, req *protocol.AmendOrder
 }
 
 func (book *OrderBook) processQuery(ev *InputEvent) {
-	q, ok := ev.Query.(*protocol.Query)
-	if !ok {
-		book.sendResponse(ev.Resp, ErrInvalidParam)
-		return
-	}
-
-	switch q.Type {
-	case protocol.QueryGetDepth:
-		req, ok := q.Payload.(*protocol.GetDepthRequest)
-		if !ok {
-			book.sendResponse(ev.Resp, ErrInvalidParam)
-			return
-		}
-		book.sendResponse(ev.Resp, book.depth(req.Limit))
-	case protocol.QueryGetStats:
+	switch q := ev.Query.(type) {
+	case *protocol.GetDepthQuery:
+		book.sendResponse(ev.Resp, book.depth(q.Limit))
+	case *protocol.GetStatsQuery:
 		book.sendResponse(ev.Resp, book.stats())
-	case protocol.QuerySnapshot:
+	case *snapshotQuery:
 		book.sendResponse(ev.Resp, book.createSnapshot())
 	default:
 		book.sendResponse(ev.Resp, ErrUnknownQuery)

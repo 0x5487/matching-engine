@@ -52,16 +52,15 @@ func createMarket(t *testing.T, engine *MatchingEngine, marketID, minLotSize str
 func waitForBidCount(t *testing.T, engine *MatchingEngine, marketID string, count int64) {
 	t.Helper()
 	assert.Eventually(t, func() bool {
-		f, e := engine.Query(context.Background(), &protocol.Query{
-			Type:     protocol.QueryGetStats,
-			MarketID: marketID,
+		f, e := engine.GetStats(context.Background(), &protocol.GetStatsQuery{
+			BaseQuery: protocol.BaseQuery{MarketID: marketID},
 		})
 		if e != nil {
 			return false
 		}
 		res, e := f.Wait(context.Background())
-		stats, ok := res.(*protocol.GetStatsResponse)
-		return e == nil && ok && stats.BidOrderCount == count
+		stats := res
+		return e == nil && stats != nil && stats.BidOrderCount == count
 	}, time.Second, 10*time.Millisecond)
 }
 
@@ -70,16 +69,15 @@ func waitForBidCount(t *testing.T, engine *MatchingEngine, marketID string, coun
 func waitForAskCount(t *testing.T, engine *MatchingEngine, marketID string, count int64) {
 	t.Helper()
 	assert.Eventually(t, func() bool {
-		f, e := engine.Query(context.Background(), &protocol.Query{
-			Type:     protocol.QueryGetStats,
-			MarketID: marketID,
+		f, e := engine.GetStats(context.Background(), &protocol.GetStatsQuery{
+			BaseQuery: protocol.BaseQuery{MarketID: marketID},
 		})
 		if e != nil {
 			return false
 		}
 		res, e := f.Wait(context.Background())
-		stats, ok := res.(*protocol.GetStatsResponse)
-		return e == nil && ok && stats.AskOrderCount == count
+		stats := res
+		return e == nil && stats != nil && stats.AskOrderCount == count
 	}, time.Second, 10*time.Millisecond)
 }
 
