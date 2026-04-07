@@ -1,6 +1,6 @@
 # Matching Engine SDK
 
-A high-performance, in-memory order matching engine written in Go. Designed for crypto exchanges, trading simulations, and financial systems requiring precise and fast order execution.
+A high-performance, in-memory matching engine SDK written in Go. Designed for crypto exchanges, trading simulations, and financial systems requiring precise and fast order execution.
 
 ## 🚀 Features
 
