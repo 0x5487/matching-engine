@@ -587,9 +587,8 @@ func BenchmarkAggregatedBook_GetDepth(b *testing.B) {
 		})
 	}
 
-	b.ResetTimer()
 	b.ReportAllocs()
-	for range b.N {
+	for b.Loop() {
 		_ = ab.GetDepth(10)
 	}
 }
