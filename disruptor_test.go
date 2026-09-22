@@ -317,7 +317,7 @@ func (h *simpleHandler[T]) OnEvent(e *T) {
 // --- Benchmarks ---
 
 func BenchmarkDisruptor(b *testing.B) {
-	var counter uint64
+	var counter atomic.Uint64
 
 	handler := &CounterEventHandler[TestEvent]{
 		goSize: b.N,
@@ -335,7 +335,7 @@ func BenchmarkDisruptor(b *testing.B) {
 		go func() {
 			defer wg.Done()
 			for range SchPerGo {
-				id := atomic.AddUint64(&counter, 1)
+				id := counter.Add(1)
 				evt := TestEvent{ID: int64(id)} //nolint:gosec // G115: test code
 				rb.Publish(evt)
 			}

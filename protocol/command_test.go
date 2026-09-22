@@ -247,6 +247,8 @@ func TestMarshalRequest_DerivedWireType(t *testing.T) {
 				require.IsType(t, &ResumeMarketRequest{}, decoded)
 			case *UserEventRequest:
 				require.IsType(t, &UserEventRequest{}, decoded)
+			default:
+				t.Fatalf("unexpected request type: %T", tt.req)
 			}
 		})
 	}

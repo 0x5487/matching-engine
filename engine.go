@@ -637,7 +637,7 @@ func (engine *MatchingEngine) restoreMarket(f *os.File, segment MarketSegment, f
 		return err
 	}
 
-	book := newOrderBook(engine.engineID, segment.MarketID, engine.publishTrader)
+	book := newOrderBookWithPublisher(engine.engineID, segment.MarketID, engine.publishTrader)
 	book.Restore(&snap)
 	engine.orderbooks[segment.MarketID] = book
 	return nil
@@ -766,7 +766,7 @@ func (engine *MatchingEngine) handleCreateMarket(
 		opts = append(opts, WithLotSize(minLotSize))
 	}
 
-	newbook := newOrderBook(engine.engineID, marketID, engine.publishTrader, opts...)
+	newbook := newOrderBookWithPublisher(engine.engineID, marketID, engine.publishTrader, opts...)
 	engine.orderbooks[marketID] = newbook
 
 	log := NewAdminLog(

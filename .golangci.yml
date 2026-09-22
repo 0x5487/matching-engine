@@ -21,6 +21,7 @@ linters:
     - maintidx
     - depguard
     - exhaustruct
+    - exhaustruct_v5
     - wrapcheck
     - varnamelen
     - gochecknoglobals
@@ -112,6 +113,7 @@ linters:
           - maintidx
           - gocognit
           - gocyclo
+          - goconst
         path: _test\.go$
 
 issues:

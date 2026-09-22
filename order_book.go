@@ -110,8 +110,8 @@ func NewOrderBook(
 	return book
 }
 
-// newOrderBook creates a new OrderBook instance (internal backward-compatible constructor).
-func newOrderBook(
+// newOrderBookWithPublisher creates a new OrderBook instance (internal backward-compatible constructor).
+func newOrderBookWithPublisher(
 	engineID string,
 	marketID string,
 	publishTrader Publisher,
@@ -192,6 +192,298 @@ func (book *OrderBook) Snapshot() *OrderBookSnapshot {
 // GetDepth returns the aggregated market depth up to the specified limit.
 func (book *OrderBook) GetDepth(limit uint32) *protocol.GetDepthResponse {
 	return book.depth(limit)
+}
+
+// PlaceOrder processes an order synchronously and returns the resulting LogBatch.
+// The caller is responsible for processing logs and calling batch.Release().
+func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, error) {
+	if req == nil {
+		return nil, ErrInvalidParam
+	}
+	if req.Timestamp <= 0 {
+		return book.createRejectBatch(
+			req.CommandID,
+			req.OrderID,
+			req.UserID,
+			protocol.RejectReasonInvalidPayload,
+			req.Timestamp,
+		), nil
+	}
+
+	if book.state == protocol.OrderBookStateHalted {
+		return book.createRejectBatch(
+			req.CommandID,
+			req.OrderID,
+			req.UserID,
+			protocol.RejectReasonMarketHalted,
+			req.Timestamp,
+		), nil
+	}
+	if book.state == protocol.OrderBookStateSuspended {
+		return book.createRejectBatch(
+			req.CommandID,
+			req.OrderID,
+			req.UserID,
+			protocol.RejectReasonMarketSuspended,
+			req.Timestamp,
+		), nil
+	}
+
+	// Basic validation
+	isValid := true
+	if req.OrderType == Market {
+		if req.Size.IsZero() && req.QuoteSize.IsZero() {
+			isValid = false
+		}
+	} else {
+		if req.Price.IsZero() || req.Size.IsZero() {
+			isValid = false
+		}
+	}
+
+	if !isValid {
+		return book.createRejectBatch(
+			req.CommandID,
+			req.OrderID,
+			req.UserID,
+			protocol.RejectReasonInvalidPayload,
+			req.Timestamp,
+		), nil
+	}
+
+	// Check for duplicate ID
+	if book.bidQueue.order(req.OrderID) != nil || book.askQueue.order(req.OrderID) != nil {
+		return book.createRejectBatch(
+			req.CommandID,
+			req.OrderID,
+			req.UserID,
+			protocol.RejectReasonDuplicateID,
+			req.Timestamp,
+		), nil
+	}
+
+	order := acquireOrder()
+	order.ID = req.OrderID
+	order.Side = req.Side
+	order.Price = req.Price
+	order.Size = req.Size
+	order.Type = req.OrderType
+	order.UserID = req.UserID
+	order.Timestamp = req.Timestamp
+
+	if req.VisibleSize.GreaterThan(udecimal.Zero) && req.VisibleSize.LessThan(req.Size) {
+		order.VisibleLimit = req.VisibleSize
+	}
+
+	var batch *LogBatch
+	switch order.Type {
+	case Limit:
+		batch = book.handleLimitOrder(req.CommandID, order, req.Timestamp)
+	case FOK:
+		batch = book.handleFOKOrder(req.CommandID, order, req.Timestamp)
+	case IOC:
+		batch = book.handleIOCOrder(req.CommandID, order, req.Timestamp)
+	case PostOnly:
+		batch = book.handlePostOnlyOrder(req.CommandID, order, req.Timestamp)
+	case Market:
+		batch = book.handleMarketOrder(req.CommandID, order, req.QuoteSize, req.Timestamp)
+	default:
+		releaseOrder(order)
+		return nil, ErrInvalidParam
+	}
+
+	return batch, nil
+}
+
+// CancelOrder processes an order cancellation synchronously and returns the resulting LogBatch.
+// The caller is responsible for processing logs and calling batch.Release().
+func (book *OrderBook) CancelOrder(req *protocol.CancelOrderRequest) (*LogBatch, error) {
+	if req == nil {
+		return nil, ErrInvalidParam
+	}
+	if req.Timestamp <= 0 || req.OrderID == "" {
+		return book.createRejectBatch(
+			req.CommandID,
+			req.OrderID,
+			req.UserID,
+			protocol.RejectReasonInvalidPayload,
+			req.Timestamp,
+		), nil
+	}
+
+	if book.state == protocol.OrderBookStateHalted {
+		return book.createRejectBatch(
+			req.CommandID,
+			req.OrderID,
+			req.UserID,
+			protocol.RejectReasonMarketHalted,
+			req.Timestamp,
+		), nil
+	}
+
+	order, ok := book.findOrder(req.OrderID)
+	if !ok || order.UserID != req.UserID {
+		return book.createRejectBatch(
+			req.CommandID,
+			req.OrderID,
+			req.UserID,
+			protocol.RejectReasonOrderNotFound,
+			req.Timestamp,
+		), nil
+	}
+
+	myQueue := book.bidQueue
+	if order.Side == Sell {
+		myQueue = book.askQueue
+	}
+
+	myQueue.removeOrder(order.Price, order.ID)
+	batch := acquireLogBatch()
+	totalSize := order.Size.Add(order.HiddenSize)
+	log := NewCancelLog(
+		book.seqID.Add(1),
+		req.CommandID,
+		book.engineID,
+		book.marketID,
+		order.ID,
+		order.UserID,
+		order.Side,
+		order.Price,
+		totalSize,
+		order.Type,
+		req.Timestamp,
+	)
+	batch.Logs = append(batch.Logs, log)
+	releaseOrder(order)
+
+	return batch, nil
+}
+
+// AmendOrder processes an order amendment synchronously and returns the resulting LogBatch.
+// The caller is responsible for processing logs and calling batch.Release().
+func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, error) {
+	if req == nil {
+		return nil, ErrInvalidParam
+	}
+	if req.Timestamp <= 0 || req.OrderID == "" {
+		return book.createRejectBatch(
+			req.CommandID,
+			req.OrderID,
+			req.UserID,
+			protocol.RejectReasonInvalidPayload,
+			req.Timestamp,
+		), nil
+	}
+
+	if book.state == protocol.OrderBookStateHalted {
+		return book.createRejectBatch(
+			req.CommandID,
+			req.OrderID,
+			req.UserID,
+			protocol.RejectReasonMarketHalted,
+			req.Timestamp,
+		), nil
+	}
+	if book.state == protocol.OrderBookStateSuspended {
+		return book.createRejectBatch(
+			req.CommandID,
+			req.OrderID,
+			req.UserID,
+			protocol.RejectReasonMarketSuspended,
+			req.Timestamp,
+		), nil
+	}
+
+	order, ok := book.findOrder(req.OrderID)
+	if !ok || order.UserID != req.UserID {
+		return book.createRejectBatch(
+			req.CommandID,
+			req.OrderID,
+			req.UserID,
+			protocol.RejectReasonOrderNotFound,
+			req.Timestamp,
+		), nil
+	}
+
+	newPrice := req.NewPrice
+	newSize := req.NewSize
+
+	// 0 means no change
+	if newPrice.IsZero() {
+		newPrice = order.Price
+	}
+	if newSize.IsZero() {
+		newSize = order.Size.Add(order.HiddenSize)
+	}
+
+	myQueue := book.bidQueue
+	if order.Side == Sell {
+		myQueue = book.askQueue
+	}
+
+	oldPrice := order.Price
+	oldTotalSize := order.Size.Add(order.HiddenSize)
+
+	isPriceChange := !oldPrice.Equal(newPrice)
+	isSizeIncrease := newSize.GreaterThan(oldTotalSize)
+
+	amendBatch := acquireLogBatch()
+	log := NewAmendLog(
+		book.seqID.Add(1),
+		req.CommandID,
+		book.engineID,
+		book.marketID,
+		order.ID,
+		order.UserID,
+		order.Side,
+		newPrice,
+		newSize,
+		oldPrice,
+		oldTotalSize,
+		order.Type,
+		req.Timestamp,
+	)
+	amendBatch.Logs = append(amendBatch.Logs, log)
+
+	if isPriceChange || isSizeIncrease {
+		// Path 1: Priority Loss (Re-match)
+		myQueue.removeOrder(oldPrice, order.ID)
+		order.Price = newPrice
+		order.Timestamp = req.Timestamp
+
+		// Recalculate Iceberg fields for the new total size
+		if order.VisibleLimit.IsZero() {
+			order.Size = newSize
+			order.HiddenSize = udecimal.Zero
+		} else {
+			if newSize.GreaterThan(order.VisibleLimit) {
+				order.Size = order.VisibleLimit
+				order.HiddenSize = newSize.Sub(order.VisibleLimit)
+			} else {
+				order.Size = newSize
+				order.HiddenSize = udecimal.Zero
+			}
+		}
+
+		batch := book.handleLimitOrder(req.CommandID, order, req.Timestamp)
+		if batch != nil {
+			amendBatch.Logs = append(amendBatch.Logs, batch.Logs...)
+			batch.Release()
+		}
+	} else if newSize.LessThan(oldTotalSize) {
+		// Path 2: Priority Retention (In-place update)
+		delta := oldTotalSize.Sub(newSize)
+		if delta.LessThanOrEqual(order.HiddenSize) {
+			order.HiddenSize = order.HiddenSize.Sub(delta)
+		} else {
+			remainingDelta := delta.Sub(order.HiddenSize)
+			order.HiddenSize = udecimal.Zero
+			newVisibleSize := order.Size.Sub(remainingDelta)
+			myQueue.updateOrderSize(order.ID, newVisibleSize)
+		}
+	}
+
+	return amendBatch, nil
 }
 
 func (book *OrderBook) processCommand(ev *InputEvent) {
@@ -328,77 +620,6 @@ func (book *OrderBook) createRejectBatch(
 	return batch
 }
 
-// PlaceOrder processes an order synchronously and returns the resulting LogBatch.
-// The caller is responsible for processing logs and calling batch.Release().
-func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, error) {
-	if req == nil {
-		return nil, ErrInvalidParam
-	}
-	if req.Timestamp <= 0 {
-		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonInvalidPayload, req.Timestamp), nil
-	}
-
-	if book.state == protocol.OrderBookStateHalted {
-		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonMarketHalted, req.Timestamp), nil
-	}
-	if book.state == protocol.OrderBookStateSuspended {
-		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonMarketSuspended, req.Timestamp), nil
-	}
-
-	// Basic validation
-	isValid := true
-	if req.OrderType == Market {
-		if req.Size.IsZero() && req.QuoteSize.IsZero() {
-			isValid = false
-		}
-	} else {
-		if req.Price.IsZero() || req.Size.IsZero() {
-			isValid = false
-		}
-	}
-
-	if !isValid {
-		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonInvalidPayload, req.Timestamp), nil
-	}
-
-	// Check for duplicate ID
-	if book.bidQueue.order(req.OrderID) != nil || book.askQueue.order(req.OrderID) != nil {
-		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonDuplicateID, req.Timestamp), nil
-	}
-
-	order := acquireOrder()
-	order.ID = req.OrderID
-	order.Side = req.Side
-	order.Price = req.Price
-	order.Size = req.Size
-	order.Type = req.OrderType
-	order.UserID = req.UserID
-	order.Timestamp = req.Timestamp
-
-	if req.VisibleSize.GreaterThan(udecimal.Zero) && req.VisibleSize.LessThan(req.Size) {
-		order.VisibleLimit = req.VisibleSize
-	}
-
-	var batch *LogBatch
-	switch order.Type {
-	case Limit:
-		batch = book.handleLimitOrder(req.CommandID, order, req.Timestamp)
-	case FOK:
-		batch = book.handleFOKOrder(req.CommandID, order, req.Timestamp)
-	case IOC:
-		batch = book.handleIOCOrder(req.CommandID, order, req.Timestamp)
-	case PostOnly:
-		batch = book.handlePostOnlyOrder(req.CommandID, order, req.Timestamp)
-	case Market:
-		batch = book.handleMarketOrder(req.CommandID, order, req.QuoteSize, req.Timestamp)
-	default:
-		releaseOrder(order)
-		return nil, ErrInvalidParam
-	}
-
-	return batch, nil
-}
-
 func (book *OrderBook) handlePlaceOrder(ev *InputEvent, req *protocol.PlaceOrderRequest) {
 	batch, err := book.PlaceOrder(req)
 	if err != nil {
@@ -425,52 +646,6 @@ func (book *OrderBook) handlePlaceOrder(ev *InputEvent, req *protocol.PlaceOrder
 	book.sendResponse(ev.Resp, true)
 }
 
-// CancelOrder processes an order cancellation synchronously and returns the resulting LogBatch.
-// The caller is responsible for processing logs and calling batch.Release().
-func (book *OrderBook) CancelOrder(req *protocol.CancelOrderRequest) (*LogBatch, error) {
-	if req == nil {
-		return nil, ErrInvalidParam
-	}
-	if req.Timestamp <= 0 || req.OrderID == "" {
-		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonInvalidPayload, req.Timestamp), nil
-	}
-
-	if book.state == protocol.OrderBookStateHalted {
-		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonMarketHalted, req.Timestamp), nil
-	}
-
-	order, ok := book.findOrder(req.OrderID)
-	if !ok || order.UserID != req.UserID {
-		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonOrderNotFound, req.Timestamp), nil
-	}
-
-	myQueue := book.bidQueue
-	if order.Side == Sell {
-		myQueue = book.askQueue
-	}
-
-	myQueue.removeOrder(order.Price, order.ID)
-	batch := acquireLogBatch()
-	totalSize := order.Size.Add(order.HiddenSize)
-	log := NewCancelLog(
-		book.seqID.Add(1),
-		req.CommandID,
-		book.engineID,
-		book.marketID,
-		order.ID,
-		order.UserID,
-		order.Side,
-		order.Price,
-		totalSize,
-		order.Type,
-		req.Timestamp,
-	)
-	batch.Logs = append(batch.Logs, log)
-	releaseOrder(order)
-
-	return batch, nil
-}
-
 func (book *OrderBook) handleCancelOrder(ev *InputEvent, req *protocol.CancelOrderRequest) {
 	batch, err := book.CancelOrder(req)
 	if err != nil {
@@ -495,111 +670,6 @@ func (book *OrderBook) handleCancelOrder(ev *InputEvent, req *protocol.CancelOrd
 		batch.Release()
 	}
 	book.sendResponse(ev.Resp, true)
-}
-
-// AmendOrder processes an order amendment synchronously and returns the resulting LogBatch.
-// The caller is responsible for processing logs and calling batch.Release().
-func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, error) {
-	if req == nil {
-		return nil, ErrInvalidParam
-	}
-	if req.Timestamp <= 0 || req.OrderID == "" {
-		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonInvalidPayload, req.Timestamp), nil
-	}
-
-	if book.state == protocol.OrderBookStateHalted {
-		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonMarketHalted, req.Timestamp), nil
-	}
-	if book.state == protocol.OrderBookStateSuspended {
-		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonMarketSuspended, req.Timestamp), nil
-	}
-
-	order, ok := book.findOrder(req.OrderID)
-	if !ok || order.UserID != req.UserID {
-		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonOrderNotFound, req.Timestamp), nil
-	}
-
-	newPrice := req.NewPrice
-	newSize := req.NewSize
-
-	// 0 means no change
-	if newPrice.IsZero() {
-		newPrice = order.Price
-	}
-	if newSize.IsZero() {
-		newSize = order.Size.Add(order.HiddenSize)
-	}
-
-	myQueue := book.bidQueue
-	if order.Side == Sell {
-		myQueue = book.askQueue
-	}
-
-	oldPrice := order.Price
-	oldTotalSize := order.Size.Add(order.HiddenSize)
-
-	isPriceChange := !oldPrice.Equal(newPrice)
-	isSizeIncrease := newSize.GreaterThan(oldTotalSize)
-
-	amendBatch := acquireLogBatch()
-	log := NewAmendLog(
-		book.seqID.Add(1),
-		req.CommandID,
-		book.engineID,
-		book.marketID,
-		order.ID,
-		order.UserID,
-		order.Side,
-		newPrice,
-		newSize,
-		oldPrice,
-		oldTotalSize,
-		order.Type,
-		req.Timestamp,
-	)
-	amendBatch.Logs = append(amendBatch.Logs, log)
-
-	if isPriceChange || isSizeIncrease {
-		// Path 1: Priority Loss (Re-match)
-		myQueue.removeOrder(oldPrice, order.ID)
-		order.Price = newPrice
-		order.Timestamp = req.Timestamp
-
-		// Recalculate Iceberg fields for the new total size
-		if order.VisibleLimit.IsZero() {
-			order.Size = newSize
-			order.HiddenSize = udecimal.Zero
-		} else {
-			if newSize.GreaterThan(order.VisibleLimit) {
-				order.Size = order.VisibleLimit
-				order.HiddenSize = newSize.Sub(order.VisibleLimit)
-			} else {
-				order.Size = newSize
-				order.HiddenSize = udecimal.Zero
-			}
-		}
-
-		batch := book.handleLimitOrder(req.CommandID, order, req.Timestamp)
-		if batch != nil {
-			amendBatch.Logs = append(amendBatch.Logs, batch.Logs...)
-			batch.Release()
-		}
-	} else {
-		// Path 2: Priority Retention (In-place update)
-		if newSize.LessThan(oldTotalSize) {
-			delta := oldTotalSize.Sub(newSize)
-			if delta.LessThanOrEqual(order.HiddenSize) {
-				order.HiddenSize = order.HiddenSize.Sub(delta)
-			} else {
-				remainingDelta := delta.Sub(order.HiddenSize)
-				order.HiddenSize = udecimal.Zero
-				newVisibleSize := order.Size.Sub(remainingDelta)
-				myQueue.updateOrderSize(order.ID, newVisibleSize)
-			}
-		}
-	}
-
-	return amendBatch, nil
 }
 
 func (book *OrderBook) handleAmendOrder(ev *InputEvent, req *protocol.AmendOrderRequest) {
@@ -683,31 +753,6 @@ func (book *OrderBook) rejectInvalidPayload(
 	book.publisher.Publish(batch.Logs)
 	releaseBookLog(log)
 	batch.Release()
-}
-
-func (book *OrderBook) validateState(
-	commandID string,
-	userID uint64,
-	orderID string,
-	timestamp int64,
-) bool {
-	if !book.validateBasic(commandID, userID, orderID, timestamp) {
-		return false
-	}
-
-	if book.state == protocol.OrderBookStateSuspended {
-		book.rejectInvalidPayload(
-			commandID,
-			book.marketID,
-			orderID,
-			userID,
-			protocol.RejectReasonMarketSuspended,
-			timestamp,
-		)
-		return false
-	}
-
-	return true
 }
 
 func (book *OrderBook) validateBasic(

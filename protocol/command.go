@@ -213,7 +213,17 @@ func MarshalRequest(req any) ([]byte, error) {
 		sizeStr := r.Size.String()
 		visStr := r.VisibleSize.String()
 		quoteStr := r.QuoteSize.String()
-		pSize := sideFieldSize + orderTypeSize + stringLenSize*5 + len(r.OrderID) + len(priceStr) + len(sizeStr) + len(visStr) + len(quoteStr)
+		pSize := sideFieldSize + orderTypeSize + stringLenSize*5 + len(
+			r.OrderID,
+		) + len(
+			priceStr,
+		) + len(
+			sizeStr,
+		) + len(
+			visStr,
+		) + len(
+			quoteStr,
+		)
 		buf := make([]byte, pSize)
 		offset := 0
 		buf[offset] = sideToUint8(r.Side)
@@ -384,6 +394,8 @@ func MarshalRequest(req any) ([]byte, error) {
 	}
 	offset += n
 
+	// payloadSize is non-negative and fits in uint32.
+	/* #nosec G115 */
 	binary.BigEndian.PutUint32(buf[offset:], uint32(payloadSize))
 	offset += 4
 
@@ -452,6 +464,7 @@ func UnmarshalRequest(data []byte) (any, error) {
 			return nil, io.ErrUnexpectedEOF
 		}
 		pOffset := 0
+		/* #nosec G115 */
 		side := Side(pData[pOffset])
 		pOffset++
 		orderType := OrderTypeFromUint8(pData[pOffset])

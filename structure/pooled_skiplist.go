@@ -122,7 +122,7 @@ func (sl *PooledSkiplist) Insert(price udecimal.Decimal) (bool, error) {
 			sl.less(sl.nodes[sl.nodes[x].Forward[i]].Price, price) {
 			x = sl.nodes[x].Forward[i]
 		}
-		update[i] = x //nolint:gosec // G602: i < currentLevel <= SkiplistMaxLevel == len(update)
+		update[i] = x
 	}
 
 	x = sl.nodes[x].Forward[0]
@@ -153,8 +153,8 @@ func (sl *PooledSkiplist) Insert(price udecimal.Decimal) (bool, error) {
 	sl.nodes[newNode].Level = newLevel
 
 	for i := range newLevel {
-		sl.nodes[newNode].Forward[i] = sl.nodes[update[i]].Forward[i] //nolint:gosec // G602: i < newLevel <= SkiplistMaxLevel == len(update)
-		sl.nodes[update[i]].Forward[i] = newNode                      //nolint:gosec // G602: i < newLevel <= SkiplistMaxLevel == len(update)
+		sl.nodes[newNode].Forward[i] = sl.nodes[update[i]].Forward[i]
+		sl.nodes[update[i]].Forward[i] = newNode
 	}
 
 	sl.count++
@@ -201,7 +201,7 @@ func (sl *PooledSkiplist) Delete(price udecimal.Decimal) bool {
 			sl.less(sl.nodes[sl.nodes[x].Forward[i]].Price, price) {
 			x = sl.nodes[x].Forward[i]
 		}
-		update[i] = x //nolint:gosec // G602: i < currentLevel <= SkiplistMaxLevel == len(update)
+		update[i] = x
 	}
 
 	x = sl.nodes[x].Forward[0]
@@ -216,7 +216,6 @@ func (sl *PooledSkiplist) Delete(price udecimal.Decimal) bool {
 	// gosec cannot verify this cross-function, so accesses are annotated.
 	delLevel := min(sl.level, int32(SkiplistMaxLevel))
 	for i := range delLevel {
-		//nolint:gosec // G602: i < delLevel <= SkiplistMaxLevel == len(update)
 		if sl.nodes[update[i]].Forward[i] != x {
 			break
 		}

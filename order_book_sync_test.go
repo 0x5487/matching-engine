@@ -148,7 +148,7 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 		depth := book.GetDepth(10)
 		assert.Empty(t, depth.Bids)
 
-		// Cancelling again should return a RejectLog
+		// Canceling again should return a RejectLog
 		cBatch2, err := book.CancelOrder(cancelReq)
 		require.NoError(t, err)
 		require.NotNil(t, cBatch2)
@@ -266,21 +266,7 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 		book := match.NewOrderBook("BTC-USDT")
 
 		// 1. Invalid Timestamp (zero or negative)
-		_, err := book.PlaceOrder(&protocol.PlaceOrderRequest{
-			BaseCommand: protocol.BaseCommand{
-				MarketID:  "BTC-USDT",
-				CommandID: "cmd-bad-ts",
-				UserID:    1,
-				Timestamp: 0,
-			},
-			OrderID:   "order-bad-ts",
-			Side:      protocol.SideBuy,
-			OrderType: protocol.OrderTypeLimit,
-			Price:     udecimal.MustFromInt64(100, 0),
-			Size:      udecimal.MustFromInt64(1, 0),
-		})
-		// With our update, missing timestamp returns a RejectLog with RejectReasonInvalidPayload
-		// Let's verify:
+		// Missing timestamp returns a RejectLog with RejectReasonInvalidPayload
 		batch, err := book.PlaceOrder(&protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
 				MarketID:  "BTC-USDT",

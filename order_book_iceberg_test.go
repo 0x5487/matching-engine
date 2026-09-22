@@ -16,7 +16,7 @@ const (
 
 func TestIceberg_Placement(t *testing.T) {
 	publishTrader := NewMemoryPublishLog()
-	orderBook := newOrderBook("test-engine", "BTC-USDT", publishTrader)
+	orderBook := newOrderBookWithPublisher("test-engine", "BTC-USDT", publishTrader)
 
 	// Iceberg: Total 100, Visible 10
 	testPlace(orderBook, 101, "cmd-ice-1", time.Now().UnixNano(), &protocol.PlaceOrderRequest{
@@ -35,12 +35,12 @@ func TestIceberg_Placement(t *testing.T) {
 
 func TestIceberg_Replenishment(t *testing.T) {
 	publishTrader := NewMemoryPublishLog()
-	orderBook := newOrderBook("test-engine", "BTC-USDT", publishTrader)
+	orderBook := newOrderBookWithPublisher("test-engine", "BTC-USDT", publishTrader)
 
-	ts := time.Now().UnixNano()
+	tsNano := time.Now().UnixNano()
 
 	// 1. Place Iceberg: Total 100, Visible 10
-	testPlace(orderBook, 101, "cmd-ice-1", ts, &protocol.PlaceOrderRequest{
+	testPlace(orderBook, 101, "cmd-ice-1", tsNano, &protocol.PlaceOrderRequest{
 		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
@@ -50,7 +50,7 @@ func TestIceberg_Replenishment(t *testing.T) {
 	})
 
 	// 2. Place Taker: Buy 10
-	testPlace(orderBook, 201, "cmd-taker-1", ts+100, &protocol.PlaceOrderRequest{
+	testPlace(orderBook, 201, "cmd-taker-1", tsNano+100, &protocol.PlaceOrderRequest{
 		OrderID:   "taker-1",
 		OrderType: Limit,
 		Side:      Buy,
@@ -83,12 +83,12 @@ func TestIceberg_Replenishment(t *testing.T) {
 
 func TestIceberg_ReplenishmentPriority(t *testing.T) {
 	publishTrader := NewMemoryPublishLog()
-	orderBook := newOrderBook("test-engine", "BTC-USDT", publishTrader)
+	orderBook := newOrderBookWithPublisher("test-engine", "BTC-USDT", publishTrader)
 
-	ts := time.Now().UnixNano()
+	tsNano := time.Now().UnixNano()
 
 	// 1. Place Iceberg: Total 100, Visible 10 @ 100
-	testPlace(orderBook, 101, "cmd-ice-1", ts, &protocol.PlaceOrderRequest{
+	testPlace(orderBook, 101, "cmd-ice-1", tsNano, &protocol.PlaceOrderRequest{
 		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
@@ -98,7 +98,7 @@ func TestIceberg_ReplenishmentPriority(t *testing.T) {
 	})
 
 	// 2. Place Normal Order: 10 @ 100 (queued after ice-1)
-	testPlace(orderBook, 102, "cmd-norm-1", ts+1, &protocol.PlaceOrderRequest{
+	testPlace(orderBook, 102, "cmd-norm-1", tsNano+1, &protocol.PlaceOrderRequest{
 		OrderID:   "norm-1",
 		OrderType: Limit,
 		Side:      Sell,
@@ -112,7 +112,7 @@ func TestIceberg_ReplenishmentPriority(t *testing.T) {
 
 	// 3. Taker buys 10. This exhausts ice-1's visible part.
 	// ice-1 should replenish and move BEHIND norm-1.
-	testPlace(orderBook, 201, "cmd-taker-1", ts+100, &protocol.PlaceOrderRequest{
+	testPlace(orderBook, 201, "cmd-taker-1", tsNano+100, &protocol.PlaceOrderRequest{
 		OrderID:   "taker-1",
 		OrderType: Limit,
 		Side:      Buy,
@@ -121,7 +121,7 @@ func TestIceberg_ReplenishmentPriority(t *testing.T) {
 	})
 
 	// 4. Taker buys another 10. This should match with norm-1, NOT ice-1.
-	testPlace(orderBook, 202, "cmd-taker-2", ts+200, &protocol.PlaceOrderRequest{
+	testPlace(orderBook, 202, "cmd-taker-2", tsNano+200, &protocol.PlaceOrderRequest{
 		OrderID:   "taker-2",
 		OrderType: Limit,
 		Side:      Buy,
@@ -141,12 +141,12 @@ func TestIceberg_ReplenishmentPriority(t *testing.T) {
 
 func TestIceberg_Amend(t *testing.T) {
 	publishTrader := NewMemoryPublishLog()
-	orderBook := newOrderBook("test-engine", "BTC-USDT", publishTrader)
+	orderBook := newOrderBookWithPublisher("test-engine", "BTC-USDT", publishTrader)
 
-	ts := time.Now().UnixNano()
+	tsNano := time.Now().UnixNano()
 
 	// 1. Iceberg: Total 100, Visible 10 @ 100
-	testPlace(orderBook, 101, "cmd-ice-1", ts, &protocol.PlaceOrderRequest{
+	testPlace(orderBook, 101, "cmd-ice-1", tsNano, &protocol.PlaceOrderRequest{
 		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
@@ -156,7 +156,7 @@ func TestIceberg_Amend(t *testing.T) {
 	})
 
 	// 2. Normal: 10 @ 100
-	testPlace(orderBook, 102, "cmd-norm-1", ts+1, &protocol.PlaceOrderRequest{
+	testPlace(orderBook, 102, "cmd-norm-1", tsNano+1, &protocol.PlaceOrderRequest{
 		OrderID:   "norm-1",
 		OrderType: Limit,
 		Side:      Sell,
@@ -165,14 +165,14 @@ func TestIceberg_Amend(t *testing.T) {
 	})
 
 	// 3. Amend Iceberg: Decrease total to 50
-	testAmend(orderBook, 101, "cmd-amend-ice-1", ts+100, &protocol.AmendOrderRequest{
+	testAmend(orderBook, 101, "cmd-amend-ice-1", tsNano+100, &protocol.AmendOrderRequest{
 		OrderID:  orderIDIceberg,
 		NewPrice: udecimal.MustFromInt64(100, 0),
 		NewSize:  udecimal.MustFromInt64(50, 0),
 	})
 
 	// Taker buys 5. Should match with ice-1.
-	testPlace(orderBook, 201, "cmd-taker-1", ts+200, &protocol.PlaceOrderRequest{
+	testPlace(orderBook, 201, "cmd-taker-1", tsNano+200, &protocol.PlaceOrderRequest{
 		OrderID:   "taker-1",
 		OrderType: Limit,
 		Side:      Buy,
@@ -191,14 +191,14 @@ func TestIceberg_Amend(t *testing.T) {
 	assert.True(t, matchedWithIce, "taker-1 should match with ice-1")
 
 	// 4. Amend Iceberg: Increase total to 200
-	testAmend(orderBook, 101, "cmd-amend-ice-1-2", ts+300, &protocol.AmendOrderRequest{
+	testAmend(orderBook, 101, "cmd-amend-ice-1-2", tsNano+300, &protocol.AmendOrderRequest{
 		OrderID:  orderIDIceberg,
 		NewPrice: udecimal.MustFromInt64(100, 0),
 		NewSize:  udecimal.MustFromInt64(200, 0),
 	})
 
 	// Taker buys 10. Should match with norm-1.
-	testPlace(orderBook, 202, "cmd-taker-2", ts+400, &protocol.PlaceOrderRequest{
+	testPlace(orderBook, 202, "cmd-taker-2", tsNano+400, &protocol.PlaceOrderRequest{
 		OrderID:   "taker-2",
 		OrderType: Limit,
 		Side:      Buy,
@@ -219,12 +219,12 @@ func TestIceberg_Amend(t *testing.T) {
 // TestIceberg_PartialFillNoReplenish verifies that partial fill does NOT trigger replenishment.
 func TestIceberg_PartialFillNoReplenish(t *testing.T) {
 	publishTrader := NewMemoryPublishLog()
-	orderBook := newOrderBook("test-engine", "BTC-USDT", publishTrader)
+	orderBook := newOrderBookWithPublisher("test-engine", "BTC-USDT", publishTrader)
 
-	ts := time.Now().UnixNano()
+	tsNano := time.Now().UnixNano()
 
 	// 1. Place Iceberg: Total 60, Visible 10, Hidden 50
-	testPlace(orderBook, 101, "cmd-ice-1", ts, &protocol.PlaceOrderRequest{
+	testPlace(orderBook, 101, "cmd-ice-1", tsNano, &protocol.PlaceOrderRequest{
 		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
@@ -238,7 +238,7 @@ func TestIceberg_PartialFillNoReplenish(t *testing.T) {
 	assert.Equal(t, "10", depth.Asks[0].Size)
 
 	// 2. Taker buys only 5 (partial fill of visible part)
-	testPlace(orderBook, 201, "cmd-taker-1", ts+100, &protocol.PlaceOrderRequest{
+	testPlace(orderBook, 201, "cmd-taker-1", tsNano+100, &protocol.PlaceOrderRequest{
 		OrderID:   "taker-1",
 		OrderType: Limit,
 		Side:      Buy,
@@ -265,9 +265,9 @@ func TestIceberg_PartialFillNoReplenish(t *testing.T) {
 // TestIceberg_TakerAggressiveMatch verifies Iceberg as Taker uses FULL size (not just visible) for matching.
 func TestIceberg_TakerAggressiveMatch(t *testing.T) {
 	publishTrader := NewMemoryPublishLog()
-	orderBook := newOrderBook("test-engine", "BTC-USDT", publishTrader)
+	orderBook := newOrderBookWithPublisher("test-engine", "BTC-USDT", publishTrader)
 
-	ts := time.Now().UnixNano()
+	tsNano := time.Now().UnixNano()
 
 	// 1. Place multiple Sell orders as liquidity
 	for i := range 5 {
@@ -276,7 +276,7 @@ func TestIceberg_TakerAggressiveMatch(t *testing.T) {
 			/* #nosec G115 */
 			uint64(100+i),
 			"cmd-sell-"+string(rune('A'+i)),
-			ts+int64(i),
+			tsNano+int64(i),
 			&protocol.PlaceOrderRequest{
 				OrderID:   "sell-" + string(rune('A'+i)),
 				OrderType: Limit,
@@ -292,7 +292,7 @@ func TestIceberg_TakerAggressiveMatch(t *testing.T) {
 	assert.Equal(t, "100", depth.Asks[0].Size)
 
 	// 2. Place Iceberg BUY order as TAKER: Total 80, Visible 10
-	testPlace(orderBook, 999, "cmd-ice-buyer", ts+100, &protocol.PlaceOrderRequest{
+	testPlace(orderBook, 999, "cmd-ice-buyer", tsNano+100, &protocol.PlaceOrderRequest{
 		OrderID:     "ice-buyer",
 		OrderType:   Limit,
 		Side:        Buy,
@@ -328,12 +328,12 @@ func TestIceberg_TakerAggressiveMatch(t *testing.T) {
 // TestIceberg_SnapshotRestore verifies Iceberg state is correctly preserved across Snapshot/Restore.
 func TestIceberg_SnapshotRestore(t *testing.T) {
 	publishTrader := NewMemoryPublishLog()
-	orderBook := newOrderBook("test-engine", "BTC-USDT", publishTrader)
+	orderBook := newOrderBookWithPublisher("test-engine", "BTC-USDT", publishTrader)
 
-	ts := time.Now().UnixNano()
+	tsNano := time.Now().UnixNano()
 
 	// 1. Place Iceberg: Total 100, Visible 10
-	testPlace(orderBook, 101, "cmd-ice-1", ts, &protocol.PlaceOrderRequest{
+	testPlace(orderBook, 101, "cmd-ice-1", tsNano, &protocol.PlaceOrderRequest{
 		OrderID:     orderIDIceberg,
 		OrderType:   Limit,
 		Side:        Sell,
@@ -359,7 +359,7 @@ func TestIceberg_SnapshotRestore(t *testing.T) {
 
 	// 3. Create a new order book and restore from snapshot
 	publishTrader2 := NewMemoryPublishLog()
-	orderBook2 := newOrderBook("test-engine", "BTC-USDT", publishTrader2)
+	orderBook2 := newOrderBookWithPublisher("test-engine", "BTC-USDT", publishTrader2)
 	orderBook2.Restore(snapshot)
 
 	// 4. Verify restored state
@@ -368,7 +368,7 @@ func TestIceberg_SnapshotRestore(t *testing.T) {
 	assert.Equal(t, "10", depth2.Asks[0].Size)
 
 	// 5. Verify replenishment still works on restored order book
-	testPlace(orderBook2, 201, "cmd-taker-restore", ts+1000, &protocol.PlaceOrderRequest{
+	testPlace(orderBook2, 201, "cmd-taker-restore", tsNano+1000, &protocol.PlaceOrderRequest{
 		OrderID:   "taker-restore",
 		OrderType: Limit,
 		Side:      Buy,
