@@ -7,9 +7,6 @@
 - breaking: remove all `time.Now()` calls across the entire production codebase to guarantee 100% deterministic Replicated State Machine (RSM) execution and replay consistency.
 - feature: make skiplist PRNG seed deterministic and configurable via `WithSkiplistSeed(seed int64)` option, eliminating random height variances between nodes during event replay.
 - feature: allow passing authoritative logical timestamps to `TakeSnapshot(ctx, outputDir, timestamp...)` for consistent snapshot metadata.
-
-## [unreleased]
-
 - breaking: refactor `MatchingEngine` API to a unified "Full-Struct" pattern and implement high-performance manual binary serialization for all command parameters.
 - feature: extend **Future Pattern** to all management commands (`CreateMarket`, `SuspendMarket`, `ResumeMarket`, `UpdateConfig`) and query commands (`Depth`, `GetStats`) for synchronous-like waiting and consistent API experience.
 - feature: introduce **IdleStrategy** (BusySpin, Yielding) for the RingBuffer to allow flexible waiting behaviors and move waiting logic out of the core Disruptor.

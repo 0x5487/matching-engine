@@ -15,5 +15,6 @@ The repository is organized into a core engine and several supporting packages:
 ## Project rules
 
 - Use the `slog` package for all logging purposes.
+- **Deterministic State Machine**: Zero `time.Now()` calls in production engine code. All logical timestamps must be provided by incoming command payloads (`req.Timestamp`).
 - Run `make check` after development to verify code quality (includes both lint and tests) and fix any errors found.
 

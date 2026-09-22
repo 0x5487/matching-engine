@@ -5,15 +5,19 @@ A high-performance, in-memory matching engine SDK written in Go. Designed for cr
 ## 🚀 Features
 
 - **High Performance**: Pure in-memory matching using efficient SkipList data structures ($O(\log N)$) and **Disruptor** pattern (RingBuffer) for **microsecond latency**.
+- **Deterministic Execution (RSM Ready)**: **100% free of `time.Now()`** in engine logic. All state transitions and event timestamps strictly derive from authoritative external logical clocks (e.g. sequencer timestamps), guaranteeing bit-for-bit deterministic replay across nodes in Replicated State Machines (RSM) and event sourcing architectures.
+- **Dual Integration Modes**:
+  - **Synchronous `OrderBook`**: Direct in-memory matching without background workers, ideal for embedding into single-goroutine state machines, Raft loops, or partitioned workers.
+  - **Asynchronous `MatchingEngine`**: Complete multi-market actor with Disruptor MPSC ring buffer for high-concurrency standalone services.
 - **Single Thread Actor**: Adopts a **Lock-Free** architecture where a single pinned goroutine processes all state mutations. This eliminates context switching and mutex contention, maximizing CPU cache locality.
-- **Concurrency Safe**: All state mutations are serialized through the RingBuffer, eliminating race conditions without heavy lock contention.
-- **Low Allocation Hot Paths**: Uses `udecimal` (uint64-based), intrusive lists, and object pooling to minimize GC pressure on performance-critical paths.
+- **Concurrency Safe**: All state mutations are serialized through the RingBuffer or single-actor loops, eliminating race conditions without mutex lock contention.
+- **Low Allocation Hot Paths**: Uses `udecimal` (uint64-based), intrusive lists, and object pooling to achieve **0 allocs/op** on core matching paths.
 - **Multi-Market Support**: Manages multiple trading pairs (e.g., BTC-USDT, ETH-USDT) within a single `MatchingEngine` instance.
 - **Management Commands**: Dynamic market management (Create, Suspend, Resume, UpdateConfig) via Event Sourcing.
 - **Comprehensive Order Types**:
   - `Limit`, `Market` (Size or QuoteSize), `IOC`, `FOK`, `Post Only`
   - **Iceberg Orders**: Support for hidden size with automatic replenishment.
-- **Event Sourcing**: Generates detailed `OrderBookLog` events allows for deterministic replay and state reconstruction.
+- **Event Sourcing**: Generates detailed `OrderBookLog` events allowing for deterministic replay and state reconstruction.
 
 ## 📦 Installation
 
@@ -23,7 +27,89 @@ go get github.com/0x5487/matching-engine
 
 ## 🛠 Usage
 
-### Quick Start
+### 1. Synchronous OrderBook (Direct State Machine / Event Sourcing)
+
+For Replicated State Machines (RSM), event-sourced loops, or partitioned single-goroutine workers, use `match.OrderBook` directly. Matching executes synchronously on the caller's goroutine with zero queue hops, returning the resulting `*LogBatch` immediately.
+
+```go
+package main
+
+import (
+	"fmt"
+
+	match "github.com/0x5487/matching-engine"
+	"github.com/0x5487/matching-engine/protocol"
+	"github.com/quagmt/udecimal"
+)
+
+func main() {
+	// 1. Initialize OrderBook with optional configurations
+	book := match.NewOrderBook(
+		"BTC-USDT",
+		match.WithLotSize(udecimal.MustParse("0.00000001")),
+		match.WithEngineID("engine-1"),
+	)
+
+	// 2. Place a Sell Order synchronously
+	// Note: Timestamp must come from your sequencer (e.g. NATS JetStream meta.Timestamp)
+	sellBatch, err := book.PlaceOrder(&protocol.PlaceOrderRequest{
+		BaseCommand: protocol.BaseCommand{
+			CommandID: "cmd-sell-1",
+			MarketID:  "BTC-USDT",
+			UserID:    1001,
+			Timestamp: 1774000000000000000, // Authoritative logical timestamp
+		},
+		OrderID:   "sell-1",
+		OrderType: protocol.OrderTypeLimit,
+		Side:      protocol.SideSell,
+		Price:     udecimal.MustFromInt64(50000, 0),
+		Size:      udecimal.MustFromInt64(1, 0),
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer sellBatch.Release() // Always release pooled LogBatch back to sync.Pool
+
+	// 3. Place a Matching Buy Order synchronously (matches immediately)
+	buyBatch, err := book.PlaceOrder(&protocol.PlaceOrderRequest{
+		BaseCommand: protocol.BaseCommand{
+			CommandID: "cmd-buy-1",
+			MarketID:  "BTC-USDT",
+			UserID:    1002,
+			Timestamp: 1774000000000001000,
+		},
+		OrderID:   "buy-1",
+		OrderType: protocol.OrderTypeLimit,
+		Side:      protocol.SideBuy,
+		Price:     udecimal.MustFromInt64(50000, 0),
+		Size:      udecimal.MustFromInt64(1, 0),
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer buyBatch.Release()
+
+	// 4. Immediately inspect match results (e.g. for atomic balance settlement)
+	for _, log := range buyBatch.Logs {
+		if log.Type == protocol.LogTypeMatch {
+			fmt.Printf("[MATCH] TradeID: %d, Price: %s, Size: %s, Maker: %s, Taker: %s\n",
+				log.TradeID, log.Price, log.Size, log.MakerOrderID, log.OrderID)
+		}
+	}
+
+	// 5. Query Depth or Take In-Memory Snapshot
+	depth := book.GetDepth(10)
+	if len(depth.Asks) > 0 {
+		fmt.Printf("Best Ask: %s\n", depth.Asks[0].Price)
+	}
+
+	snapshot := book.Snapshot()
+	restoredBook := match.NewOrderBook("BTC-USDT")
+	restoredBook.Restore(snapshot)
+}
+```
+
+### 2. Asynchronous Matching Engine (Disruptor / Actor Pattern)
 
 ```go
 package main
@@ -163,9 +249,11 @@ decoded, err := protocol.UnmarshalRequest(data)
 
 ### Request Semantics
 
-- `PlaceOrderAsync`, `CancelOrderAsync`, `AmendOrderAsync`, and management commands enqueue work into the engine event loop. A returned `error` means enqueue failure, not business rejection.
+- **Strict Authoritative Timestamp**: Every state-changing request (`PlaceOrderRequest`, `CancelOrderRequest`, `AmendOrderRequest`, management commands) must carry an upstream-assigned non-zero logical `Timestamp` (Unix nanoseconds, e.g. from sequencer metadata). Requests with `Timestamp <= 0` are strictly rejected with `protocol.RejectReasonInvalidPayload`. The engine never calls `time.Now()` internally.
+- **Synchronous vs. Asynchronous**:
+  - **Synchronous Mode (`book.PlaceOrder`, `book.CancelOrder`, `book.AmendOrder`)**: Immediately performs in-memory matching on the caller's goroutine and returns `(*LogBatch, error)`. Callers **MUST** call `batch.Release()` when finished to return objects to `sync.Pool`.
+  - **Asynchronous Mode (`engine.PlaceOrderAsync`, etc.)**: Enqueues work into the Disruptor MPSC ring buffer. A returned `error` means enqueue failure, not business rejection.
 - Every request must carry an upstream-assigned non-empty `CommandID`. Engine helpers reject empty command IDs before enqueue.
-- Every state-changing request must carry an upstream-assigned logical `Timestamp`. `Timestamp <= 0` is rejected as `invalid_payload`.
 - Business-level failures are emitted as `OrderBookLog` entries with `Type == protocol.LogTypeReject`.
 - Requests sent to a missing market generate a reject event with `RejectReasonMarketNotFound`.
 - Unknown query types will return `ErrUnknownQuery` through the `Future.Wait()` call.
@@ -303,14 +391,29 @@ err := engine.SendUserEvent(ctx, userEventReq)
 
 ### Snapshot and Restore
 
-Use snapshots to persist engine state and restore it after restart:
+#### 1. Synchronous OrderBook (In-Memory Struct)
+For custom storage layers, Raft state machines, or embedding into external snapshots:
 
 ```go
-meta, err := engine.TakeSnapshot("./snapshot")
+// 1. Capture in-memory snapshot
+snapshot := book.Snapshot()
+
+// 2. Restore state into a new OrderBook instance
+restoredBook := match.NewOrderBook("BTC-USDT")
+restoredBook.Restore(snapshot)
+```
+
+#### 2. MatchingEngine (Disk-based Multi-Market Snapshot)
+Persist full multi-market engine state to disk and restore after restarts:
+
+```go
+// Take disk snapshot with optional authoritative logical timestamp
+meta, err := engine.TakeSnapshot("./snapshot", seqTimestamp)
 if err != nil {
 	panic(err)
 }
 
+// Restore entire engine from disk snapshot
 restored := match.NewMatchingEngine("engine-1-restored", publish)
 meta, err = restored.RestoreFromSnapshot("./snapshot")
 if err != nil {

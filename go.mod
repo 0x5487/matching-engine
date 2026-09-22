@@ -9,7 +9,7 @@ tool (
 
 require (
 	github.com/igrmk/treemap/v2 v2.0.1
-	github.com/quagmt/udecimal v1.10.0
+	github.com/quagmt/udecimal v1.10.1
 	github.com/stretchr/testify v1.12.1
 )
 
