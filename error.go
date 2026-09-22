@@ -25,4 +25,10 @@ var (
 	ErrUnknownCommand = errors.New("unknown command")
 	// ErrUnknownQuery is returned when the query type is unknown.
 	ErrUnknownQuery = errors.New("unknown query")
+	// ErrSequenceGap is returned when a sequence gap is detected in order book logs.
+	ErrSequenceGap = errors.New("sequence gap detected")
+	// ErrNilSnapshot is returned when attempting to apply a nil snapshot.
+	ErrNilSnapshot = errors.New("snapshot is nil")
+	// ErrOnRebuildNotSet is returned when rebuild is triggered but OnRebuild callback is not set.
+	ErrOnRebuildNotSet = errors.New("OnRebuild callback not set")
 )
