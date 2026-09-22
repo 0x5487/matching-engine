@@ -3,6 +3,9 @@
 ## v0.9.0 (2026-09-22)
 
 - feature: export pure synchronous `OrderBook` API (`NewOrderBook`, `PlaceOrder`, `CancelOrder`, `AmendOrder`, `Snapshot`, `GetDepth`) returning `*LogBatch` directly for seamless single-actor state machine integration.
+- feature: implement `AggregatedBook` read-replica state machine with event replay (`Open`, `Match`, `Cancel`, `Amend`), sequence deduplication, automatic gap recovery with `OnRebuild` callback, and thread-safe `GetDepth` queries for downstream market data services.
+- perf: optimize `AggregatedBook.Replay` to achieve over 7M events/sec throughput with 0 B/op and 0 allocs/op.
+- test: add `bench-aggrbook` Makefile target and comprehensive unit, concurrency (`-race`), and gap detection tests for `AggregatedBook`.
 - feature: decouple `OrderBook` from background I/O and `Publisher`, giving callers direct memory ownership of matching logs.
 - breaking: remove all `time.Now()` calls across the entire production codebase to guarantee 100% deterministic Replicated State Machine (RSM) execution and replay consistency.
 - feature: make skiplist PRNG seed deterministic and configurable via `WithSkiplistSeed(seed int64)` option, eliminating random height variances between nodes during event replay.

@@ -9,6 +9,7 @@ A high-performance, in-memory matching engine SDK written in Go. Designed for cr
 - **Dual Integration Modes**:
   - **Synchronous `OrderBook`**: Direct in-memory matching without background workers, ideal for embedding into single-goroutine state machines, Raft loops, or partitioned workers.
   - **Asynchronous `MatchingEngine`**: Complete multi-market actor with Disruptor MPSC ring buffer for high-concurrency standalone services.
+- **Market Data Read-Replica (`AggregatedBook`)**: Downstream aggregated order book state machine supporting event replay (`Open`, `Match`, `Cancel`, `Amend`), sequence deduplication, automatic gap recovery (`OnRebuild`), and thread-safe depth queries (`GetDepth`) with over 7M events/sec replay throughput.
 - **Single Thread Actor**: Adopts a **Lock-Free** architecture where a single pinned goroutine processes all state mutations. This eliminates context switching and mutex contention, maximizing CPU cache locality.
 - **Concurrency Safe**: All state mutations are serialized through the RingBuffer or single-actor loops, eliminating race conditions without mutex lock contention.
 - **Low Allocation Hot Paths**: Uses `udecimal` (uint64-based), intrusive lists, and object pooling to achieve **0 allocs/op** on core matching paths.
@@ -214,6 +215,59 @@ func main() {
 			fmt.Printf("[OPEN] OrderID: %s, Price: %s\n", log.OrderID, log.Price)
 		}
 	}
+}
+```
+
+### 3. AggregatedBook (Downstream Market Data Read-Replica)
+
+`AggregatedBook` is designed for downstream read services (such as Market Data Services, WebSocket broadcast gateways, or Redis snapshot updaters) that consume `OrderBookLog` events from a message queue (e.g. NATS JetStream, Kafka) to maintain a live, aggregated view of the order book depth.
+
+Key capabilities:
+- **Event Replay**: Accurately tracks price level depth by replaying `LogTypeOpen`, `LogTypeMatch`, `LogTypeCancel`, and `LogTypeAmend`.
+- **Deduplication & Gap Detection**: Guarantees deterministic state sync using `SequenceID`. Duplicates (`SeqID <= current`) are automatically skipped; sequence gaps (`SeqID > current + 1`) trigger the `OnRebuild` callback to reload a snapshot.
+- **Thread-Safe Queries**: Protected by internal `sync.RWMutex`, allowing concurrent background event replay and foreground depth queries (`GetDepth`).
+- **High Throughput**: Capable of replaying over 7,000,000 events/sec with **0 B/op and 0 allocs/op**.
+
+```go
+package main
+
+import (
+	"fmt"
+
+	match "github.com/0x5487/matching-engine"
+	"github.com/0x5487/matching-engine/protocol"
+)
+
+func main() {
+	ab := match.NewAggregatedBook()
+
+	// 1. Configure OnRebuild callback for automatic gap recovery
+	ab.OnRebuild = func() (*match.Snapshot, error) {
+		// Fetch latest snapshot from Engine API or Redis
+		return &match.Snapshot{
+			SequenceID: 100,
+			Asks: []*protocol.DepthItem{
+				{Price: "50100", Size: "2.5"},
+			},
+			Bids: []*protocol.DepthItem{
+				{Price: "50000", Size: "1.2"},
+			},
+		}, nil
+	}
+
+	// 2. Replay incoming OrderBookLog events from MQ
+	// (Open, Match, Cancel, Amend, Reject/User/Admin)
+	if err := ab.Replay(logEvent); err != nil {
+		panic(err)
+	}
+
+	// 3. Query top N depth levels (e.g. to write to Redis or push via WebSocket)
+	depth := ab.GetDepth(20)
+	fmt.Printf("UpdateID: %d, Best Ask: %s (%s), Best Bid: %s (%s)\n",
+		depth.UpdateID,
+		depth.Asks[0].Price, depth.Asks[0].Size,
+		depth.Bids[0].Price, depth.Bids[0].Size,
+	)
 }
 ```
 
@@ -423,5 +477,15 @@ _ = meta // contains GlobalLastCmdSeqID for replay positioning
 ```
 
 ## Benchmark
+
+Run engine benchmarks:
+```bash
+make bench
+```
+
+Run aggregated book read-replica benchmarks:
+```bash
+make bench-aggrbook
+```
 
 Please refer to [docs](./docs/benchmark.md) for detailed benchmarks.
