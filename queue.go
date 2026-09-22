@@ -1,8 +1,6 @@
 package match
 
 import (
-	"time"
-
 	"github.com/quagmt/udecimal"
 
 	"github.com/0x5487/matching-engine/protocol"
@@ -31,16 +29,23 @@ type queue struct {
 	orders        map[string]*Order
 }
 
-const defaultPriceCapacity = 3000
+const (
+	defaultPriceCapacity = 3000
+	defaultSkiplistSeed  = int64(1)
+)
 
 // newBuyerQueue creates a new queue for buy orders (bids).
 // The orders are sorted by price in descending order (highest price first).
-func newBuyerQueue() *queue {
+func newBuyerQueue(seeds ...int64) *queue {
+	seed := defaultSkiplistSeed
+	if len(seeds) > 0 && seeds[0] != 0 {
+		seed = seeds[0]
+	}
 	return &queue{
 		side: Buy,
 		orderedPrices: structure.NewPooledSkiplistWithOptions(
 			defaultPriceCapacity,
-			time.Now().UnixNano(),
+			seed,
 			structure.SkiplistOptions{Descending: true}, // Highest first
 		),
 		priceList: make(map[udecimal.Decimal]*priceUnit),
@@ -50,12 +55,16 @@ func newBuyerQueue() *queue {
 
 // newSellerQueue creates a new queue for sell orders (asks).
 // The orders are sorted by price in ascending order (lowest price first).
-func newSellerQueue() *queue {
+func newSellerQueue(seeds ...int64) *queue {
+	seed := defaultSkiplistSeed
+	if len(seeds) > 0 && seeds[0] != 0 {
+		seed = seeds[0]
+	}
 	return &queue{
 		side: Sell,
 		orderedPrices: structure.NewPooledSkiplist(
 			defaultPriceCapacity,
-			time.Now().UnixNano(),
+			seed,
 		), // Default: Lowest first
 		priceList: make(map[udecimal.Decimal]*priceUnit),
 		orders:    make(map[string]*Order),

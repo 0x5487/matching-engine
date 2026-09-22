@@ -283,6 +283,7 @@ type snapshotQuery struct{}
 func (engine *MatchingEngine) TakeSnapshot(
 	ctx context.Context,
 	outputDir string,
+	timestamp ...int64,
 ) (*SnapshotMetadata, error) {
 	if engine.isShutdown.Load() {
 		return nil, ErrShutdown
@@ -309,7 +310,7 @@ func (engine *MatchingEngine) TakeSnapshot(
 		return nil, ctx.Err()
 	}
 
-	return engine.writeSnapshot(outputDir, results)
+	return engine.writeSnapshot(outputDir, results, timestamp...)
 }
 
 // RestoreFromSnapshot restores the entire matching engine state from a snapshot.
@@ -442,6 +443,7 @@ func (engine *MatchingEngine) enqueueBatch(ctx context.Context, requests []any) 
 func (engine *MatchingEngine) writeSnapshot(
 	outputDir string,
 	results []snapshotResult,
+	timestamp ...int64,
 ) (*SnapshotMetadata, error) {
 	tmpDir := outputDir + ".tmp"
 	if err := os.RemoveAll(tmpDir); err != nil {
@@ -518,9 +520,16 @@ func (engine *MatchingEngine) writeSnapshot(
 		return nil, errCRC
 	}
 
+	var ts int64
+	if len(timestamp) > 0 && timestamp[0] > 0 {
+		ts = timestamp[0]
+	} else {
+		ts = int64(globalSeqID)
+	}
+
 	meta := &SnapshotMetadata{
 		SchemaVersion:      SnapshotSchemaVersion,
-		Timestamp:          time.Now().UnixNano(),
+		Timestamp:          ts,
 		GlobalLastCmdSeqID: globalSeqID,
 		EngineVersion:      EngineVersion,
 		SnapshotChecksum:   snapshotChecksum,

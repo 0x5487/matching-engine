@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## v0.9.0 (2026-09-22)
+
+- feature: export pure synchronous `OrderBook` API (`NewOrderBook`, `PlaceOrder`, `CancelOrder`, `AmendOrder`, `Snapshot`, `GetDepth`) returning `*LogBatch` directly for seamless single-actor state machine integration.
+- feature: decouple `OrderBook` from background I/O and `Publisher`, giving callers direct memory ownership of matching logs.
+- breaking: remove all `time.Now()` calls across the entire production codebase to guarantee 100% deterministic Replicated State Machine (RSM) execution and replay consistency.
+- feature: make skiplist PRNG seed deterministic and configurable via `WithSkiplistSeed(seed int64)` option, eliminating random height variances between nodes during event replay.
+- feature: allow passing authoritative logical timestamps to `TakeSnapshot(ctx, outputDir, timestamp...)` for consistent snapshot metadata.
+
 ## [unreleased]
 
 - breaking: refactor `MatchingEngine` API to a unified "Full-Struct" pattern and implement high-performance manual binary serialization for all command parameters.

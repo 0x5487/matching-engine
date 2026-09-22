@@ -50,12 +50,34 @@ func WithLotSize(size udecimal.Decimal) OrderBookOption {
 	}
 }
 
+// WithEngineID sets the engine ID for the order book.
+func WithEngineID(id string) OrderBookOption {
+	return func(book *OrderBook) {
+		book.engineID = id
+	}
+}
+
+// WithPublisher sets the publisher for the order book.
+func WithPublisher(publisher Publisher) OrderBookOption {
+	return func(book *OrderBook) {
+		book.publisher = publisher
+	}
+}
+
+// WithSkiplistSeed sets the skiplist PRNG seed for deterministic queue ordering.
+func WithSkiplistSeed(seed int64) OrderBookOption {
+	return func(book *OrderBook) {
+		book.skiplistSeed = seed
+	}
+}
+
 // OrderBook is a pure logic object that maintains the state of an order book.
-// It must be managed by a MatchingEngine which provides the event loop.
+// It can be run directly (synchronously) or managed by a MatchingEngine event loop.
 type OrderBook struct {
 	engineID     string
 	marketID     string
 	lotSize      udecimal.Decimal // Minimum trade unit for Market orders
+	skiplistSeed int64            // PRNG seed for price skiplist
 	seqID        atomic.Uint64    // Globally increasing sequence ID
 	lastCmdSeqID atomic.Uint64    // Last sequence ID of the command
 	tradeID      atomic.Uint64    // Sequential trade ID counter
@@ -65,29 +87,41 @@ type OrderBook struct {
 	state        protocol.OrderBookState
 }
 
-// newOrderBook creates a new OrderBook instance.
-// OrderBooks are managed by a MatchingEngine and do not have their own event loop.
-func newOrderBook(
-	engineID string,
+// NewOrderBook creates a new pure OrderBook instance.
+func NewOrderBook(
 	marketID string,
-	publishTrader Publisher,
 	opts ...OrderBookOption,
 ) *OrderBook {
 	book := &OrderBook{
-		engineID:  engineID,
-		marketID:  marketID,
-		lotSize:   DefaultLotSize,
-		bidQueue:  newBuyerQueue(),
-		askQueue:  newSellerQueue(),
-		publisher: publishTrader,
-		state:     protocol.OrderBookStateRunning,
+		engineID:     "default",
+		marketID:     marketID,
+		lotSize:      DefaultLotSize,
+		skiplistSeed: defaultSkiplistSeed,
+		state:        protocol.OrderBookStateRunning,
 	}
 
 	for _, opt := range opts {
 		opt(book)
 	}
 
+	book.bidQueue = newBuyerQueue(book.skiplistSeed)
+	book.askQueue = newSellerQueue(book.skiplistSeed)
+
 	return book
+}
+
+// newOrderBook creates a new OrderBook instance (internal backward-compatible constructor).
+func newOrderBook(
+	engineID string,
+	marketID string,
+	publishTrader Publisher,
+	opts ...OrderBookOption,
+) *OrderBook {
+	allOpts := append([]OrderBookOption{
+		WithEngineID(engineID),
+		WithPublisher(publishTrader),
+	}, opts...)
+	return NewOrderBook(marketID, allOpts...)
 }
 
 // LastCmdSeqID returns the sequence ID of the last processed command.
@@ -118,6 +152,46 @@ func (book *OrderBook) Restore(snap *OrderBookSnapshot) {
 		*newOrder = *o
 		book.askQueue.insertOrder(newOrder)
 	}
+}
+
+// MarketID returns the market identifier for this order book.
+func (book *OrderBook) MarketID() string {
+	return book.marketID
+}
+
+// EngineID returns the engine identifier for this order book.
+func (book *OrderBook) EngineID() string {
+	return book.engineID
+}
+
+// State returns the current lifecycle state of the order book.
+func (book *OrderBook) State() protocol.OrderBookState {
+	return book.state
+}
+
+// SetState sets the lifecycle state of the order book.
+func (book *OrderBook) SetState(state protocol.OrderBookState) {
+	book.state = state
+}
+
+// SeqID returns the current sequence ID of the order book.
+func (book *OrderBook) SeqID() uint64 {
+	return book.seqID.Load()
+}
+
+// TradeID returns the current trade ID counter of the order book.
+func (book *OrderBook) TradeID() uint64 {
+	return book.tradeID.Load()
+}
+
+// Snapshot creates and returns an in-memory snapshot of the current OrderBook state.
+func (book *OrderBook) Snapshot() *OrderBookSnapshot {
+	return book.createSnapshot()
+}
+
+// GetDepth returns the aggregated market depth up to the specified limit.
+func (book *OrderBook) GetDepth(limit uint32) *protocol.GetDepthResponse {
+	return book.depth(limit)
 }
 
 func (book *OrderBook) processCommand(ev *InputEvent) {
@@ -232,72 +306,78 @@ func (book *OrderBook) handleUpdateConfig(ev *InputEvent, req *protocol.UpdateCo
 	}
 }
 
-func (book *OrderBook) handlePlaceOrder(ev *InputEvent, req *protocol.PlaceOrderRequest) {
-	if !book.validateState(req.CommandID, req.UserID, req.OrderID, req.Timestamp) {
-		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
-		return
+func (book *OrderBook) createRejectBatch(
+	commandID string,
+	orderID string,
+	userID uint64,
+	reason protocol.RejectReason,
+	timestamp int64,
+) *LogBatch {
+	batch := acquireLogBatch()
+	log := NewRejectLog(
+		book.seqID.Add(1),
+		commandID,
+		book.engineID,
+		book.marketID,
+		orderID,
+		userID,
+		reason,
+		timestamp,
+	)
+	batch.Logs = append(batch.Logs, log)
+	return batch
+}
+
+// PlaceOrder processes an order synchronously and returns the resulting LogBatch.
+// The caller is responsible for processing logs and calling batch.Release().
+func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, error) {
+	if req == nil {
+		return nil, ErrInvalidParam
+	}
+	if req.Timestamp <= 0 {
+		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonInvalidPayload, req.Timestamp), nil
 	}
 
-	// Use pre-parsed decimals directly from payload
-	price := req.Price
-	size := req.Size
-	visibleSize := req.VisibleSize
-	quoteSize := req.QuoteSize
+	if book.state == protocol.OrderBookStateHalted {
+		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonMarketHalted, req.Timestamp), nil
+	}
+	if book.state == protocol.OrderBookStateSuspended {
+		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonMarketSuspended, req.Timestamp), nil
+	}
 
 	// Basic validation
 	isValid := true
 	if req.OrderType == Market {
-		if size.IsZero() && quoteSize.IsZero() {
+		if req.Size.IsZero() && req.QuoteSize.IsZero() {
 			isValid = false
 		}
 	} else {
-		if price.IsZero() || size.IsZero() {
+		if req.Price.IsZero() || req.Size.IsZero() {
 			isValid = false
 		}
 	}
 
 	if !isValid {
-		book.rejectInvalidPayload(
-			req.CommandID,
-			book.marketID,
-			req.OrderID,
-			req.UserID,
-			protocol.RejectReasonInvalidPayload,
-			req.Timestamp,
-		)
-		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
-		return
+		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonInvalidPayload, req.Timestamp), nil
 	}
 
 	// Check for duplicate ID
 	if book.bidQueue.order(req.OrderID) != nil || book.askQueue.order(req.OrderID) != nil {
-		book.rejectInvalidPayload(
-			req.CommandID,
-			book.marketID,
-			req.OrderID,
-			req.UserID,
-			protocol.RejectReasonDuplicateID,
-			req.Timestamp,
-		)
-		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonDuplicateID)))
-		return
+		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonDuplicateID, req.Timestamp), nil
 	}
 
 	order := acquireOrder()
 	order.ID = req.OrderID
 	order.Side = req.Side
-	order.Price = price
-	order.Size = size
+	order.Price = req.Price
+	order.Size = req.Size
 	order.Type = req.OrderType
 	order.UserID = req.UserID
 	order.Timestamp = req.Timestamp
 
-	if visibleSize.GreaterThan(udecimal.Zero) && visibleSize.LessThan(size) {
-		order.VisibleLimit = visibleSize
+	if req.VisibleSize.GreaterThan(udecimal.Zero) && req.VisibleSize.LessThan(req.Size) {
+		order.VisibleLimit = req.VisibleSize
 	}
-
-	// Capture a copy for response
-	orderCopy := *order
 
 	var batch *LogBatch
 	switch order.Type {
@@ -310,13 +390,26 @@ func (book *OrderBook) handlePlaceOrder(ev *InputEvent, req *protocol.PlaceOrder
 	case PostOnly:
 		batch = book.handlePostOnlyOrder(req.CommandID, order, req.Timestamp)
 	case Market:
-		batch = book.handleMarketOrder(req.CommandID, order, quoteSize, req.Timestamp)
+		batch = book.handleMarketOrder(req.CommandID, order, req.QuoteSize, req.Timestamp)
 	default:
+		releaseOrder(order)
+		return nil, ErrInvalidParam
 	}
 
+	return batch, nil
+}
+
+func (book *OrderBook) handlePlaceOrder(ev *InputEvent, req *protocol.PlaceOrderRequest) {
+	batch, err := book.PlaceOrder(req)
+	if err != nil {
+		book.sendResponse(ev.Resp, err)
+		return
+	}
 	if batch != nil {
 		if len(batch.Logs) > 0 {
-			book.publisher.Publish(batch.Logs)
+			if book.publisher != nil {
+				book.publisher.Publish(batch.Logs)
+			}
 			for _, log := range batch.Logs {
 				if log.Type == protocol.LogTypeReject {
 					book.sendResponse(ev.Resp, errors.New(string(log.RejectReason)))
@@ -329,29 +422,26 @@ func (book *OrderBook) handlePlaceOrder(ev *InputEvent, req *protocol.PlaceOrder
 		}
 		batch.Release()
 	}
-
-	book.sendResponse(ev.Resp, &orderCopy)
+	book.sendResponse(ev.Resp, true)
 }
 
-func (book *OrderBook) handleCancelOrder(ev *InputEvent, req *protocol.CancelOrderRequest) {
-	// Cancel is allowed in Suspended state
-	if !book.validateBasic(req.CommandID, req.UserID, req.OrderID, req.Timestamp) {
-		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
-		return
+// CancelOrder processes an order cancellation synchronously and returns the resulting LogBatch.
+// The caller is responsible for processing logs and calling batch.Release().
+func (book *OrderBook) CancelOrder(req *protocol.CancelOrderRequest) (*LogBatch, error) {
+	if req == nil {
+		return nil, ErrInvalidParam
+	}
+	if req.Timestamp <= 0 || req.OrderID == "" {
+		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonInvalidPayload, req.Timestamp), nil
+	}
+
+	if book.state == protocol.OrderBookStateHalted {
+		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonMarketHalted, req.Timestamp), nil
 	}
 
 	order, ok := book.findOrder(req.OrderID)
 	if !ok || order.UserID != req.UserID {
-		book.rejectInvalidPayload(
-			req.CommandID,
-			book.marketID,
-			req.OrderID,
-			req.UserID,
-			protocol.RejectReasonOrderNotFound,
-			req.Timestamp,
-		)
-		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonOrderNotFound)))
-		return
+		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonOrderNotFound, req.Timestamp), nil
 	}
 
 	myQueue := book.bidQueue
@@ -376,35 +466,61 @@ func (book *OrderBook) handleCancelOrder(ev *InputEvent, req *protocol.CancelOrd
 		req.Timestamp,
 	)
 	batch.Logs = append(batch.Logs, log)
-	book.publisher.Publish(batch.Logs)
-	releaseBookLog(log)
-	batch.Release()
+	releaseOrder(order)
 
+	return batch, nil
+}
+
+func (book *OrderBook) handleCancelOrder(ev *InputEvent, req *protocol.CancelOrderRequest) {
+	batch, err := book.CancelOrder(req)
+	if err != nil {
+		book.sendResponse(ev.Resp, err)
+		return
+	}
+	if batch != nil {
+		if len(batch.Logs) > 0 {
+			if book.publisher != nil {
+				book.publisher.Publish(batch.Logs)
+			}
+			for _, log := range batch.Logs {
+				if log.Type == protocol.LogTypeReject {
+					book.sendResponse(ev.Resp, errors.New(string(log.RejectReason)))
+					releaseBookLog(log)
+					batch.Release()
+					return
+				}
+				releaseBookLog(log)
+			}
+		}
+		batch.Release()
+	}
 	book.sendResponse(ev.Resp, true)
 }
 
-func (book *OrderBook) handleAmendOrder(ev *InputEvent, req *protocol.AmendOrderRequest) {
-	if !book.validateState(req.CommandID, req.UserID, req.OrderID, req.Timestamp) {
-		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
-		return
+// AmendOrder processes an order amendment synchronously and returns the resulting LogBatch.
+// The caller is responsible for processing logs and calling batch.Release().
+func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, error) {
+	if req == nil {
+		return nil, ErrInvalidParam
+	}
+	if req.Timestamp <= 0 || req.OrderID == "" {
+		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonInvalidPayload, req.Timestamp), nil
+	}
+
+	if book.state == protocol.OrderBookStateHalted {
+		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonMarketHalted, req.Timestamp), nil
+	}
+	if book.state == protocol.OrderBookStateSuspended {
+		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonMarketSuspended, req.Timestamp), nil
+	}
+
+	order, ok := book.findOrder(req.OrderID)
+	if !ok || order.UserID != req.UserID {
+		return book.createRejectBatch(req.CommandID, req.OrderID, req.UserID, protocol.RejectReasonOrderNotFound, req.Timestamp), nil
 	}
 
 	newPrice := req.NewPrice
 	newSize := req.NewSize
-
-	order, ok := book.findOrder(req.OrderID)
-	if !ok || order.UserID != req.UserID {
-		book.rejectInvalidPayload(
-			req.CommandID,
-			book.marketID,
-			req.OrderID,
-			req.UserID,
-			protocol.RejectReasonOrderNotFound,
-			req.Timestamp,
-		)
-		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonOrderNotFound)))
-		return
-	}
 
 	// 0 means no change
 	if newPrice.IsZero() {
@@ -424,6 +540,24 @@ func (book *OrderBook) handleAmendOrder(ev *InputEvent, req *protocol.AmendOrder
 
 	isPriceChange := !oldPrice.Equal(newPrice)
 	isSizeIncrease := newSize.GreaterThan(oldTotalSize)
+
+	amendBatch := acquireLogBatch()
+	log := NewAmendLog(
+		book.seqID.Add(1),
+		req.CommandID,
+		book.engineID,
+		book.marketID,
+		order.ID,
+		order.UserID,
+		order.Side,
+		newPrice,
+		newSize,
+		oldPrice,
+		oldTotalSize,
+		order.Type,
+		req.Timestamp,
+	)
+	amendBatch.Logs = append(amendBatch.Logs, log)
 
 	if isPriceChange || isSizeIncrease {
 		// Path 1: Priority Loss (Re-match)
@@ -445,75 +579,52 @@ func (book *OrderBook) handleAmendOrder(ev *InputEvent, req *protocol.AmendOrder
 			}
 		}
 
-		log := NewAmendLog(
-			book.seqID.Add(1),
-			req.CommandID,
-			book.engineID,
-			book.marketID,
-			order.ID,
-			order.UserID,
-			order.Side,
-			order.Price,
-			newSize,
-			oldPrice,
-			oldTotalSize,
-			order.Type,
-			req.Timestamp,
-		)
-		amendBatch := acquireLogBatch()
-		amendBatch.Logs = append(amendBatch.Logs, log)
-		book.publisher.Publish(amendBatch.Logs)
-		releaseBookLog(log)
-		amendBatch.Release()
-
 		batch := book.handleLimitOrder(req.CommandID, order, req.Timestamp)
 		if batch != nil {
-			if len(batch.Logs) > 0 {
-				book.publisher.Publish(batch.Logs)
-				for _, log := range batch.Logs {
-					releaseBookLog(log)
-				}
-			}
+			amendBatch.Logs = append(amendBatch.Logs, batch.Logs...)
 			batch.Release()
 		}
 	} else {
 		// Path 2: Priority Retention (In-place update)
 		if newSize.LessThan(oldTotalSize) {
 			delta := oldTotalSize.Sub(newSize)
-			// Prioritize deducting from HiddenSize
 			if delta.LessThanOrEqual(order.HiddenSize) {
 				order.HiddenSize = order.HiddenSize.Sub(delta)
 			} else {
 				remainingDelta := delta.Sub(order.HiddenSize)
 				order.HiddenSize = udecimal.Zero
 				newVisibleSize := order.Size.Sub(remainingDelta)
-				// Update the queue with the new visible size (this also updates order.Size)
 				myQueue.updateOrderSize(order.ID, newVisibleSize)
 			}
 		}
-
-		log := NewAmendLog(
-			book.seqID.Add(1),
-			req.CommandID,
-			book.engineID,
-			book.marketID,
-			order.ID,
-			order.UserID,
-			order.Side,
-			order.Price,
-			newSize,
-			oldPrice,
-			oldTotalSize,
-			order.Type,
-			req.Timestamp,
-		)
-		amendBatch := acquireLogBatch()
-		amendBatch.Logs = append(amendBatch.Logs, log)
-		book.publisher.Publish(amendBatch.Logs)
-		releaseBookLog(log)
-		amendBatch.Release()
 	}
 
+	return amendBatch, nil
+}
+
+func (book *OrderBook) handleAmendOrder(ev *InputEvent, req *protocol.AmendOrderRequest) {
+	batch, err := book.AmendOrder(req)
+	if err != nil {
+		book.sendResponse(ev.Resp, err)
+		return
+	}
+	if batch != nil {
+		if len(batch.Logs) > 0 {
+			if book.publisher != nil {
+				book.publisher.Publish(batch.Logs)
+			}
+			for _, log := range batch.Logs {
+				if log.Type == protocol.LogTypeReject {
+					book.sendResponse(ev.Resp, errors.New(string(log.RejectReason)))
+					releaseBookLog(log)
+					batch.Release()
+					return
+				}
+				releaseBookLog(log)
+			}
+		}
+		batch.Release()
+	}
 	book.sendResponse(ev.Resp, true)
 }
 
