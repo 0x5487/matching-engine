@@ -781,7 +781,6 @@ func (engine *MatchingEngine) handleCreateMarket(
 	batch := acquireLogBatch()
 	batch.Logs = append(batch.Logs, log)
 	engine.publishTrader.Publish(batch.Logs)
-	releaseBookLog(log)
 	batch.Release()
 
 	if resp != nil {
@@ -815,7 +814,6 @@ func (engine *MatchingEngine) handleUserEvent(req *protocol.UserEventRequest) {
 	batch := acquireLogBatch()
 	batch.Logs = append(batch.Logs, log)
 	engine.publishTrader.Publish(batch.Logs)
-	releaseBookLog(log)
 	batch.Release()
 }
 
@@ -838,7 +836,6 @@ func (engine *MatchingEngine) rejectLog(
 	batch := acquireLogBatch()
 	batch.Logs = append(batch.Logs, log)
 	engine.publishTrader.Publish(batch.Logs)
-	releaseBookLog(log)
 	batch.Release()
 }
 
@@ -872,7 +869,6 @@ func (engine *MatchingEngine) rejectRequest(req any, reason protocol.RejectReaso
 	batch := acquireLogBatch()
 	batch.Logs = append(batch.Logs, log)
 	engine.publishTrader.Publish(batch.Logs)
-	releaseBookLog(log)
 	batch.Release()
 }
 

@@ -21,8 +21,28 @@ var logBatchPool = sync.Pool{
 	},
 }
 
-// Release returns the LogBatch to the pool after clearing the logs.
+// Release returns the batch and every log it holds to their pools.
+//
+// A LogBatch owns its logs. Once Release returns, those logs have been zeroed
+// and recycled, so any pointer into b.Logs kept across the call is dangling.
+// That makes Release the single point where a caller hands logs back, which is
+// the whole reason the log pool is reachable at all: a caller that only ever
+// uses batch.Release() can pool its logs without knowing the pool exists.
+//
+// A Publisher that needs the logs after Release must copy them first.
 func (b *LogBatch) Release() {
+	for _, log := range b.Logs {
+		releaseBookLog(log)
+	}
+	b.Logs = b.Logs[:0]
+	logBatchPool.Put(b)
+}
+
+// releaseLogBatchContainer returns only the batch to the pool and leaves its
+// logs untouched. It exists for the one case where ownership of the logs has
+// already moved to another batch: Release would recycle logs the new owner is
+// still holding pointers to.
+func releaseLogBatchContainer(b *LogBatch) {
 	b.Logs = b.Logs[:0]
 	logBatchPool.Put(b)
 }
@@ -68,6 +88,16 @@ func releaseBookLog(log *OrderBookLog) {
 }
 
 // Publisher is the interface for receiving order book logs.
+//
+// Ownership: the logs passed to Publish belong to the engine, and the engine
+// calls LogBatch.Release as soon as Publish returns. Release zeroes them and
+// returns them to a sync.Pool, so a log read afterwards reads recycled memory.
+// An implementation that needs the logs beyond the call - to hand them to a
+// channel, a goroutine, or a queue - must copy them before returning.
+//
+// An implementation cannot release the logs itself: Publish receives the slice,
+// not the *LogBatch that Release is a method on. A publisher that retains the
+// slice without copying is a silent-corruption bug, not a slow path.
 type Publisher interface {
 	Publish(logs []*OrderBookLog)
 }
@@ -90,7 +120,8 @@ func (p *MemoryPublishLog) Publish(logs []*OrderBookLog) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, log := range logs {
-		// We take a copy because logs are pooled
+		// The caller may Release the batch right after Publish returns, which
+		// recycles the logs. Copy so what we keep stays valid.
 		copyLog := *log
 		p.logs = append(p.logs, &copyLog)
 	}

@@ -1,7 +1,8 @@
 # CHANGELOG
 
-## v0.9.0 (2026-09-22)
+## [unschedule]
 
+- breaking: `LogBatch.Release()` now returns the batch's logs to the `OrderBookLog` pool along with the batch itself. Logs are zeroed and recycled, so a `Publisher` or caller that retains `*OrderBookLog` — or the `Logs` slice itself — past `Release()` will read recycled memory; copy first if the logs are needed afterwards. `MemoryPublishLog` already copies and is unaffected. This also fixes the pool being unreachable for callers of the synchronous `NewOrderBook` API: `releaseBookLog` was unexported and `Release()` never touched the logs, so every synchronous caller paid one permanent ~376 B heap allocation per log. Synchronous callers now drop from 5 to 3 allocs/op and 1062 to 292 B/op on a place+cancel round trip (~1.9 µs → ~1.3 µs, -32%), removing roughly 557 MB/s of garbage per single-threaded actor, and batches of any size reach 0 allocs/op.
 - feature: export pure synchronous `OrderBook` API (`NewOrderBook`, `PlaceOrder`, `CancelOrder`, `AmendOrder`, `Snapshot`, `GetDepth`) returning `*LogBatch` directly for seamless single-actor state machine integration.
 - feature: implement `AggregatedBook` read-replica state machine with event replay (`Open`, `Match`, `Cancel`, `Amend`), sequence deduplication, automatic gap recovery with `OnRebuild` callback, and thread-safe `GetDepth` queries for downstream market data services.
 - perf: optimize `AggregatedBook.Replay` to achieve over 7M events/sec throughput with 0 B/op and 0 allocs/op.

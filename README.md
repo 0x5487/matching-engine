@@ -263,11 +263,13 @@ func main() {
 
 	// 3. Query top N depth levels (e.g. to write to Redis or push via WebSocket)
 	depth := ab.GetDepth(20)
-	fmt.Printf("UpdateID: %d, Best Ask: %s (%s), Best Bid: %s (%s)\n",
-		depth.UpdateID,
-		depth.Asks[0].Price, depth.Asks[0].Size,
-		depth.Bids[0].Price, depth.Bids[0].Size,
-	)
+	fmt.Printf("UpdateID: %d\n", depth.UpdateID)
+	if len(depth.Asks) > 0 {
+		fmt.Printf("Best Ask: %s (%s)\n", depth.Asks[0].Price, depth.Asks[0].Size)
+	}
+	if len(depth.Bids) > 0 {
+		fmt.Printf("Best Bid: %s (%s)\n", depth.Bids[0].Price, depth.Bids[0].Size)
+	}
 }
 ```
 
@@ -305,7 +307,7 @@ decoded, err := protocol.UnmarshalRequest(data)
 
 - **Strict Authoritative Timestamp**: Every state-changing request (`PlaceOrderRequest`, `CancelOrderRequest`, `AmendOrderRequest`, management commands) must carry an upstream-assigned non-zero logical `Timestamp` (Unix nanoseconds, e.g. from sequencer metadata). Requests with `Timestamp <= 0` are strictly rejected with `protocol.RejectReasonInvalidPayload`. The engine never calls `time.Now()` internally.
 - **Synchronous vs. Asynchronous**:
-  - **Synchronous Mode (`book.PlaceOrder`, `book.CancelOrder`, `book.AmendOrder`)**: Immediately performs in-memory matching on the caller's goroutine and returns `(*LogBatch, error)`. Callers **MUST** call `batch.Release()` when finished to return objects to `sync.Pool`.
+  - **Synchronous Mode (`book.PlaceOrder`, `book.CancelOrder`, `book.AmendOrder`)**: Immediately performs in-memory matching on the caller's goroutine and returns `(*LogBatch, error)`. Callers **MUST** call `batch.Release()` when finished. `Release()` returns both the batch and the logs it holds to their `sync.Pool`s, and it zeroes those logs, so they must be fully consumed before the call and no `*OrderBookLog` or `Logs` slice may be retained across it. This is what lets synchronous callers pool their logs without knowing the pool exists.
   - **Asynchronous Mode (`engine.PlaceOrderAsync`, etc.)**: Enqueues work into the Disruptor MPSC ring buffer. A returned `error` means enqueue failure, not business rejection.
 - Every request must carry an upstream-assigned non-empty `CommandID`. Engine helpers reject empty command IDs before enqueue.
 - Business-level failures are emitted as `OrderBookLog` entries with `Type == protocol.LogTypeReject`.
@@ -340,7 +342,9 @@ future, err = engine.Query(ctx, depthQuery)
 res, err = future.Wait(ctx)
 if err == nil {
 	depth := res.(*protocol.GetDepthResponse)
-	fmt.Printf("Top Bid: %s\n", depth.Bids[0].Price)
+	if len(depth.Bids) > 0 {
+		fmt.Printf("Top Bid: %s\n", depth.Bids[0].Price)
+	}
 }
 ```
 
@@ -406,12 +410,32 @@ Successful management commands are emitted as `LogTypeAdmin`. Invalid management
 
 ### Event Handling
 
-Implement `Publisher` interface to handle order book events:
+Implement `Publisher` interface to handle order book events.
+
+`Publish` **must not** retain anything it is given. The engine always calls `LogBatch.Release()` immediately after `Publish` returns, and `Release` zeroes the logs and returns them to a `sync.Pool`. A log that is read after that point reads recycled memory — usually zeros. Note that `Publish` receives only `[]*OrderBookLog`, not the `*LogBatch`, so an implementation cannot call `Release` itself; doing so is not a supported option and never necessary.
+
+If the logs are needed beyond the call — for a channel, a goroutine, or a queue — copy them before returning:
 
 ```go
-type MyHandler struct{}
+type MyHandler struct {
+	mu   sync.Mutex
+	kept []match.OrderBookLog
+}
 
-func (h *MyHandler) Publish(logs []*protocol.OrderBookLog) {
+func (h *MyHandler) Publish(logs []*match.OrderBookLog) {
+	for _, log := range logs {
+		copyLog := *log // copy before returning; the original is recycled on return
+		h.mu.Lock()
+		h.kept = append(h.kept, copyLog)
+		h.mu.Unlock()
+	}
+}
+```
+
+A publisher that only inspects the logs in place, as below, is also correct:
+
+```go
+func (h *MyHandler) Publish(logs []*match.OrderBookLog) {
 	for _, log := range logs {
 		if log.Type == protocol.LogTypeUser {
 			fmt.Printf("User Event: %s, Data: %s\n", log.EventType, string(log.Data))

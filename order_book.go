@@ -195,7 +195,8 @@ func (book *OrderBook) GetDepth(limit uint32) *protocol.GetDepthResponse {
 }
 
 // PlaceOrder processes an order synchronously and returns the resulting LogBatch.
-// The caller is responsible for processing logs and calling batch.Release().
+// The caller must process batch.Logs before calling batch.Release(), which
+// recycles the logs.
 func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, error) {
 	if req == nil {
 		return nil, ErrInvalidParam
@@ -296,7 +297,8 @@ func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, e
 }
 
 // CancelOrder processes an order cancellation synchronously and returns the resulting LogBatch.
-// The caller is responsible for processing logs and calling batch.Release().
+// The caller must process batch.Logs before calling batch.Release(), which
+// recycles the logs.
 func (book *OrderBook) CancelOrder(req *protocol.CancelOrderRequest) (*LogBatch, error) {
 	if req == nil {
 		return nil, ErrInvalidParam
@@ -360,7 +362,8 @@ func (book *OrderBook) CancelOrder(req *protocol.CancelOrderRequest) (*LogBatch,
 }
 
 // AmendOrder processes an order amendment synchronously and returns the resulting LogBatch.
-// The caller is responsible for processing logs and calling batch.Release().
+// The caller must process batch.Logs before calling batch.Release(), which
+// recycles the logs.
 func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, error) {
 	if req == nil {
 		return nil, ErrInvalidParam
@@ -467,8 +470,11 @@ func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, e
 
 		batch := book.handleLimitOrder(req.CommandID, order, req.Timestamp)
 		if batch != nil {
+			// Ownership of these logs moves to amendBatch, so the inner batch
+			// must give back only its container. Calling Release here would
+			// recycle logs amendBatch is now holding pointers to.
 			amendBatch.Logs = append(amendBatch.Logs, batch.Logs...)
-			batch.Release()
+			releaseLogBatchContainer(batch)
 		}
 	} else if newSize.LessThan(oldTotalSize) {
 		// Path 2: Priority Retention (In-place update)
@@ -538,7 +544,6 @@ func (book *OrderBook) handleSuspendMarket(ev *InputEvent, req *protocol.Suspend
 	)
 	batch.Logs = append(batch.Logs, log)
 	book.publisher.Publish(batch.Logs)
-	releaseBookLog(log)
 	batch.Release()
 
 	book.sendResponse(ev.Resp, true)
@@ -563,7 +568,6 @@ func (book *OrderBook) handleResumeMarket(ev *InputEvent, req *protocol.ResumeMa
 	)
 	batch.Logs = append(batch.Logs, log)
 	book.publisher.Publish(batch.Logs)
-	releaseBookLog(log)
 	batch.Release()
 
 	book.sendResponse(ev.Resp, true)
@@ -589,7 +593,6 @@ func (book *OrderBook) handleUpdateConfig(ev *InputEvent, req *protocol.UpdateCo
 		)
 		batch.Logs = append(batch.Logs, log)
 		book.publisher.Publish(batch.Logs)
-		releaseBookLog(log)
 		batch.Release()
 		book.sendResponse(ev.Resp, true)
 	} else {
@@ -634,11 +637,9 @@ func (book *OrderBook) handlePlaceOrder(ev *InputEvent, req *protocol.PlaceOrder
 			for _, log := range batch.Logs {
 				if log.Type == protocol.LogTypeReject {
 					book.sendResponse(ev.Resp, errors.New(string(log.RejectReason)))
-					releaseBookLog(log)
 					batch.Release()
 					return
 				}
-				releaseBookLog(log)
 			}
 		}
 		batch.Release()
@@ -660,11 +661,9 @@ func (book *OrderBook) handleCancelOrder(ev *InputEvent, req *protocol.CancelOrd
 			for _, log := range batch.Logs {
 				if log.Type == protocol.LogTypeReject {
 					book.sendResponse(ev.Resp, errors.New(string(log.RejectReason)))
-					releaseBookLog(log)
 					batch.Release()
 					return
 				}
-				releaseBookLog(log)
 			}
 		}
 		batch.Release()
@@ -686,11 +685,9 @@ func (book *OrderBook) handleAmendOrder(ev *InputEvent, req *protocol.AmendOrder
 			for _, log := range batch.Logs {
 				if log.Type == protocol.LogTypeReject {
 					book.sendResponse(ev.Resp, errors.New(string(log.RejectReason)))
-					releaseBookLog(log)
 					batch.Release()
 					return
 				}
-				releaseBookLog(log)
 			}
 		}
 		batch.Release()
@@ -751,7 +748,6 @@ func (book *OrderBook) rejectInvalidPayload(
 	)
 	batch.Logs = append(batch.Logs, log)
 	book.publisher.Publish(batch.Logs)
-	releaseBookLog(log)
 	batch.Release()
 }
 
