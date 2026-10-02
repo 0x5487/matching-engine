@@ -169,12 +169,13 @@ func MarshalRequest(req any) ([]byte, error) {
 		if len(r.OrderID) > maxUint16Value {
 			return nil, errStringTooLong
 		}
-		// side(1) + orderType(1) + orderID(string) + price(string) + size(string) + visibleSize(string) + quoteSize(string)
+		// side(1) + orderType(1) + orderID(string) + price(string) + size(string) + visibleSize(string) + quoteSize(string) + stepSize(string)
 		priceStr := r.Price.String()
 		sizeStr := r.Size.String()
 		visStr := r.VisibleSize.String()
 		quoteStr := r.QuoteSize.String()
-		pSize := sideFieldSize + orderTypeSize + stringLenSize*5 + len(
+		stepStr := r.StepSize.String()
+		pSize := sideFieldSize + orderTypeSize + stringLenSize*6 + len(
 			r.OrderID,
 		) + len(
 			priceStr,
@@ -184,6 +185,8 @@ func MarshalRequest(req any) ([]byte, error) {
 			visStr,
 		) + len(
 			quoteStr,
+		) + len(
+			stepStr,
 		)
 		buf := make([]byte, pSize)
 		offset := 0
@@ -211,7 +214,12 @@ func MarshalRequest(req any) ([]byte, error) {
 			return nil, err
 		}
 		offset += n
-		_, err = writeString(buf[offset:], quoteStr)
+		n, err = writeString(buf[offset:], quoteStr)
+		if err != nil {
+			return nil, err
+		}
+		offset += n
+		_, err = writeString(buf[offset:], stepStr)
 		if err != nil {
 			return nil, err
 		}
@@ -429,11 +437,20 @@ func UnmarshalRequest(data []byte) (any, error) {
 			return nil, errInvalidDecimal
 		}
 		pOffset += n
-		quoteStr, _, err := readString(pData[pOffset:])
+		quoteStr, n, err := readString(pData[pOffset:])
 		if err != nil {
 			return nil, err
 		}
 		quoteSize, err := udecimal.Parse(quoteStr)
+		if err != nil {
+			return nil, errInvalidDecimal
+		}
+		pOffset += n
+		stepStr, _, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		stepSize, err := udecimal.Parse(stepStr)
 		if err != nil {
 			return nil, errInvalidDecimal
 		}
@@ -447,6 +464,7 @@ func UnmarshalRequest(data []byte) (any, error) {
 			Size:        size,
 			VisibleSize: visibleSize,
 			QuoteSize:   quoteSize,
+			StepSize:    stepSize,
 		}, nil
 	case CmdCancelOrder:
 		orderID, _, err := readString(pData)

@@ -2,125 +2,80 @@
 
 ## 1. Background
 
-Management requests are part of the same event-driven write path as trading requests. This preserves replayability, keeps administrative actions observable, and avoids direct state mutation outside the engine event loop.
+Management requests used to be part of the same event-driven write path as
+trading requests. That is no longer the case.
 
-The current engine already supports management requests for:
+`CreateMarket`, `SuspendMarket`, `ResumeMarket` and `UpdateConfig` were
+removed, along with `OrderBookState`, `RejectReasonMarketSuspended`,
+`RejectReasonMarketHalted`, and the whole `lotSize` mechanism. Rationale and
+migration notes live in the CHANGELOG (`[unschedule]` section). In short: an
+order book matches orders routed to it, and the set of tradeable markets is
+decided upstream — so `MatchingEngine` now obtains books only by restoring
+them from a snapshot, and callers that manage books themselves use the
+synchronous `NewOrderBook` API.
 
-- market creation
-- market suspension
-- market resume
-- market configuration update
+If a maintenance-window freeze is ever needed, a suspend command should be
+deliberately added back rather than accidentally retained. Its semantics are
+a full freeze: while suspended, place, amend **and** cancel are all refused.
 
 ## 2. Current Contract
 
 ### 2.1 Command Types
 
-Management command types currently defined in `protocol/command.go`:
+The only command types in `protocol/command.go` are (excluding the
+`CmdUnknown` zero-value sentinel):
 
 ```go
 const (
-    CmdUnknown       CommandType = 0
-    CmdPlaceOrder    CommandType = 1
-    CmdCancelOrder   CommandType = 2
-    CmdAmendOrder    CommandType = 3
-    CmdCreateMarket  CommandType = 11
-    CmdSuspendMarket CommandType = 12
-    CmdResumeMarket  CommandType = 13
-    CmdUpdateConfig  CommandType = 14
-    CmdUserEvent     CommandType = 21
+    CmdPlaceOrder  CommandType = 1
+    CmdCancelOrder CommandType = 2
+    CmdAmendOrder  CommandType = 3
+    CmdUserEvent   CommandType = 21
 )
 ```
 
-### 2.2 Typed Requests
+`AmendOrderRequest` (price/size amendment) and `UserEventRequest` (generic
+side channel) were kept: neither belongs to market lifecycle.
 
-All management requests carry upstream-assigned logical timestamps and use `uint64` operator identity.
+All requests carry upstream-assigned logical timestamps and use `uint64`
+operator identity. `CommandID` is validated before enqueue (a helper returns
+an error); `Timestamp` is validated on the event loop by each book command,
+which emits an `invalid_payload` reject log for a missing or non-positive
+value. Callers must therefore handle two failure shapes: a Go error from the
+helper itself (enqueue or request-validation failure) and a reject log for
+business-level refusal.
 
-```go
-type CreateMarketRequest struct {
-    BaseCommand
-    MinLotSize udecimal.Decimal `json:"min_lot_size"`
-}
+### 2.2 Write Path
 
-type SuspendMarketRequest struct {
-    BaseCommand
-    Reason string `json:"reason"`
-}
+`MatchingEngine` write helpers accept typed requests directly and enqueue
+them into the shared engine ring buffer:
 
-type ResumeMarketRequest struct {
-    BaseCommand
-}
+- `PlaceOrderAsync(ctx, *protocol.PlaceOrderRequest) error`
+- `PlaceOrderBatchAsync(ctx, []*protocol.PlaceOrderRequest) error`
+- `CancelOrderAsync(ctx, *protocol.CancelOrderRequest) error`
+- `AmendOrderAsync(ctx, *protocol.AmendOrderRequest) error`
+- `SendUserEvent(ctx, *protocol.UserEventRequest) error`
 
-type UpdateConfigRequest struct {
-    BaseCommand
-    MinLotSize udecimal.Decimal `json:"min_lot_size"`
-}
-```
+These methods are asynchronous with respect to business execution.
+A returned `error` from the helper method itself means enqueue or
+request-validation failure, not business rejection.
 
-## 3. Runtime Behavior
-
-### 3.1 Write Path
-
-Management helper methods on `MatchingEngine` accept typed requests directly and enqueue them into the shared engine ring buffer.
-
-Current helper methods:
-
-- `CreateMarket(ctx, *protocol.CreateMarketRequest) (*Future[bool], error)`
-- `SuspendMarket(ctx, *protocol.SuspendMarketRequest) (*Future[bool], error)`
-- `ResumeMarket(ctx, *protocol.ResumeMarketRequest) (*Future[bool], error)`
-- `UpdateConfig(ctx, *protocol.UpdateConfigRequest) (*Future[bool], error)`
-
-These methods are asynchronous with respect to business execution but return a `Future` that can be used to wait for the result. A returned `error` from the helper method itself means enqueue or request-validation failure, not business rejection. Business-level errors (e.g., duplicate market) are returned when calling `future.Wait(ctx)`.
-A request with an empty `CommandID` is rejected before enqueue.
-
-### 3.2 Business Failures
+### 2.3 Business Failures
 
 Business-level failures are emitted as `OrderBookLog` rejects.
+Trading commands sent to a missing market emit
+`RejectReasonMarketNotFound`. Reject logs preserve the actor `UserID` for
+audit correlation.
 
-Current behaviors:
+## 3. Recovery and Replay
 
-- duplicate market creation emits `RejectReasonMarketAlreadyExists`
-- invalid `MinLotSize` emits `RejectReasonInvalidPayload`
-- missing `CommandID` is rejected as `invalid_payload`
-- missing or non-positive `Timestamp` emits `RejectReasonInvalidPayload`
-- trading commands sent to a missing market emit `RejectReasonMarketNotFound`
-- reject logs preserve the management actor `UserID` for audit correlation
+Books are recovered from snapshot plus replay of the surviving command
+types. Market lifecycle is not part of replayed state: there is no market
+registry in the library to rebuild, and none is needed.
 
-### 3.3 Successful Management Events
+## 4. Query Semantics
 
-Successful management commands are emitted through `PublishLog` as `LogTypeAdmin`.
-
-Current event types:
-
-- `market_created`
-- `market_suspended`
-- `market_resumed`
-- `market_config_updated`
-
-### 3.4 State Enforcement
-
-Current order book state rules:
-
-| Market State | PlaceOrder | CancelOrder | AmendOrder |
-|--------------|------------|-------------|------------|
-| `Running`    | Allowed    | Allowed     | Allowed    |
-| `Suspended`  | Reject     | Allowed     | Reject     |
-| `Halted`     | Reject     | Reject      | Reject     |
-
-Rejected operations produce `OrderBookLog` entries with `market_suspended` or `market_halted`.
-
-## 4. Recovery and Replay
-
-Management actions are part of deterministic replay semantics because they are represented as typed requests and applied on the event loop.
-
-Implications:
-
-- market creation state is recoverable from snapshot + replay
-- market suspension / resume state is restorable from snapshot
-- configuration changes such as `MinLotSize` are part of replayed state transitions
-
-## 5. Query Semantics
-
-Read-only methods are not management commands and do not participate in replay:
+Read-only methods are not commands and do not participate in replay:
 
 - `GetStats`
 - `Depth`
@@ -132,21 +87,10 @@ For missing markets:
 - read methods return `ErrNotFound`
 - write methods emit reject logs when appropriate
 
-## 6. Validation Guidance
+## 5. Notes
 
-When verifying management command behavior, confirm:
-
-- helper methods require upstream timestamps
-- helper methods require non-empty `CommandID`
-- management timestamps must be strictly positive
-- create / suspend / resume / config updates are serialized through the engine event loop
-- duplicate or malformed management requests emit reject logs
-- successful management requests emit `LogTypeAdmin`
-- reject logs keep the operator `UserID`
-- suspended state blocks place / amend but still allows cancel
-- snapshot / restore preserves state and lot-size configuration
-
-## 7. Notes
-
-- Historical references to `AddOrderBook`, `sync.Map`, a public `ExecuteCommand`, or direct imperative market registration are obsolete.
-- This document describes the current implemented behavior rather than a future refactor plan.
+- Historical references to `CreateMarket`, `SuspendMarket`, `ResumeMarket`,
+  `UpdateConfig`, `OrderBookState`, `MinLotSize`, `WithLotSize`, market
+  suspension, or lot-size configuration are obsolete.
+- This document describes the current implemented behavior rather than a
+  future refactor plan.

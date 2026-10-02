@@ -120,6 +120,162 @@ func TestStepSizeFloorsTheQuoteConversion(t *testing.T) {
 	})
 }
 
+// stepValidationBook returns a book with one clean resting offer on each
+// side: a 1.0 sell at 85000 and a 1.0 buy at 84000. Both sizes are whole
+// numbers of a 0.001 step, so any dust that appears after this point comes
+// from the taker, never from the book.
+func stepValidationBook(t *testing.T) *OrderBook {
+	t.Helper()
+	book := newOrderBookWithPublisher("test-engine", "BTC-USDT", NewMemoryPublishLog())
+	testPlace(book, 1, "cmd-ask", 1, &protocol.PlaceOrderRequest{
+		BaseCommand: protocol.BaseCommand{UserID: 1, CommandID: "cmd-ask", MarketID: "BTC-USDT"},
+		OrderID:     "resting-sell",
+		OrderType:   Limit,
+		Side:        Sell,
+		Price:       udecimal.MustParse("85000"),
+		Size:        udecimal.MustParse("1"),
+	})
+	testPlace(book, 1, "cmd-bid", 2, &protocol.PlaceOrderRequest{
+		BaseCommand: protocol.BaseCommand{UserID: 1, CommandID: "cmd-bid", MarketID: "BTC-USDT"},
+		OrderID:     "resting-buy",
+		OrderType:   Limit,
+		Side:        Buy,
+		Price:       udecimal.MustParse("84000"),
+		Size:        udecimal.MustParse("1"),
+	})
+	return book
+}
+
+func stepValidationPlace(
+	t *testing.T,
+	book *OrderBook,
+	id string,
+	ot OrderType,
+	s Side,
+	price, size, step string,
+) *LogBatch {
+	t.Helper()
+	batch, err := book.PlaceOrder(&protocol.PlaceOrderRequest{
+		BaseCommand: protocol.BaseCommand{
+			UserID: 2, CommandID: "cmd-" + id, MarketID: "BTC-USDT", Timestamp: 10,
+		},
+		OrderID:   id,
+		OrderType: ot,
+		Side:      s,
+		Price:     udecimal.MustParse(price),
+		Size:      udecimal.MustParse(size),
+		StepSize:  udecimal.MustParse(step),
+	})
+	require.NoError(t, err, "PlaceOrder returns rejects as logs, not errors")
+	require.NotNil(t, batch)
+	return batch
+}
+
+func requireInvalidPayload(t *testing.T, batch *LogBatch, id string) {
+	t.Helper()
+	defer batch.Release()
+	require.Len(t, batch.Logs, 1, "a refused order emits exactly one log, never a match beside it")
+	log := batch.Logs[0]
+	assert.Equal(t, protocol.LogTypeReject, log.Type, "order %q must be rejected", id)
+	assert.Equal(
+		t, protocol.RejectReasonInvalidPayload, log.RejectReason,
+		"order %q breaks the step rule, not liquidity or price", id,
+	)
+}
+
+// TestQuantityStepRejectsDustTakers pins the SDK's self-defense: a
+// quantity-sized order carrying a step size it is not a whole number of is
+// refused at the door, before matching. Without this, a shared-library caller
+// that skips API-side validation can walk dust straight onto the book, and a
+// dust FOK taker would even fill in full.
+func TestQuantityStepRejectsDustTakers(t *testing.T) {
+	tests := []struct {
+		name      string
+		orderType OrderType
+		side      Side
+		price     string
+	}{
+		{name: "limit buy", orderType: Limit, side: Buy, price: "85000"},
+		{name: "limit sell", orderType: Limit, side: Sell, price: "84000"},
+		{name: "market sell", orderType: Market, side: Sell, price: "0"},
+		// A market buy sized in base takes the quantity path too: the check
+		// does not split by side, only by whether Size is zero.
+		{name: "market buy sized in base", orderType: Market, side: Buy, price: "0"},
+		{name: "IOC buy", orderType: IOC, side: Buy, price: "85000"},
+		{name: "FOK buy", orderType: FOK, side: Buy, price: "85000"},
+		// Priced to rest rather than cross: the rejection must come from the
+		// step rule, not from PostOnlyMatch.
+		{name: "post-only buy", orderType: PostOnly, side: Buy, price: "84000"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			book := stepValidationBook(t)
+			batch := stepValidationPlace(
+				t, book, "dust", tc.orderType, tc.side,
+				tc.price, "0.0003", "0.001",
+			)
+			requireInvalidPayload(t, batch, "dust")
+		})
+	}
+}
+
+// TestQuantityStepSkipsZeroStep pins the migration compatibility: callers
+// that do not carry a step size keep the old behavior. A zero step means
+// "no unit to measure against", not "a unit of zero".
+func TestQuantityStepSkipsZeroStep(t *testing.T) {
+	book := stepValidationBook(t)
+	batch, err := book.PlaceOrder(&protocol.PlaceOrderRequest{
+		BaseCommand: protocol.BaseCommand{
+			UserID: 2, CommandID: "cmd-dust", MarketID: "BTC-USDT", Timestamp: 10,
+		},
+		OrderID:   "dust",
+		OrderType: Limit,
+		Side:      Buy,
+		Price:     udecimal.MustParse("85000"),
+		Size:      udecimal.MustParse("0.0003"),
+		StepSize:  udecimal.Zero,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, batch)
+	defer batch.Release()
+	matches := matchLogs(t, batch)
+	require.Len(t, matches, 1, "without a step there is nothing to refuse")
+	assert.Equal(t, "0.0003", matches[0].Size.String())
+}
+
+// TestQuantityStepAcceptsWholeMultiples pins that the check only refuses
+// dust: whole numbers of steps behave exactly as before.
+func TestQuantityStepAcceptsWholeMultiples(t *testing.T) {
+	book := stepValidationBook(t)
+	batch := stepValidationPlace(t, book, "clean", Limit, Buy, "85000", "0.002", "0.001")
+	defer batch.Release()
+	matches := matchLogs(t, batch)
+	require.Len(t, matches, 1, "a clean taker matches exactly as before")
+	assert.Equal(t, "0.002", matches[0].Size.String())
+}
+
+// TestQuantityStepRejectsDustVisibleSize pins that the iceberg peak answers
+// the same question as the size: the visible part rests on the book, so a
+// non-whole peak is refused even when the total size is clean.
+func TestQuantityStepRejectsDustVisibleSize(t *testing.T) {
+	book := stepValidationBook(t)
+	batch, err := book.PlaceOrder(&protocol.PlaceOrderRequest{
+		BaseCommand: protocol.BaseCommand{
+			UserID: 2, CommandID: "cmd-iceberg", MarketID: "BTC-USDT", Timestamp: 10,
+		},
+		OrderID:     "iceberg",
+		OrderType:   Limit,
+		Side:        Buy,
+		Price:       udecimal.MustParse("84000"),
+		Size:        udecimal.MustParse("0.002"),
+		VisibleSize: udecimal.MustParse("0.0003"),
+		StepSize:    udecimal.MustParse("0.001"),
+	})
+	require.NoError(t, err, "PlaceOrder returns rejects as logs, not errors")
+	require.NotNil(t, batch)
+	requireInvalidPayload(t, batch, "iceberg")
+}
+
 // TestNonStepQuantitiesStillTerminate answers whether dropping the lot-size check
 // can leave the loop spinning. It cannot, and the reason is that the quantity
 // path terminates by subtraction rather than by division: every iteration

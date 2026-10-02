@@ -198,6 +198,34 @@ func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, e
 		}
 	}
 
+	// A quantity-sized order carrying a step size must be a whole number of
+	// steps, measured from zero. The book never floors the quantity path, so
+	// whatever arrives here is what the fills will carry: refusing dust at
+	// the door is the only place the book can keep it out.
+	//
+	// Measured from zero, not from a minimum: the book holds no market rules
+	// and never sees minQuantity, so it cannot anchor anywhere else. Callers
+	// that own the rules (exchange APIs) check against the minimum; the two
+	// agree wherever the minimum is itself a whole number of steps.
+	//
+	// Skipped when no step travels with the order. A zero step means "no
+	// unit to measure against", and older callers that never send one keep
+	// the old behavior rather than failing every order overnight.
+	//
+	// Amendments are a separate door this check does not guard:
+	// AmendOrderRequest carries no step, so an amended size is never
+	// measured here. See the CHANGELOG entry for the tracked follow-up.
+	if isValid && !req.Size.IsZero() && !req.StepSize.IsZero() &&
+		!isWholeSteps(req.Size, req.StepSize) {
+		isValid = false
+	}
+	// The visible part of an iceberg rests on the book, so it answers the
+	// same question as the size itself.
+	if isValid && !req.VisibleSize.IsZero() && !req.StepSize.IsZero() &&
+		!isWholeSteps(req.VisibleSize, req.StepSize) {
+		isValid = false
+	}
+
 	if !isValid {
 		return book.createRejectBatch(
 			req.CommandID,
@@ -250,6 +278,20 @@ func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, e
 	}
 
 	return batch, nil
+}
+
+// isWholeSteps reports whether size is a whole number of step.
+//
+// A Mod error is unreachable for a non-zero step, and a size that cannot be
+// divided is not a whole number of anything, so both report false and the
+// order is refused. Failing closed is the point: an order the book cannot
+// measure is not an order the book should fill.
+func isWholeSteps(size, step udecimal.Decimal) bool {
+	rem, err := size.Mod(step)
+	if err != nil {
+		return false
+	}
+	return rem.IsZero()
 }
 
 // CancelOrder processes an order cancellation synchronously and returns the resulting LogBatch.

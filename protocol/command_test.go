@@ -24,11 +24,18 @@ var happyPathRequests = []struct {
 				MarketID:  "BTC-USDT",
 				Timestamp: 1678901234,
 			},
-			OrderID:   "order-1",
-			Side:      SideBuy,
-			OrderType: OrderTypeLimit,
-			Price:     udecimal.MustFromInt64(100, 0),
-			Size:      udecimal.MustFromInt64(1, 0),
+			OrderID:     "order-1",
+			Side:        SideBuy,
+			OrderType:   OrderTypeLimit,
+			Price:       udecimal.MustFromInt64(100, 0),
+			Size:        udecimal.MustFromInt64(1, 0),
+			VisibleSize: udecimal.MustParse("0.5"),
+			QuoteSize:   udecimal.MustParse("50"),
+			// Every field is deliberately non-zero: a field the wire drops
+			// round-trips as zero, and a zero fixture cannot tell the
+			// difference. StepSize was dropped this way until this test
+			// carried a non-zero one.
+			StepSize: udecimal.MustParse("0.0001"),
 		},
 	},
 	{

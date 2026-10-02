@@ -9,13 +9,14 @@ The design goal of this protocol is:
 - keep typed requests language-neutral and precision-safe
 - preserve deterministic replay semantics
 - separate enqueue errors from business rejections
-- support both trading requests and management requests with one shared request schema
+- support trading requests and user events with one shared request schema
+  (market lifecycle commands were removed; see `docs/design/management.md`)
 
 ## 2. Current Architecture
 
 ### 2.1 Typed Request Model
 
-The canonical write contract is `protocol.BaseCommand` plus typed request structs such as `protocol.PlaceOrderRequest` and `protocol.CreateMarketRequest`.
+The canonical write contract is `protocol.BaseCommand` plus typed request structs such as `protocol.PlaceOrderRequest` and `protocol.AmendOrderRequest`.
 
 Key properties of the current implementation:
 
@@ -29,12 +30,11 @@ Illustrative shape:
 
 ```go
 type BaseCommand struct {
-    Type      CommandType `json:"type"`
-    SeqID     uint64      `json:"seq_id"`
-    CommandID string      `json:"command_id"`
-    UserID    uint64      `json:"user_id"`
-    MarketID  string      `json:"market_id"`
-    Timestamp int64       `json:"timestamp"`
+    SeqID     uint64 `json:"seq_id"`
+    CommandID string `json:"command_id"`
+    UserID    uint64 `json:"user_id"`
+    MarketID  string `json:"market_id"`
+    Timestamp int64  `json:"timestamp"`
 }
 
 type PlaceOrderRequest struct {
@@ -46,22 +46,32 @@ type PlaceOrderRequest struct {
     Size        udecimal.Decimal `json:"size"`
     VisibleSize udecimal.Decimal `json:"visible_size"`
     QuoteSize   udecimal.Decimal `json:"quote_size"`
+    StepSize    udecimal.Decimal `json:"step_size"`
 }
 ```
+
+`StepSize` travels on every order so that a replay cannot disagree with
+itself about which unit was in force. A quantity-sized order carrying a
+non-zero step must be a whole number of it (`Size % StepSize == 0`,
+likewise for a non-zero iceberg `VisibleSize`), otherwise the book refuses
+it as `invalid_payload`; a zero step skips the check. The quote path floors
+each level's conversion to the step before taking the minimum with the
+resting size.
 
 ### 2.2 Public Engine API
 
 The SDK exposes typed facade methods instead of a generic command submission API. `MatchingEngine` provides the following core methods:
 
-- `CreateMarket(ctx, *protocol.CreateMarketRequest) (*Future[bool], error)`
-- `SuspendMarket(ctx, *protocol.SuspendMarketRequest) (*Future[bool], error)`
-- `ResumeMarket(ctx, *protocol.ResumeMarketRequest) (*Future[bool], error)`
-- `UpdateConfig(ctx, *protocol.UpdateConfigRequest) (*Future[bool], error)`
 - `PlaceOrderAsync(ctx, *protocol.PlaceOrderRequest) error`
 - `PlaceOrderBatchAsync(ctx, []*protocol.PlaceOrderRequest) error`
 - `CancelOrderAsync(ctx, *protocol.CancelOrderRequest) error`
 - `AmendOrderAsync(ctx, *protocol.AmendOrderRequest) error`
 - `SendUserEvent(ctx, *protocol.UserEventRequest) error`
+
+Market lifecycle commands (`CreateMarket`, `SuspendMarket`, `ResumeMarket`,
+`UpdateConfig`) were removed: the set of tradeable markets is decided
+upstream, and `MatchingEngine` obtains books only by restoring them from a
+snapshot (see `docs/design/management.md`).
 
 These methods validate typed requests and enqueue them into the engine ring buffer.
 
@@ -103,7 +113,6 @@ Protocol-level rule:
 This includes:
 
 - trading commands
-- management commands
 - user events
 
 The engine uses `Timestamp` for deterministic log emission and replay-stable behavior. Non-deterministic local observation time must not be part of the canonical command or log schema.
@@ -121,12 +130,10 @@ Current design rules:
 
 - `OrderBookLog` is the deterministic event model
 - business failures are emitted as `LogTypeReject`
-- successful management commands are emitted as `LogTypeAdmin`
 - enqueue / serialization failures are returned as method errors before the request enters the event loop
 - downstream systems may attach local observation time in their own `PublishLog` implementation, but that metadata is outside the canonical event schema
 - malformed `UserEvent` payloads also emit standardized reject logs rather than being silently dropped
-- management-command rejects preserve operator identity via `OrderBookLog.UserID`
-- successful management commands preserve operator identity and lifecycle event type via `OrderBookLog.UserID` and `EventType`
+- rejects preserve the caller-supplied actor identity via `OrderBookLog.UserID`
 
 Common reject reasons include:
 
@@ -134,9 +141,10 @@ Common reject reasons include:
 - `duplicate_order_id`
 - `order_not_found`
 - `market_not_found`
-- `market_already_exists`
-- `market_suspended`
-- `market_halted`
+- `no_liquidity`
+- `price_mismatch`
+- `insufficient_size`
+- `post_only_match`
 
 ## 6. Read / Write Responsibility Split
 
@@ -158,7 +166,6 @@ When validating protocol compatibility, confirm:
 - missing-market read requests return `ErrNotFound`
 - binary payload truncation is rejected
 - malformed `UserEvent` payloads emit reject logs
-- successful management commands emit `LogTypeAdmin`
 
 ## 8. Notes
 
