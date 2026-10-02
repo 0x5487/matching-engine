@@ -20,15 +20,7 @@ const (
 	CmdCancelOrder CommandType = 2
 	// CmdAmendOrder represents an amend-order command.
 	CmdAmendOrder CommandType = 3
-	// CmdCreateMarket represents a create-market command.
-	CmdCreateMarket CommandType = 11
-	// CmdSuspendMarket represents a suspend-market command.
-	CmdSuspendMarket CommandType = 12
-	// CmdResumeMarket represents a resume-market command.
-	CmdResumeMarket CommandType = 13
-	// CmdUpdateConfig represents an update-config command.
-	CmdUpdateConfig CommandType = 14
-	// CmdUserEvent represents a user-event command.
+					// CmdUserEvent represents a user-event command.
 	CmdUserEvent CommandType = 21
 )
 
@@ -107,6 +99,13 @@ type PlaceOrderRequest struct {
 	Size        udecimal.Decimal `json:"size"`
 	VisibleSize udecimal.Decimal `json:"visible_size"`
 	QuoteSize   udecimal.Decimal `json:"quote_size"`
+	// StepSize is the unit of account for the base asset: a base balance has to be
+	// a whole number of steps or it cannot be reconciled against the ledger, so a
+	// quote-sized market order has to be floored to it. It travels on the order
+	// rather than living on the book so that a replay cannot disagree with itself
+	// about which unit was in force, and so that no producer can choose a unit the
+	// market does not use.
+	StepSize udecimal.Decimal `json:"step_size"`
 }
 
 // Base returns the embedded BaseCommand.
@@ -133,44 +132,6 @@ type AmendOrderRequest struct {
 
 // Base returns the embedded BaseCommand.
 func (r *AmendOrderRequest) Base() BaseCommand { return r.BaseCommand }
-
-// CreateMarketRequest represents a typed create-market command.
-type CreateMarketRequest struct {
-	BaseCommand
-
-	MinLotSize udecimal.Decimal `json:"min_lot_size"`
-}
-
-// Base returns the embedded BaseCommand.
-func (r *CreateMarketRequest) Base() BaseCommand { return r.BaseCommand }
-
-// SuspendMarketRequest represents a typed suspend-market command.
-type SuspendMarketRequest struct {
-	BaseCommand
-
-	Reason string `json:"reason"`
-}
-
-// Base returns the embedded BaseCommand.
-func (r *SuspendMarketRequest) Base() BaseCommand { return r.BaseCommand }
-
-// ResumeMarketRequest represents a typed resume-market command.
-type ResumeMarketRequest struct {
-	BaseCommand
-}
-
-// Base returns the embedded BaseCommand.
-func (r *ResumeMarketRequest) Base() BaseCommand { return r.BaseCommand }
-
-// UpdateConfigRequest represents a typed update-config command.
-type UpdateConfigRequest struct {
-	BaseCommand
-
-	MinLotSize udecimal.Decimal `json:"min_lot_size"`
-}
-
-// Base returns the embedded BaseCommand.
-func (r *UpdateConfigRequest) Base() BaseCommand { return r.BaseCommand }
 
 // UserEventRequest represents a typed user-event command.
 type UserEventRequest struct {
@@ -288,39 +249,6 @@ func MarshalRequest(req any) ([]byte, error) {
 		}
 		offset += n
 		_, err = writeString(buf[offset:], sizeStr)
-		if err != nil {
-			return nil, err
-		}
-		payload = buf
-	case *CreateMarketRequest:
-		wireType = CmdCreateMarket
-		s := r.MinLotSize.String()
-		buf := make([]byte, stringLenSize+len(s))
-		_, err := writeString(buf, s)
-		if err != nil {
-			return nil, err
-		}
-		payload = buf
-	case *SuspendMarketRequest:
-		wireType = CmdSuspendMarket
-		// Validate body string fields before building the buffer to avoid panicking.
-		if len(r.Reason) > maxUint16Value {
-			return nil, errStringTooLong
-		}
-		buf := make([]byte, stringLenSize+len(r.Reason))
-		_, err := writeString(buf, r.Reason)
-		if err != nil {
-			return nil, err
-		}
-		payload = buf
-	case *ResumeMarketRequest:
-		wireType = CmdResumeMarket
-		payload = []byte{}
-	case *UpdateConfigRequest:
-		wireType = CmdUpdateConfig
-		s := r.MinLotSize.String()
-		buf := make([]byte, stringLenSize+len(s))
-		_, err := writeString(buf, s)
 		if err != nil {
 			return nil, err
 		}
@@ -558,43 +486,6 @@ func UnmarshalRequest(data []byte) (any, error) {
 			OrderID:     orderID,
 			NewPrice:    price,
 			NewSize:     size,
-		}, nil
-	case CmdCreateMarket:
-		s, _, err := readString(pData)
-		if err != nil {
-			return nil, err
-		}
-		minLotSize, err := udecimal.Parse(s)
-		if err != nil {
-			return nil, errInvalidDecimal
-		}
-		return &CreateMarketRequest{
-			BaseCommand: base,
-			MinLotSize:  minLotSize,
-		}, nil
-	case CmdSuspendMarket:
-		reason, _, err := readString(pData)
-		if err != nil {
-			return nil, err
-		}
-		return &SuspendMarketRequest{
-			BaseCommand: base,
-			Reason:      reason,
-		}, nil
-	case CmdResumeMarket:
-		return &ResumeMarketRequest{BaseCommand: base}, nil
-	case CmdUpdateConfig:
-		s, _, err := readString(pData)
-		if err != nil {
-			return nil, err
-		}
-		minLotSize, err := udecimal.Parse(s)
-		if err != nil {
-			return nil, errInvalidDecimal
-		}
-		return &UpdateConfigRequest{
-			BaseCommand: base,
-			MinLotSize:  minLotSize,
 		}, nil
 	case CmdUserEvent:
 		pOffset := 0

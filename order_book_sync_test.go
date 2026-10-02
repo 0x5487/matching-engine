@@ -13,21 +13,14 @@ import (
 
 func TestOrderBook_SyncAPI(t *testing.T) {
 	t.Run("NewOrderBook and Options", func(t *testing.T) {
-		lotSize := udecimal.MustFromInt64(1, 4) // 0.0001
 		book := match.NewOrderBook(
 			"BTC-USDT",
 			match.WithEngineID("custom-engine"),
-			match.WithLotSize(lotSize),
 			match.WithSkiplistSeed(42),
 		)
 
 		assert.Equal(t, "BTC-USDT", book.MarketID())
 		assert.Equal(t, "custom-engine", book.EngineID())
-		assert.Equal(t, protocol.OrderBookStateRunning, book.State())
-
-		book.SetState(protocol.OrderBookStateSuspended)
-		assert.Equal(t, protocol.OrderBookStateSuspended, book.State())
-		book.SetState(protocol.OrderBookStateRunning)
 	})
 
 	t.Run("PlaceOrder Limit and Match", func(t *testing.T) {

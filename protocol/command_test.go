@@ -60,57 +60,6 @@ var happyPathRequests = []struct {
 		},
 	},
 	{
-		name: "CreateMarketRequest",
-		req: &CreateMarketRequest{
-			BaseCommand: BaseCommand{
-				SeqID:     126,
-				CommandID: "cmd-create",
-				UserID:    1,
-				MarketID:  "ETH-USDT",
-				Timestamp: 1678901237,
-			},
-			MinLotSize: udecimal.MustFromInt64(1, 2),
-		},
-	},
-	{
-		name: "SuspendMarketRequest",
-		req: &SuspendMarketRequest{
-			BaseCommand: BaseCommand{
-				SeqID:     127,
-				CommandID: "cmd-suspend",
-				UserID:    1,
-				MarketID:  "ETH-USDT",
-				Timestamp: 1678901238,
-			},
-			Reason: "maintenance",
-		},
-	},
-	{
-		name: "ResumeMarketRequest",
-		req: &ResumeMarketRequest{
-			BaseCommand: BaseCommand{
-				SeqID:     128,
-				CommandID: "cmd-resume",
-				UserID:    1,
-				MarketID:  "ETH-USDT",
-				Timestamp: 1678901239,
-			},
-		},
-	},
-	{
-		name: "UpdateConfigRequest",
-		req: &UpdateConfigRequest{
-			BaseCommand: BaseCommand{
-				SeqID:     129,
-				CommandID: "cmd-update",
-				UserID:    1,
-				MarketID:  "ETH-USDT",
-				Timestamp: 1678901240,
-			},
-			MinLotSize: udecimal.MustFromInt64(1, 3),
-		},
-	},
-	{
 		name: "UserEventRequest",
 		req: &UserEventRequest{
 			BaseCommand: BaseCommand{
@@ -178,40 +127,6 @@ func TestMarshalRequest_DerivedWireType(t *testing.T) {
 			},
 		},
 		{
-			name: "CreateMarketRequest",
-			req: &CreateMarketRequest{
-				BaseCommand: BaseCommand{
-					CommandID: "cmd-3",
-					UserID:    1,
-					MarketID:  "ETH-USDT",
-					Timestamp: 1,
-				},
-			},
-		},
-		{
-			name: "SuspendMarketRequest",
-			req: &SuspendMarketRequest{
-				BaseCommand: BaseCommand{
-					CommandID: "cmd-4",
-					UserID:    1,
-					MarketID:  "ETH-USDT",
-					Timestamp: 1,
-				},
-				Reason: "maintenance",
-			},
-		},
-		{
-			name: "ResumeMarketRequest",
-			req: &ResumeMarketRequest{
-				BaseCommand: BaseCommand{
-					CommandID: "cmd-5",
-					UserID:    1,
-					MarketID:  "ETH-USDT",
-					Timestamp: 1,
-				},
-			},
-		},
-		{
 			name: "UserEventRequest",
 			req: &UserEventRequest{
 				BaseCommand: BaseCommand{
@@ -239,12 +154,6 @@ func TestMarshalRequest_DerivedWireType(t *testing.T) {
 				require.IsType(t, &PlaceOrderRequest{}, decoded)
 			case *CancelOrderRequest:
 				require.IsType(t, &CancelOrderRequest{}, decoded)
-			case *CreateMarketRequest:
-				require.IsType(t, &CreateMarketRequest{}, decoded)
-			case *SuspendMarketRequest:
-				require.IsType(t, &SuspendMarketRequest{}, decoded)
-			case *ResumeMarketRequest:
-				require.IsType(t, &ResumeMarketRequest{}, decoded)
 			case *UserEventRequest:
 				require.IsType(t, &UserEventRequest{}, decoded)
 			default:
@@ -363,19 +272,6 @@ func TestMarshalRequest_InvalidInputs(t *testing.T) {
 			wantErr: errStringTooLong,
 		},
 		{
-			name: "SuspendMarketRequest oversized Reason",
-			req: &SuspendMarketRequest{
-				BaseCommand: BaseCommand{
-					CommandID: "cmd-1",
-					UserID:    1,
-					MarketID:  "BTC-USDT",
-					Timestamp: 1,
-				},
-				Reason: oversized,
-			},
-			wantErr: errStringTooLong,
-		},
-		{
 			name: "UserEventRequest oversized EventType",
 			req: &UserEventRequest{
 				BaseCommand: BaseCommand{
@@ -447,15 +343,16 @@ func TestUnmarshalRequest_TruncatedPayloads(t *testing.T) {
 // TestUnmarshalRequest_UnknownCommandType verifies that UnmarshalRequest returns
 // errUnknownRequest when the wire command type is not recognized.
 func TestUnmarshalRequest_UnknownCommandType(t *testing.T) {
-	// Build a valid ResumeMarket frame (smallest payload), then overwrite the
+	// Build a valid CancelOrder frame (smallest payload), then overwrite the
 	// command-type byte with an unrecognized value.
-	validReq := &ResumeMarketRequest{
+	validReq := &CancelOrderRequest{
 		BaseCommand: BaseCommand{
 			CommandID: "cmd-unk",
 			UserID:    1,
 			MarketID:  "X",
 			Timestamp: 1,
 		},
+		OrderID: "o",
 	}
 
 	data, err := MarshalRequest(validReq)
@@ -472,13 +369,14 @@ func TestUnmarshalRequest_UnknownCommandType(t *testing.T) {
 // TestUnmarshalRequest_InvalidTimestamp verifies that UnmarshalRequest rejects
 // timestamps that would overflow int64 (bit 63 set in the uint64 wire value).
 func TestUnmarshalRequest_InvalidTimestamp(t *testing.T) {
-	validReq := &ResumeMarketRequest{
+	validReq := &CancelOrderRequest{
 		BaseCommand: BaseCommand{
 			CommandID: "cmd-ts",
 			UserID:    1,
 			MarketID:  "X",
 			Timestamp: 1,
 		},
+		OrderID: "o",
 	}
 
 	data, err := MarshalRequest(validReq)

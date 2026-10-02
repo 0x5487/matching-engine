@@ -31,26 +31,14 @@ func benchmarkNewEngine(b *testing.B, marketID string) (context.Context, *Matchi
 
 	ctx := context.Background()
 	engine := NewMatchingEngine("bench-engine", NewDiscardPublishLog())
-	req := &protocol.CreateMarketRequest{
-		BaseCommand: protocol.BaseCommand{
-			UserID:    1,
-			MarketID:  marketID,
-			CommandID: "bench-market-create-" + marketID,
-			Timestamp: time.Now().UnixNano(),
-		},
-		MinLotSize: udecimal.Zero,
-	}
-
-	future, err := engine.CreateMarket(ctx, req)
-	if err != nil {
-		b.Fatal(err)
-	}
+	// The market's book is installed directly rather than created by a command,
+	// which no longer exists: the market list belongs to the API server and the
+	// book arrives with the snapshot.
+	engine.orderbooks[marketID] = newOrderBookWithPublisher(
+		engine.engineID, marketID, engine.publishTrader,
+	)
 
 	go engine.Run()
-
-	if _, err := future.Wait(ctx); err != nil {
-		b.Fatal(err)
-	}
 
 	return ctx, engine
 }
@@ -351,26 +339,15 @@ func BenchmarkOrderBook_Match(b *testing.B) {
 
 	ctx := context.Background()
 	marketID := benchmarkMarketBTC
-	req := &protocol.CreateMarketRequest{
-		BaseCommand: protocol.BaseCommand{
-			UserID:    1,
-			MarketID:  marketID,
-			CommandID: "bench-market-create",
-			Timestamp: time.Now().UnixNano(),
-		},
-		MinLotSize: udecimal.Zero,
-	}
-	future, err := engine.CreateMarket(ctx, req)
-	if err != nil {
-		b.Fatal(err)
-	}
+	// The book's presence is the market's existence now: the command that used to
+	// create it is gone, so a benchmark installs the book the way a restored
+	// snapshot would and measures from there.
+	engine.orderbooks[marketID] = newOrderBookWithPublisher(
+		engine.engineID, marketID, engine.publishTrader,
+	)
 
 	// Start engine event loop
 	go engine.Run()
-
-	if _, err := future.Wait(ctx); err != nil {
-		b.Fatal(err)
-	}
 
 	// Use fixed seed for repeatability
 	rng := rand.New(rand.NewSource(42)) //nolint:gosec // G404: test code
@@ -478,21 +455,15 @@ func BenchmarkSubmitAsyncBatch(b *testing.B) {
 
 	ctx := context.Background()
 	marketID := benchmarkMarketBTC
-	req := &protocol.CreateMarketRequest{
-		BaseCommand: protocol.BaseCommand{
-			UserID:    1,
-			MarketID:  marketID,
-			CommandID: "bench-market-create-2",
-			Timestamp: time.Now().UnixNano(),
-		},
-		MinLotSize: udecimal.Zero,
-	}
-	future, _ := engine.CreateMarket(ctx, req)
+	// The book's presence is the market's existence now: the command that used to
+	// create it is gone, so a benchmark installs the book the way a restored
+	// snapshot would and measures from there.
+	engine.orderbooks[marketID] = newOrderBookWithPublisher(
+		engine.engineID, marketID, engine.publishTrader,
+	)
 
 	// Start engine event loop
 	go engine.Run()
-
-	_, _ = future.Wait(ctx)
 
 	// Use fixed seed for repeatability
 	rng := rand.New(rand.NewSource(42)) //nolint:gosec // G404: test code

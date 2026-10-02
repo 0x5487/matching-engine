@@ -23,28 +23,18 @@ func setupEngine(t *testing.T, log Publisher) *MatchingEngine {
 	return engine
 }
 
-// createMarket submits a CmdCreateMarket command to the engine and waits for it
-// to complete, failing the test immediately if any step returns an error.
-func createMarket(t *testing.T, engine *MatchingEngine, marketID, minLotSize string) {
+// addBook registers a market's book directly.
+//
+// Markets are no longer created by a command: the API server owns the market
+// list and the snapshot carries the book, so there is nothing for the engine to
+// be told. These tests are about what happens once a market exists, so they
+// install one the way a restored snapshot would rather than reintroducing the
+// command that removal deleted.
+func addBook(t *testing.T, engine *MatchingEngine, marketID string) {
 	t.Helper()
-	ctx := context.Background()
-	var mls udecimal.Decimal
-	if minLotSize != "" {
-		mls, _ = udecimal.Parse(minLotSize)
-	}
-	req := &protocol.CreateMarketRequest{
-		BaseCommand: protocol.BaseCommand{
-			UserID:    1,
-			MarketID:  marketID,
-			CommandID: "setup-create-" + marketID,
-			Timestamp: time.Now().UnixNano(),
-		},
-		MinLotSize: mls,
-	}
-	future, err := engine.CreateMarket(ctx, req)
-	require.NoError(t, err)
-	_, err = future.Wait(ctx)
-	require.NoError(t, err)
+	engine.orderbooks[marketID] = newOrderBookWithPublisher(
+		engine.engineID, marketID, engine.publishTrader,
+	)
 }
 
 // waitForBidCount polls GetStats until the bid order count for the given market
@@ -90,21 +80,6 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		assert.NotNil(t, engine.ring)
 	})
 
-	t.Run("CreateMarketRequiresCommandID", func(t *testing.T) {
-		engine := NewMatchingEngine("test-engine-"+t.Name(), NewMemoryPublishLog())
-		marketID := "BTC-USDT--" + "CreateMarketRequiresCommandID" + t.Name()
-		req := &protocol.CreateMarketRequest{
-			BaseCommand: protocol.BaseCommand{
-				UserID:    1,
-				MarketID:  marketID,
-				CommandID: "",
-				Timestamp: 1,
-			},
-			MinLotSize: udecimal.MustFromInt64(1, 2),
-		}
-		_, err := engine.CreateMarket(context.Background(), req)
-		require.ErrorIs(t, err, ErrInvalidParam)
-	})
 
 	t.Run("PlaceOrders", func(t *testing.T) {
 		publishTrader := NewMemoryPublishLog()
@@ -113,8 +88,8 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		ctx := context.Background()
 		market1 := "BTC-USDT-" + t.Name() + "-1"
 		market2 := "ETH-USDT-" + t.Name() + "-2"
-		createMarket(t, engine, market1, "")
-		createMarket(t, engine, market2, "")
+		addBook(t, engine, market1)
+		addBook(t, engine, market2)
 
 		reqOrder1 := &protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
@@ -159,7 +134,7 @@ func TestMatchingEngineInitialization(t *testing.T) {
 
 		ctx := context.Background()
 		market1 := "BTC-USDT-" + t.Name()
-		createMarket(t, engine, market1, "")
+		addBook(t, engine, market1)
 
 		reqPlace1 := &protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
@@ -237,7 +212,7 @@ func TestMatchingEngineShutdown(t *testing.T) {
 
 		markets := []string{"BTC-USDT-1", "ETH-USDT-2"}
 		for _, market := range markets {
-			createMarket(t, engine, market, "")
+			addBook(t, engine, market)
 		}
 
 		err := engine.Shutdown(ctx)
@@ -261,85 +236,13 @@ func TestMatchingEngineShutdown(t *testing.T) {
 	})
 }
 
-func TestManagement_SuspendResume(t *testing.T) {
-	publish := NewMemoryPublishLog()
-	engine := setupEngine(t, publish)
-	marketID := "ETH-USDT-" + t.Name()
-	ctx := context.Background()
-
-	createMarket(t, engine, marketID, "0.0001")
-
-	reqPlace1 := &protocol.PlaceOrderRequest{
-		BaseCommand: protocol.BaseCommand{
-			UserID:    1,
-			MarketID:  marketID,
-			CommandID: "suspend-order-1",
-			Timestamp: 1,
-		},
-		OrderID:   "order-1",
-		Side:      Buy,
-		OrderType: Limit,
-		Price:     udecimal.MustFromInt64(3000, 0),
-		Size:      udecimal.MustFromInt64(1, 0),
-	}
-	err := engine.PlaceOrderAsync(ctx, reqPlace1)
-	require.NoError(t, err)
-	waitForBidCount(t, engine, marketID, 1)
-
-	reqSuspend := &protocol.SuspendMarketRequest{
-		BaseCommand: protocol.BaseCommand{
-			UserID:    1,
-			MarketID:  marketID,
-			CommandID: "suspend-market-1",
-			Timestamp: time.Now().UnixNano(),
-		},
-	}
-	futureSuspend, _ := engine.SuspendMarket(ctx, reqSuspend)
-	_, _ = futureSuspend.Wait(ctx)
-
-	reqPlace2 := &protocol.PlaceOrderRequest{
-		BaseCommand: protocol.BaseCommand{
-			UserID:    2,
-			MarketID:  marketID,
-			CommandID: "suspend-order-2",
-			Timestamp: 2,
-		},
-		OrderID:   "order-2",
-		Side:      Buy,
-		OrderType: Limit,
-		Price:     udecimal.MustFromInt64(3000, 0),
-		Size:      udecimal.MustFromInt64(1, 0),
-	}
-	_ = engine.PlaceOrderAsync(ctx, reqPlace2)
-
-	assert.Eventually(t, func() bool {
-		for _, l := range publish.Logs() {
-			if l.OrderID == "order-2" && l.RejectReason == protocol.RejectReasonMarketSuspended {
-				return true
-			}
-		}
-		return false
-	}, time.Second, 10*time.Millisecond)
-
-	reqResume := &protocol.ResumeMarketRequest{
-		BaseCommand: protocol.BaseCommand{
-			UserID:    1,
-			MarketID:  marketID,
-			CommandID: "resume-market-1",
-			Timestamp: time.Now().UnixNano(),
-		},
-	}
-	futureResume, _ := engine.ResumeMarket(ctx, reqResume)
-	_, _ = futureResume.Wait(ctx)
-}
-
 func TestUserEvent_GenericPayload(t *testing.T) {
 	publish := NewMemoryPublishLog()
 	engine := setupEngine(t, publish)
 	market1 := "EVENT-TEST-" + t.Name()
 	ctx := context.Background()
 
-	createMarket(t, engine, market1, "1.0")
+	addBook(t, engine, market1)
 
 	reqOrder1 := &protocol.PlaceOrderRequest{
 		BaseCommand: protocol.BaseCommand{

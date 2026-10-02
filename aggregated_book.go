@@ -112,8 +112,18 @@ func (ab *AggregatedBook) ApplySnapshot(snapshot *Snapshot) error {
 }
 
 // Replay applies a BookLog event to update the aggregated book state.
-// Events with LogType == LogTypeReject do not affect book state but still update the sequence ID.
 // Returns an error if a sequence gap is detected and rebuild fails.
+//
+// Only depth-changing logs (open, match, cancel, amend) carry a depth version,
+// and only those move the book. A consumer may therefore forward just those and
+// still hand Replay a contiguous version, which is what keeps a version jump
+// meaningful as a lost-update signal.
+//
+// Two log kinds must not be replayed here. A refusal or admin log carries no
+// depth version (0), so Replay drops it as already-seen. A LogTypeUser log
+// carries the upstream message queue's command sequence in the same field, and
+// unless that sequence happens to be zero it reads as a gap and triggers a
+// rebuild. A consumer projecting depth should filter both out.
 func (ab *AggregatedBook) Replay(log *OrderBookLog) error {
 	if log == nil {
 		return errors.New("order book log is nil")

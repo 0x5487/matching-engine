@@ -31,24 +31,8 @@ func releaseOrder(o *Order) {
 	orderPool.Put(o)
 }
 
-const defaultLotSizePrecision = 8
-
-// DefaultLotSize is the fallback minimum trade unit (1e-8).
-// This prevents infinite loops when quoteSize/price produces very small values.
-var DefaultLotSize = udecimal.MustFromInt64(1, defaultLotSizePrecision) // 0.00000001
-
 // OrderBookOption configures an OrderBook.
 type OrderBookOption func(*OrderBook)
-
-// WithLotSize sets the minimum trade unit for the order book.
-// When a Market order's calculated match size is less than this value,
-// the order will be rejected with remaining funds returned.
-// Default: 1e-8 (0.00000001) as a safety fallback.
-func WithLotSize(size udecimal.Decimal) OrderBookOption {
-	return func(book *OrderBook) {
-		book.lotSize = size
-	}
-}
 
 // WithEngineID sets the engine ID for the order book.
 func WithEngineID(id string) OrderBookOption {
@@ -76,15 +60,15 @@ func WithSkiplistSeed(seed int64) OrderBookOption {
 type OrderBook struct {
 	engineID     string
 	marketID     string
-	lotSize      udecimal.Decimal // Minimum trade unit for Market orders
 	skiplistSeed int64            // PRNG seed for price skiplist
-	seqID        atomic.Uint64    // Globally increasing sequence ID
-	lastCmdSeqID atomic.Uint64    // Last sequence ID of the command
-	tradeID      atomic.Uint64    // Sequential trade ID counter
+	// seqID is this book's depth version; it advances only when resting size was
+	// added or removed. Per book, never global.
+	seqID        atomic.Uint64
+	lastCmdSeqID atomic.Uint64 // Last sequence ID of the command
+	tradeID      atomic.Uint64 // Sequential trade ID counter
 	bidQueue     *queue
 	askQueue     *queue
 	publisher    Publisher
-	state        protocol.OrderBookState
 }
 
 // NewOrderBook creates a new pure OrderBook instance.
@@ -95,9 +79,7 @@ func NewOrderBook(
 	book := &OrderBook{
 		engineID:     "default",
 		marketID:     marketID,
-		lotSize:      DefaultLotSize,
 		skiplistSeed: defaultSkiplistSeed,
-		state:        protocol.OrderBookStateRunning,
 	}
 
 	for _, opt := range opts {
@@ -132,13 +114,6 @@ func (book *OrderBook) LastCmdSeqID() uint64 {
 // Restore restores the order book state from a snapshot.
 func (book *OrderBook) Restore(snap *OrderBookSnapshot) {
 	book.seqID.Store(snap.SeqID)
-	// Check for nil decimal (zero value) in case of old snapshot or default
-	if snap.MinLotSize.IsZero() {
-		book.lotSize = DefaultLotSize
-	} else {
-		book.lotSize = snap.MinLotSize
-	}
-	book.state = snap.State
 	book.lastCmdSeqID.Store(snap.LastCmdSeqID)
 	book.tradeID.Store(snap.TradeID)
 
@@ -164,17 +139,8 @@ func (book *OrderBook) EngineID() string {
 	return book.engineID
 }
 
-// State returns the current lifecycle state of the order book.
-func (book *OrderBook) State() protocol.OrderBookState {
-	return book.state
-}
-
-// SetState sets the lifecycle state of the order book.
-func (book *OrderBook) SetState(state protocol.OrderBookState) {
-	book.state = state
-}
-
-// SeqID returns the current sequence ID of the order book.
+// SeqID returns the current book depth version: how many depth-changing logs
+// this book has emitted. Refusals and admin commands do not advance it.
 func (book *OrderBook) SeqID() uint64 {
 	return book.seqID.Load()
 }
@@ -211,29 +177,19 @@ func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, e
 		), nil
 	}
 
-	if book.state == protocol.OrderBookStateHalted {
-		return book.createRejectBatch(
-			req.CommandID,
-			req.OrderID,
-			req.UserID,
-			protocol.RejectReasonMarketHalted,
-			req.Timestamp,
-		), nil
-	}
-	if book.state == protocol.OrderBookStateSuspended {
-		return book.createRejectBatch(
-			req.CommandID,
-			req.OrderID,
-			req.UserID,
-			protocol.RejectReasonMarketSuspended,
-			req.Timestamp,
-		), nil
-	}
-
 	// Basic validation
 	isValid := true
 	if req.OrderType == Market {
 		if req.Size.IsZero() && req.QuoteSize.IsZero() {
+			isValid = false
+		}
+		// A quote-sized order converts by dividing by each level's price, and the
+		// result has to be floored to the step size to stay expressible as a base
+		// balance. Without a step size there is nothing to floor to and no unit to
+		// hold the balance in, so the order cannot be executed as described. This is
+		// rejected rather than defaulted: a default unit would silently write
+		// balances the ledger cannot represent.
+		if req.Size.IsZero() && req.StepSize.IsZero() {
 			isValid = false
 		}
 	} else {
@@ -287,7 +243,7 @@ func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, e
 	case PostOnly:
 		batch = book.handlePostOnlyOrder(req.CommandID, order, req.Timestamp)
 	case Market:
-		batch = book.handleMarketOrder(req.CommandID, order, req.QuoteSize, req.Timestamp)
+		batch = book.handleMarketOrder(req.CommandID, order, req.QuoteSize, req.StepSize, req.Timestamp)
 	default:
 		releaseOrder(order)
 		return nil, ErrInvalidParam
@@ -309,16 +265,6 @@ func (book *OrderBook) CancelOrder(req *protocol.CancelOrderRequest) (*LogBatch,
 			req.OrderID,
 			req.UserID,
 			protocol.RejectReasonInvalidPayload,
-			req.Timestamp,
-		), nil
-	}
-
-	if book.state == protocol.OrderBookStateHalted {
-		return book.createRejectBatch(
-			req.CommandID,
-			req.OrderID,
-			req.UserID,
-			protocol.RejectReasonMarketHalted,
 			req.Timestamp,
 		), nil
 	}
@@ -361,6 +307,23 @@ func (book *OrderBook) CancelOrder(req *protocol.CancelOrderRequest) (*LogBatch,
 	return batch, nil
 }
 
+// amendChangesDepth reports whether an amend alters the book.
+//
+// An amend moves resting size whenever it relocates the order - a price change
+// emits an amend plus an open at the new price - or resizes it. Both directions
+// of resize count: the shrink path keeps the order in place but still changes
+// the size at that price level.
+//
+// A no-op amend is the one command that reaches the amend log without changing
+// the book: the new price and size both resolve to the current ones, so none of
+// the three conditions hold and neither AmendOrder branch is taken.
+func amendChangesDepth(
+	isPriceChange, isSizeIncrease bool,
+	newSize, oldTotalSize udecimal.Decimal,
+) bool {
+	return isPriceChange || isSizeIncrease || newSize.LessThan(oldTotalSize)
+}
+
 // AmendOrder processes an order amendment synchronously and returns the resulting LogBatch.
 // The caller must process batch.Logs before calling batch.Release(), which
 // recycles the logs.
@@ -374,25 +337,6 @@ func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, e
 			req.OrderID,
 			req.UserID,
 			protocol.RejectReasonInvalidPayload,
-			req.Timestamp,
-		), nil
-	}
-
-	if book.state == protocol.OrderBookStateHalted {
-		return book.createRejectBatch(
-			req.CommandID,
-			req.OrderID,
-			req.UserID,
-			protocol.RejectReasonMarketHalted,
-			req.Timestamp,
-		), nil
-	}
-	if book.state == protocol.OrderBookStateSuspended {
-		return book.createRejectBatch(
-			req.CommandID,
-			req.OrderID,
-			req.UserID,
-			protocol.RejectReasonMarketSuspended,
 			req.Timestamp,
 		), nil
 	}
@@ -431,8 +375,18 @@ func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, e
 	isSizeIncrease := newSize.GreaterThan(oldTotalSize)
 
 	amendBatch := acquireLogBatch()
+	// Computed once and reused for both the version and the branch below, so the
+	// two cannot disagree about whether the book changed.
+	depthChanged := amendChangesDepth(isPriceChange, isSizeIncrease, newSize, oldTotalSize)
+	// A no-op amend changes no depth, so it must not advance the version.
+	// Emitting the log is still right - the command happened and an operator
+	// wants to see it - but the version belongs to depth only.
+	amendSeqID := book.seqID.Load()
+	if depthChanged {
+		amendSeqID = book.seqID.Add(1)
+	}
 	log := NewAmendLog(
-		book.seqID.Add(1),
+		amendSeqID,
 		req.CommandID,
 		book.engineID,
 		book.marketID,
@@ -495,12 +449,6 @@ func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, e
 func (book *OrderBook) processCommand(ev *InputEvent) {
 	req := ev.Request
 	switch request := req.(type) {
-	case *protocol.SuspendMarketRequest:
-		book.handleSuspendMarket(ev, request)
-	case *protocol.ResumeMarketRequest:
-		book.handleResumeMarket(ev, request)
-	case *protocol.UpdateConfigRequest:
-		book.handleUpdateConfig(ev, request)
 	case *protocol.PlaceOrderRequest:
 		book.handlePlaceOrder(ev, request)
 	case *protocol.CancelOrderRequest:
@@ -525,82 +473,6 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 	}
 }
 
-func (book *OrderBook) handleSuspendMarket(ev *InputEvent, req *protocol.SuspendMarketRequest) {
-	if !book.validateBasic(req.CommandID, req.UserID, "", req.Timestamp) {
-		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
-		return
-	}
-
-	book.state = protocol.OrderBookStateSuspended
-	batch := acquireLogBatch()
-	log := NewAdminLog(
-		book.seqID.Add(1),
-		req.CommandID,
-		book.engineID,
-		book.marketID,
-		req.UserID,
-		req.Reason,
-		req.Timestamp,
-	)
-	batch.Logs = append(batch.Logs, log)
-	book.publisher.Publish(batch.Logs)
-	batch.Release()
-
-	book.sendResponse(ev.Resp, true)
-}
-
-func (book *OrderBook) handleResumeMarket(ev *InputEvent, req *protocol.ResumeMarketRequest) {
-	if !book.validateBasic(req.CommandID, req.UserID, "", req.Timestamp) {
-		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
-		return
-	}
-
-	book.state = protocol.OrderBookStateRunning
-	batch := acquireLogBatch()
-	log := NewAdminLog(
-		book.seqID.Add(1),
-		req.CommandID,
-		book.engineID,
-		book.marketID,
-		req.UserID,
-		"market_resumed",
-		req.Timestamp,
-	)
-	batch.Logs = append(batch.Logs, log)
-	book.publisher.Publish(batch.Logs)
-	batch.Release()
-
-	book.sendResponse(ev.Resp, true)
-}
-
-func (book *OrderBook) handleUpdateConfig(ev *InputEvent, req *protocol.UpdateConfigRequest) {
-	if !book.validateBasic(req.CommandID, req.UserID, "", req.Timestamp) {
-		book.sendResponse(ev.Resp, errors.New(string(protocol.RejectReasonInvalidPayload)))
-		return
-	}
-
-	if !req.MinLotSize.IsZero() {
-		book.lotSize = req.MinLotSize
-		batch := acquireLogBatch()
-		log := NewAdminLog(
-			book.seqID.Add(1),
-			req.CommandID,
-			book.engineID,
-			book.marketID,
-			req.UserID,
-			"market_config_updated",
-			req.Timestamp,
-		)
-		batch.Logs = append(batch.Logs, log)
-		book.publisher.Publish(batch.Logs)
-		batch.Release()
-		book.sendResponse(ev.Resp, true)
-	} else {
-		// No config update requested, but still respond success if we reached here
-		book.sendResponse(ev.Resp, true)
-	}
-}
-
 func (book *OrderBook) createRejectBatch(
 	commandID string,
 	orderID string,
@@ -610,7 +482,7 @@ func (book *OrderBook) createRejectBatch(
 ) *LogBatch {
 	batch := acquireLogBatch()
 	log := NewRejectLog(
-		book.seqID.Add(1),
+		0,
 		commandID,
 		book.engineID,
 		book.marketID,
@@ -737,7 +609,7 @@ func (book *OrderBook) rejectInvalidPayload(
 ) {
 	batch := acquireLogBatch()
 	log := NewRejectLog(
-		book.seqID.Add(1),
+		0,
 		commandID,
 		book.engineID,
 		marketID,
@@ -764,18 +636,6 @@ func (book *OrderBook) validateBasic(
 			orderID,
 			userID,
 			protocol.RejectReasonInvalidPayload,
-			timestamp,
-		)
-		return false
-	}
-
-	if book.state == protocol.OrderBookStateHalted {
-		book.rejectInvalidPayload(
-			commandID,
-			book.marketID,
-			orderID,
-			userID,
-			protocol.RejectReasonMarketHalted,
 			timestamp,
 		)
 		return false
@@ -814,8 +674,6 @@ func (book *OrderBook) createSnapshot() *OrderBookSnapshot {
 		TradeID:      book.tradeID.Load(),
 		Bids:         book.bidQueue.toSnapshot(),
 		Asks:         book.askQueue.toSnapshot(),
-		State:        book.state,
-		MinLotSize:   book.lotSize,
 	}
 }
 
@@ -955,7 +813,7 @@ func (book *OrderBook) handleIOCOrder(commandID string, order *Order, timestamp 
 		tOrd := targetQueue.peekHeadOrder()
 		if tOrd == nil {
 			log := NewRejectLog(
-				book.seqID.Add(1),
+				0,
 				commandID,
 				book.engineID,
 				book.marketID,
@@ -973,7 +831,7 @@ func (book *OrderBook) handleIOCOrder(commandID string, order *Order, timestamp 
 		if (order.Side == Buy && order.Price.LessThan(tOrd.Price)) ||
 			(order.Side == Sell && order.Price.GreaterThan(tOrd.Price)) {
 			log := NewRejectLog(
-				book.seqID.Add(1),
+				0,
 				commandID,
 				book.engineID,
 				book.marketID,
@@ -1085,7 +943,7 @@ func (book *OrderBook) handleFOKOrder(commandID string, order *Order, timestamp 
 			}
 		}
 		log := NewRejectLog(
-			book.seqID.Add(1),
+			0,
 			commandID,
 			book.engineID,
 			book.marketID,
@@ -1123,7 +981,7 @@ func (book *OrderBook) handlePostOnlyOrder(
 			(order.Side == Sell && order.Price.LessThanOrEqual(tOrd.Price)) {
 			batch := acquireLogBatch()
 			log := NewRejectLog(
-				book.seqID.Add(1),
+				0,
 				commandID,
 				book.engineID,
 				book.marketID,
@@ -1147,6 +1005,7 @@ func (book *OrderBook) handleMarketOrder(
 	commandID string,
 	order *Order,
 	quoteSize udecimal.Decimal,
+	stepSize udecimal.Decimal,
 	timestamp int64,
 ) *LogBatch {
 	var targetQueue *queue
@@ -1161,7 +1020,7 @@ func (book *OrderBook) handleMarketOrder(
 		tOrd := targetQueue.peekHeadOrder()
 		if tOrd == nil {
 			log := NewRejectLog(
-				book.seqID.Add(1),
+				0,
 				commandID,
 				book.engineID,
 				book.marketID,
@@ -1184,21 +1043,33 @@ func (book *OrderBook) handleMarketOrder(
 		matchSize := order.Size
 		useQuote := matchSize.IsZero() && order.Type == Market && !quoteSize.IsZero()
 		if useQuote {
+			// Floor first, then take the minimum with the resting order. The order
+			// of those two operations is what keeps an offer placed under an older,
+			// finer step reachable: flooring the minimum would send 0.0003 to zero at
+			// a 0.001 step, reject an order the book could have filled, and let one
+			// holder's dust stop every order behind it.
+			//
+			// Only the quote path needs flooring. When both sizes are whole steps the
+			// result already is, so flooring a quantity-based order would change
+			// nothing and cost a division on the hot path.
 			maxSize, _ := quoteSize.Div(tOrd.Price)
-			matchSize = maxSize
+			steps, _ := maxSize.Div(stepSize)
+			matchSize = steps.Floor().Mul(stepSize)
 		}
 
 		if matchSize.GreaterThan(tOrd.Size) {
 			matchSize = tOrd.Size
 		}
 
-		// Check if match size is below minimum trade unit (LotSize)
-		// This prevents infinite loops when quoteSize/price produces very small values.
-		if matchSize.LessThan(book.lotSize) {
-			// Cannot match anymore (remaining quantity below minimum trade unit)
+		// A quote conversion can floor to zero when the remaining quote no longer
+		// buys one step. Matching on would either log a zero-size fill or leave the
+		// loop spinning, since the quote would not shrink. Zero is therefore also the
+		// loop guard the old lot-size check provided, and a stricter one: after this
+		// point a non-zero matchSize is always at least one whole step.
+		if matchSize.IsZero() {
 			// Produce Reject Log so OMS can unfreeze the remaining funds.
 			log := NewRejectLog(
-				book.seqID.Add(1),
+				0,
 				commandID,
 				book.engineID,
 				book.marketID,

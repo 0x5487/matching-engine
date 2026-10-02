@@ -484,7 +484,9 @@ func TestAggregatedBook_EdgeCases(t *testing.T) {
 		require.ErrorIs(t, err, ErrOnRebuildNotSet)
 	})
 
-	t.Run("LogTypeReject updates seqID without modifying book", func(t *testing.T) {
+	t.Run("a refusal carries no version and leaves the book alone", func(t *testing.T) {
+		// The engine emits refusals and admin logs with SeqID 0, because they
+		// move no depth. Replaying one must not advance the version.
 		ab := NewAggregatedBook()
 		require.NoError(t, ab.Replay(&OrderBookLog{
 			SeqID: 1,
@@ -495,11 +497,12 @@ func TestAggregatedBook_EdgeCases(t *testing.T) {
 		}))
 
 		require.NoError(t, ab.Replay(&OrderBookLog{
-			SeqID: 2,
+			SeqID: 0,
 			Type:  protocol.LogTypeReject,
 		}))
 
-		require.Equal(t, uint64(2), ab.SequenceID())
+		require.Equal(t, uint64(1), ab.SequenceID(),
+			"a refusal moves no depth, so the version must not advance")
 		depth, err := ab.Depth(Buy, udecimal.MustParse("100"))
 		require.NoError(t, err)
 		require.Equal(t, udecimal.MustParse("10"), depth)

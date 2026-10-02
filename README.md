@@ -14,7 +14,6 @@ A high-performance, in-memory matching engine SDK written in Go. Designed for cr
 - **Concurrency Safe**: All state mutations are serialized through the RingBuffer or single-actor loops, eliminating race conditions without mutex lock contention.
 - **Low Allocation Hot Paths**: Uses `udecimal` (uint64-based), intrusive lists, and object pooling to achieve **0 allocs/op** on core matching paths.
 - **Multi-Market Support**: Manages multiple trading pairs (e.g., BTC-USDT, ETH-USDT) within a single `MatchingEngine` instance.
-- **Management Commands**: Dynamic market management (Create, Suspend, Resume, UpdateConfig) via Event Sourcing.
 - **Comprehensive Order Types**:
   - `Limit`, `Market` (Size or QuoteSize), `IOC`, `FOK`, `Post Only`
   - **Iceberg Orders**: Support for hidden size with automatic replenishment.
@@ -47,7 +46,6 @@ func main() {
 	// 1. Initialize OrderBook with optional configurations
 	book := match.NewOrderBook(
 		"BTC-USDT",
-		match.WithLotSize(udecimal.MustParse("0.00000001")),
 		match.WithEngineID("engine-1"),
 	)
 
@@ -142,27 +140,10 @@ func main() {
 		}
 	}()
 
-	// 4. Create a Market
-	createReq := &protocol.CreateMarketRequest{
-		BaseCommand: protocol.BaseCommand{
-			CommandID: "create-btc-usdt",
-			MarketID:  "BTC-USDT",
-			UserID:    9001,
-			Timestamp: time.Now().UnixNano(),
-		},
-		MinLotSize: udecimal.MustFromInt64(1, 8), // 0.00000001
-	}
-
-	// Management commands return a Future for synchronous-like waiting.
-	future, err := engine.CreateMarket(ctx, createReq)
-	if err != nil {
-		panic(err)
-	}
-
-	// Wait until the market is visible on the read path before submitting orders.
-	if _, err := future.Wait(ctx); err != nil {
-		panic(err)
-	}
+	// 4. Markets arrive with a snapshot. There is no create-market command: the
+	// market list belongs to whoever serves the API, and this library's job is
+	// matching. To start from scratch rather than from a snapshot, drive
+	// NewOrderBook directly and register it.
 
 	// 5. Place a Sell Limit Order
 	sellReq := &protocol.PlaceOrderRequest{
@@ -224,6 +205,7 @@ func main() {
 
 Key capabilities:
 - **Event Replay**: Accurately tracks price level depth by replaying `LogTypeOpen`, `LogTypeMatch`, `LogTypeCancel`, and `LogTypeAmend`.
+- **Depth Version**: An order book's `SeqID` is its per-market depth version, advancing only when resting size is added or removed. Refusals and admin logs carry no version, so a consumer may forward only the four depth-changing log types above and still hand `Replay` a contiguous version — which is what keeps a version jump meaningful as a lost-update signal.
 - **Deduplication & Gap Detection**: Guarantees deterministic state sync using `SequenceID`. Duplicates (`SeqID <= current`) are automatically skipped; sequence gaps (`SeqID > current + 1`) trigger the `OnRebuild` callback to reload a snapshot.
 - **Thread-Safe Queries**: Protected by internal `sync.RWMutex`, allowing concurrent background event replay and foreground depth queries (`GetDepth`).
 - **High Throughput**: Capable of replaying over 7,000,000 events/sec with **0 B/op and 0 allocs/op**.
@@ -255,8 +237,10 @@ func main() {
 		}, nil
 	}
 
-	// 2. Replay incoming OrderBookLog events from MQ
-	// (Open, Match, Cancel, Amend, Reject/User/Admin)
+	// 2. Replay incoming OrderBookLog events from MQ.
+	// Forward only Open, Match, Cancel and Amend. Refusals and admin logs carry
+	// no depth version and are dropped anyway; a user event carries the upstream
+	// command sequence in SeqID and would read as a gap.
 	if err := ab.Replay(logEvent); err != nil {
 		panic(err)
 	}
@@ -348,55 +332,31 @@ if err == nil {
 }
 ```
 
-### Management Commands
+### Market Lifecycle
 
-The engine supports dynamic market management through typed facade methods:
+There is none, by design. Market creation, suspension and configuration are not
+this library's business: an order book matched orders that were already routed
+to it, and the set of tradeable markets is decided upstream. The top-level
+`MatchingEngine` therefore has one way to obtain a book - restoring it from a
+snapshot - and the synchronous `OrderBook` API is the entry point for callers
+that manage books themselves.
+
+The step size is the one market rule that reaches this library, and it arrives on
+each order rather than living on the book. That is what keeps a base balance
+expressible as a whole number of steps: a quote-sized market order divides the
+quote by each level's price and floors the result. Carrying it per order also
+means a replay cannot disagree with itself about which unit was in force, and no
+producer can pick a unit the market does not use.
 
 ```go
-// Suspend a market (rejects new Place/Amend orders)
-suspendReq := &protocol.SuspendMarketRequest{
-	BaseCommand: protocol.BaseCommand{
-		CommandID: "suspend-btc-usdt",
-		MarketID:  "BTC-USDT",
-		UserID:    9001,
-		Timestamp: time.Now().UnixNano(),
-	},
-	Reason: "maintenance",
+// A quote-sized market order needs a step size to convert against.
+req := &protocol.PlaceOrderRequest{
+	OrderType: protocol.OrderTypeMarket,
+	Side:      protocol.SideBuy,
+	QuoteSize: udecimal.MustFromInt64(100, 0), // 100 USDT
+	StepSize:  udecimal.MustFromInt64(1, 4),   // 0.0001
 }
-future, err := engine.SuspendMarket(ctx, suspendReq)
-_, err = future.Wait(ctx)
-
-// Resume a market
-resumeReq := &protocol.ResumeMarketRequest{
-	BaseCommand: protocol.BaseCommand{
-		CommandID: "resume-btc-usdt",
-		MarketID:  "BTC-USDT",
-		UserID:    9001,
-		Timestamp: time.Now().UnixNano(),
-	},
-}
-future, err = engine.ResumeMarket(ctx, resumeReq)
-_, err = future.Wait(ctx)
-
-// Update market configuration (e.g. MinLotSize)
-updateReq := &protocol.UpdateConfigRequest{
-	BaseCommand: protocol.BaseCommand{
-		CommandID: "update-btc-usdt-lot",
-		MarketID:  "BTC-USDT",
-		UserID:    9001,
-		Timestamp: time.Now().UnixNano(),
-	},
-	MinLotSize: udecimal.MustFromInt64(1, 2), // 0.01
-}
-future, err = engine.UpdateConfig(ctx, updateReq)
-_, err = future.Wait(ctx)
 ```
-
-Successful management commands are emitted as `LogTypeAdmin`. Invalid management commands are reported through the same event stream as trading rejects. For example:
-
-- duplicate market creation emits `RejectReasonMarketAlreadyExists`
-- invalid `MinLotSize` emits `RejectReasonInvalidPayload`
-- management reject logs preserve the operator `UserID`
 
 ### Supported Order Types
 

@@ -12,8 +12,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/quagmt/udecimal"
-
 	"github.com/0x5487/matching-engine/protocol"
 )
 
@@ -64,82 +62,6 @@ type engineEventHandler struct {
 
 func (h *engineEventHandler) OnEvent(ev *InputEvent) {
 	h.engine.onEvent(ev)
-}
-
-// CreateMarket enqueues a typed create-market request and returns a future for completion.
-func (engine *MatchingEngine) CreateMarket(
-	ctx context.Context,
-	req *protocol.CreateMarketRequest,
-) (*Future[bool], error) {
-	if err := engine.validateTypedRequest(ctx, req); err != nil {
-		return nil, err
-	}
-	respChan := engine.acquireResponseChannel()
-	if err := engine.enqueue(ctx, req, nil, respChan); err != nil {
-		engine.releaseResponseChannel(respChan)
-		return nil, err
-	}
-	return &Future[bool]{
-		engine:   engine,
-		respChan: respChan,
-	}, nil
-}
-
-// SuspendMarket enqueues a typed suspend-market request and returns a future for completion.
-func (engine *MatchingEngine) SuspendMarket(
-	ctx context.Context,
-	req *protocol.SuspendMarketRequest,
-) (*Future[bool], error) {
-	if err := engine.validateTypedRequest(ctx, req); err != nil {
-		return nil, err
-	}
-	respChan := engine.acquireResponseChannel()
-	if err := engine.enqueue(ctx, req, nil, respChan); err != nil {
-		engine.releaseResponseChannel(respChan)
-		return nil, err
-	}
-	return &Future[bool]{
-		engine:   engine,
-		respChan: respChan,
-	}, nil
-}
-
-// ResumeMarket enqueues a typed resume-market request and returns a future for completion.
-func (engine *MatchingEngine) ResumeMarket(
-	ctx context.Context,
-	req *protocol.ResumeMarketRequest,
-) (*Future[bool], error) {
-	if err := engine.validateTypedRequest(ctx, req); err != nil {
-		return nil, err
-	}
-	respChan := engine.acquireResponseChannel()
-	if err := engine.enqueue(ctx, req, nil, respChan); err != nil {
-		engine.releaseResponseChannel(respChan)
-		return nil, err
-	}
-	return &Future[bool]{
-		engine:   engine,
-		respChan: respChan,
-	}, nil
-}
-
-// UpdateConfig enqueues a typed update-config request and returns a future for completion.
-func (engine *MatchingEngine) UpdateConfig(
-	ctx context.Context,
-	req *protocol.UpdateConfigRequest,
-) (*Future[bool], error) {
-	if err := engine.validateTypedRequest(ctx, req); err != nil {
-		return nil, err
-	}
-	respChan := engine.acquireResponseChannel()
-	if err := engine.enqueue(ctx, req, nil, respChan); err != nil {
-		engine.releaseResponseChannel(respChan)
-		return nil, err
-	}
-	return &Future[bool]{
-		engine:   engine,
-		respChan: respChan,
-	}, nil
 }
 
 // PlaceOrderAsync enqueues a typed place-order request without waiting for execution.
@@ -653,16 +575,11 @@ func (engine *MatchingEngine) processCommand(ev *InputEvent) {
 	}
 
 	switch request := req.(type) {
-	case *protocol.CreateMarketRequest:
-		engine.handleCreateMarketRequest(request, ev.Resp)
 	case *protocol.UserEventRequest:
 		engine.handleUserEvent(request)
 	case *protocol.PlaceOrderRequest,
 		*protocol.CancelOrderRequest,
-		*protocol.AmendOrderRequest,
-		*protocol.SuspendMarketRequest,
-		*protocol.ResumeMarketRequest,
-		*protocol.UpdateConfigRequest:
+		*protocol.AmendOrderRequest:
 		book := engine.orderbooks[base.MarketID]
 		if book == nil {
 			engine.rejectRequest(req, protocol.RejectReasonMarketNotFound)
@@ -677,20 +594,6 @@ func (engine *MatchingEngine) processCommand(ev *InputEvent) {
 		engine.rejectRequest(req, protocol.RejectReasonUnknownCommand)
 		engine.respondQueryError(ev, ErrUnknownCommand)
 	}
-}
-
-func (engine *MatchingEngine) handleCreateMarketRequest(
-	req *protocol.CreateMarketRequest,
-	resp chan<- any,
-) {
-	engine.handleCreateMarket(
-		req.CommandID,
-		req.Timestamp,
-		req.MarketID,
-		req.UserID,
-		req.MinLotSize,
-		resp,
-	)
 }
 
 func (engine *MatchingEngine) processQuery(ev *InputEvent) {
@@ -730,62 +633,6 @@ func (engine *MatchingEngine) handleSnapshotQuery(ev *InputEvent) {
 	if ev.Resp != nil {
 		select {
 		case ev.Resp <- results:
-		default:
-		}
-	}
-}
-
-// handleCreateMarket handles the creation of a new market.
-func (engine *MatchingEngine) handleCreateMarket(
-	cmdID string,
-	ts int64,
-	marketID string,
-	userID uint64,
-	minLotSize udecimal.Decimal,
-	resp chan<- any,
-) {
-	if ts <= 0 {
-		engine.rejectLog(cmdID, marketID, userID, protocol.RejectReasonInvalidPayload, ts)
-		if resp != nil {
-			resp <- errors.New(string(protocol.RejectReasonInvalidPayload))
-		}
-		return
-	}
-
-	if _, exists := engine.orderbooks[marketID]; exists {
-		engine.rejectLog(cmdID, marketID, userID, protocol.RejectReasonMarketAlreadyExists, ts)
-		if resp != nil {
-			resp <- errors.New(string(protocol.RejectReasonMarketAlreadyExists))
-		}
-		return
-	}
-
-	// Create and Store (no goroutine, no individual RingBuffer)
-	opts := []OrderBookOption{}
-	if !minLotSize.IsZero() {
-		opts = append(opts, WithLotSize(minLotSize))
-	}
-
-	newbook := newOrderBookWithPublisher(engine.engineID, marketID, engine.publishTrader, opts...)
-	engine.orderbooks[marketID] = newbook
-
-	log := NewAdminLog(
-		newbook.seqID.Add(1),
-		cmdID,
-		engine.engineID,
-		marketID,
-		userID,
-		"market_created",
-		ts,
-	)
-	batch := acquireLogBatch()
-	batch.Logs = append(batch.Logs, log)
-	engine.publishTrader.Publish(batch.Logs)
-	batch.Release()
-
-	if resp != nil {
-		select {
-		case resp <- true:
 		default:
 		}
 	}

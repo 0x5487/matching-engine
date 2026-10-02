@@ -48,7 +48,35 @@ func releaseLogBatchContainer(b *LogBatch) {
 }
 
 // OrderBookLog represents a single event in the order book's history.
+// OrderBookLog is one thing the order book did. Only depth-changing events
+// carry a SeqID; see the field's own note.
 type OrderBookLog struct {
+	// SeqID is the book depth version at the moment this log was produced.
+	//
+	// It advances only when resting size was added or removed: an open, a
+	// match, a cancel or an amend. Refusals and admin commands leave it alone,
+	// because they move no depth - a rejected order produces a new version with
+	// identical levels, which tells a reader nothing.
+	//
+	// The consequence worth knowing: a consumer may forward only the
+	// depth-changing logs and still see a contiguous version. That is what makes
+	// AggregatedBook usable downstream, since it treats a version jump as a lost
+	// update. Counting refusals here would make every rejected order look like a
+	// gap.
+	//
+	// Two encodings mean "no depth change", and a consumer filtering on SeqID
+	// drops both correctly: 0 for a refusal or admin log, and a repeat of the
+	// current version for a no-op amend (new price and size both equal the
+	// current ones).
+	//
+	// It is not a timestamp and not comparable across markets - the counter
+	// belongs to one order book.
+	//
+	// One exception shares this field's name but not its meaning:
+	// MatchingEngine.handleUserEvent builds a user event with the upstream
+	// message queue's command sequence, so for LogTypeUser this is that
+	// sequence rather than a depth version. AggregatedBook must not be fed user
+	// events; see its Replay doc.
 	SeqID        uint64                `json:"seq_id"`
 	CommandID    string                `json:"command_id"`
 	EngineID     string                `json:"engine_id"`

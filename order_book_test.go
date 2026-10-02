@@ -254,6 +254,7 @@ func TestMarketOrder(t *testing.T) {
 			Price:     udecimal.Zero,
 			Size:      udecimal.Zero,
 			QuoteSize: udecimal.MustFromInt64(360, 0),
+			StepSize:  udecimal.MustFromInt64(1, 0),
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
@@ -290,22 +291,27 @@ func TestMarketOrder(t *testing.T) {
 			Price:     udecimal.Zero,
 			Size:      udecimal.Zero,
 			QuoteSize: udecimal.MustParse("0.04"),
+			StepSize:  udecimal.MustParse("0.000001"),
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 8, memoryPublishTrader.Count())
 
+		// 0.04 quote against an offer of 110 is 0.0003636...; at a 0.000001 step
+		// that floors to 363 whole steps, or 0.000363, which costs 0.03993 and
+		// leaves 0.00007. At 120 that remainder is 5.8e-7, under one step, so
+		// there is nothing left to match and the remainder goes back unfrozen.
 		match1 := memoryPublishTrader.Get(6)
 		assert.Equal(t, protocol.LogTypeMatch, match1.Type)
 		assert.Equal(t, "110", match1.Price.String())
-		assert.Equal(t, "0.0003636363636363636", match1.Size.String())
-		assert.Equal(t, "0.039999999999999996", match1.Amount.String())
+		assert.Equal(t, "0.000363", match1.Size.String())
+		assert.Equal(t, "0.03993", match1.Amount.String())
 
 		reject := memoryPublishTrader.Get(7)
 		assert.Equal(t, protocol.LogTypeReject, reject.Type)
 		assert.Equal(t, protocol.RejectReasonNoLiquidity, reject.RejectReason)
-		assert.Equal(t, "0.000000000000000004", reject.Size.String())
+		assert.Equal(t, "0.00007", reject.Size.String())
 	})
 
 	t.Run("QuoteSize mode - partial fill of maker order", func(t *testing.T) {
@@ -317,12 +323,15 @@ func TestMarketOrder(t *testing.T) {
 			Price:     udecimal.Zero,
 			Size:      udecimal.Zero,
 			QuoteSize: udecimal.MustParse("55"),
+			StepSize:  udecimal.MustParse("0.1"),
 		})
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)
 		assert.Equal(t, 7, memoryPublishTrader.Count())
 
+		// 55 quote at 110 is 0.5 exactly, which at a 0.1 step is five whole steps,
+		// so the floor changes nothing and the taker takes half the maker's offer.
 		match := memoryPublishTrader.Get(6)
 		assert.Equal(t, protocol.LogTypeMatch, match.Type)
 		assert.Equal(t, "110", match.Price.String())
@@ -341,13 +350,14 @@ func TestMarketOrder(t *testing.T) {
 			Price:     udecimal.Zero,
 			Size:      udecimal.Zero,
 			QuoteSize: udecimal.MustFromInt64(100, 0),
+			StepSize:  udecimal.MustFromInt64(1, 0),
 		})
 
 		assert.Equal(t, 1, publishTrader.Count())
 		log := publishTrader.Get(0)
 		assert.Equal(t, protocol.LogTypeReject, log.Type)
 		assert.Equal(t, protocol.RejectReasonNoLiquidity, log.RejectReason)
-		assert.Equal(t, "100", log.Size.String())
+		assert.Equal(t, "100", log.Size.String(), "the whole quote is offered back unfrozen")
 	})
 
 	t.Run("Size mode - buy with base quantity", func(t *testing.T) {
@@ -1353,97 +1363,5 @@ func TestOrderValidation(t *testing.T) {
 			}
 		}
 		assert.True(t, found)
-	})
-}
-
-func TestOrderBook_LotSize(t *testing.T) {
-	t.Run("default LotSize is 1e-8", func(t *testing.T) {
-		publishTrader := NewMemoryPublishLog()
-		orderBook := newOrderBookWithPublisher("test-engine", "BTC-USDT", publishTrader)
-		assert.Equal(t, orderBook.lotSize, DefaultLotSize)
-	})
-
-	t.Run("custom LotSize via option", func(t *testing.T) {
-		publishTrader := NewMemoryPublishLog()
-		customLotSize := udecimal.MustParse("0.0001")
-		orderBook := newOrderBookWithPublisher(
-			"test-engine",
-			"BTC-USDT",
-			publishTrader,
-			WithLotSize(customLotSize),
-		)
-		assert.Equal(t, orderBook.lotSize, customLotSize)
-	})
-
-	t.Run("Market order quote mode - reject when matchSize below LotSize", func(t *testing.T) {
-		publishTrader := NewMemoryPublishLog()
-		lotSize := udecimal.MustParse("0.001")
-		orderBook := newOrderBookWithPublisher("test-engine", "BTC-USDT", publishTrader, WithLotSize(lotSize))
-
-		testPlace(orderBook, 1, "cmd-sell-1", 1, &protocol.PlaceOrderRequest{
-			OrderID:   "sell-1",
-			OrderType: Limit,
-			Side:      Sell,
-			Price:     udecimal.MustFromInt64(50000, 0),
-			Size:      udecimal.MustParse("0.1"),
-		})
-		assert.Equal(t, int64(1), orderBook.askQueue.orderCount())
-
-		testPlace(orderBook, 0, "cmd-market-buy", 2, &protocol.PlaceOrderRequest{
-			OrderID:   orderIDMarketBuy,
-			OrderType: Market,
-			Side:      Buy,
-			Price:     udecimal.MustFromInt64(100, 0),
-			Size:      udecimal.Zero,
-			QuoteSize: udecimal.MustParse("0.04"),
-		})
-
-		logs := publishTrader.Logs()
-		found := false
-		for _, log := range logs {
-			if log.Type == protocol.LogTypeReject && log.OrderID == orderIDMarketBuy {
-				assert.Equal(t, "0.04", log.Size.String())
-				found = true
-			}
-		}
-		assert.True(t, found)
-		assert.Equal(t, int64(1), orderBook.askQueue.orderCount())
-	})
-
-	t.Run("Market order quote mode - partial fill then reject remaining", func(t *testing.T) {
-		publishTrader := NewMemoryPublishLog()
-		lotSize := udecimal.MustParse("0.001")
-		orderBook := newOrderBookWithPublisher("test-engine", "BTC-USDT", publishTrader, WithLotSize(lotSize))
-
-		testPlace(orderBook, 0, "cmd-sell-1", 1, &protocol.PlaceOrderRequest{
-			OrderID:   "sell-1",
-			OrderType: Limit,
-			Side:      Sell,
-			Size:      udecimal.MustParse("0.005"),
-			Price:     udecimal.MustFromInt64(1000, 0),
-		})
-		assert.Equal(t, int64(1), orderBook.askQueue.orderCount())
-
-		testPlace(orderBook, 0, "cmd-market-buy", 2, &protocol.PlaceOrderRequest{
-			OrderID:   orderIDMarketBuy,
-			OrderType: Market,
-			Side:      Buy,
-			Price:     udecimal.MustFromInt64(100, 0),
-			Size:      udecimal.Zero,
-			QuoteSize: udecimal.MustParse("5.5"),
-		})
-
-		logs := publishTrader.Logs()
-		matchFound := false
-		rejectFound := false
-		for _, log := range logs {
-			if log.Type == protocol.LogTypeMatch && log.OrderID == orderIDMarketBuy {
-				matchFound = true
-			}
-			if log.Type == protocol.LogTypeReject && log.OrderID == orderIDMarketBuy {
-				rejectFound = true
-			}
-		}
-		assert.True(t, matchFound && rejectFound)
 	})
 }
