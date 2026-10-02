@@ -341,15 +341,39 @@ to it, and the set of tradeable markets is decided upstream. The top-level
 snapshot - and the synchronous `OrderBook` API is the entry point for callers
 that manage books themselves.
 
-The step size is the one market rule that reaches this library, and it arrives on
-each order rather than living on the book. That is what keeps a base balance
-expressible as a whole number of steps: a quote-sized market order divides the
-quote by each level's price and floors the result. Carrying it per order also
-means a replay cannot disagree with itself about which unit was in force, and no
-producer can pick a unit the market does not use.
+### Supported Order Types
+
+| Type | Description |
+|------|-------------|
+| `Limit` | Buy/sell at a specific price or better |
+| `Market` | Execute immediately at best available price. With `Size` no `StepSize` is needed; with `QuoteSize` it is required — see [Step Size](#step-size). |
+| `IOC` | Fill immediately, cancel unfilled portion. |
+| `FOK` | Fill entirely immediately or cancel completely. |
+| `PostOnly` | Add to book as maker only, reject if would match immediately. |
+
+### Step Size
+
+`StepSize` is the unit of account for the base asset. A base balance has to be a
+whole number of steps or it cannot be reconciled against a ledger, which makes it
+more than an order-size rule: it is what the balance is denominated in.
+
+It travels on `PlaceOrderRequest` rather than living on the book. That means a
+replay cannot disagree with itself about which unit was in force, and no producer
+can pick a unit the market does not use — the caller that fills it in is the one
+that knows the market's rules.
+
+**It is required when, and only when, `QuoteSize` is used.** A quote-sized order
+divides the quote by each level's price and floors the result; without a step there
+is nothing to floor to and no unit to hold the balance in. Such an order is
+rejected as `invalid_payload` rather than defaulted, because a default unit would
+silently write balances the ledger cannot represent. An order with `Size` set
+carries no step: the size was already chosen, and flooring it would change
+nothing.
 
 ```go
-// A quote-sized market order needs a step size to convert against.
+// Buy as much as 100 USDT buys. The step size floors each level's conversion so
+// the resulting balance is a whole number of steps; anything left over stays as
+// quote and is reported back to the caller through the reject log.
 req := &protocol.PlaceOrderRequest{
 	OrderType: protocol.OrderTypeMarket,
 	Side:      protocol.SideBuy,
@@ -358,15 +382,10 @@ req := &protocol.PlaceOrderRequest{
 }
 ```
 
-### Supported Order Types
-
-| Type | Description |
-|------|-------------|
-| `Limit` | Buy/sell at a specific price or better |
-| `Market` | Execute immediately at best available price using either `Size` or `QuoteSize`. |
-| `IOC` | Fill immediately, cancel unfilled portion. |
-| `FOK` | Fill entirely immediately or cancel completely. |
-| `PostOnly` | Add to book as maker only, reject if would match immediately. |
+The floor happens **before** the minimum with the resting order, not after. That
+ordering is what keeps an offer placed under an older, finer step reachable:
+flooring after sends `0.0003` to zero at a `0.001` step, rejects an order the book
+could have filled, and lets one holder's dust refuse every order behind it.
 
 ### Event Handling
 
