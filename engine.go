@@ -664,28 +664,6 @@ func (engine *MatchingEngine) handleUserEvent(req *protocol.UserEventRequest) {
 	batch.Release()
 }
 
-func (engine *MatchingEngine) rejectLog(
-	cmdID, marketID string,
-	userID uint64,
-	reason protocol.RejectReason,
-	ts int64,
-) {
-	log := NewRejectLog(
-		0,
-		cmdID,
-		engine.engineID,
-		marketID,
-		"", // OrderID and UserID are business data, not in envelope
-		userID,
-		reason,
-		ts,
-	)
-	batch := acquireLogBatch()
-	batch.Logs = append(batch.Logs, log)
-	engine.publishTrader.Publish(batch.Logs)
-	batch.Release()
-}
-
 // respondQueryError returns a query-side error without waiting for timeout.
 func (engine *MatchingEngine) respondQueryError(ev *InputEvent, err error) {
 	if ev.Resp == nil {

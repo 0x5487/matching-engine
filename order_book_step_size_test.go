@@ -42,14 +42,14 @@ func stepSizeTestBook(t *testing.T) *OrderBook {
 	return book
 }
 
-func stepSizePlaceCmd(t *testing.T, id string, ot OrderType, s Side, quote, step string) *protocol.PlaceOrderRequest {
+func stepSizePlaceCmd(t *testing.T, id string, quote string) *protocol.PlaceOrderRequest {
 	t.Helper()
 	return &protocol.PlaceOrderRequest{
 		BaseCommand: protocol.BaseCommand{UserID: 2, CommandID: "cmd-" + id, MarketID: "BTC-USDT", Timestamp: 1},
 		OrderID:     id,
-		OrderType:   ot,
-		Side:        s,
-		StepSize:    udecimal.MustParse(step),
+		OrderType:   Market,
+		Side:        Buy,
+		StepSize:    udecimal.MustParse("0.001"),
 		Size:        udecimal.Zero,
 		QuoteSize:   udecimal.MustParse(quote),
 	}
@@ -70,7 +70,7 @@ func matchLogs(t *testing.T, batch *LogBatch) []*OrderBookLog {
 func TestStepSizeKeepsOrdersPlacedUnderAnOlderStep(t *testing.T) {
 	book := stepSizeTestBook(t)
 
-	batch, err := book.PlaceOrder(stepSizePlaceCmd(t, "quote-buy", Market, Buy, "100", "0.001"))
+	batch, err := book.PlaceOrder(stepSizePlaceCmd(t, "quote-buy", "100"))
 	require.NoError(t, err)
 
 	matches := matchLogs(t, batch)
@@ -83,7 +83,7 @@ func TestStepSizeKeepsOrdersPlacedUnderAnOlderStep(t *testing.T) {
 func TestStepSizeDoesNotFloorTheQuantityPath(t *testing.T) {
 	book := stepSizeTestBook(t)
 
-	req := stepSizePlaceCmd(t, "qty-buy", Market, Buy, "0", "0.001")
+	req := stepSizePlaceCmd(t, "qty-buy", "0")
 	req.Size = udecimal.MustParse("0.002")
 	batch, err := book.PlaceOrder(req)
 	require.NoError(t, err)
@@ -99,7 +99,7 @@ func TestStepSizeFloorsTheQuoteConversion(t *testing.T) {
 		book := stepSizeTestBook(t)
 
 		// 1.5 quote at 85000 is about 0.0000176, far under one 0.001 step.
-		batch, err := book.PlaceOrder(stepSizePlaceCmd(t, "dust", Market, Buy, "1.5", "0.001"))
+		batch, err := book.PlaceOrder(stepSizePlaceCmd(t, "dust", "1.5"))
 		require.NoError(t, err)
 
 		assert.Empty(t, matchLogs(t, batch),
@@ -110,7 +110,7 @@ func TestStepSizeFloorsTheQuoteConversion(t *testing.T) {
 		book := stepSizeTestBook(t)
 
 		// 0.001 BTC at 85000 is 85 quote, which is one whole step.
-		batch, err := book.PlaceOrder(stepSizePlaceCmd(t, "one-step", Market, Buy, "85", "0.001"))
+		batch, err := book.PlaceOrder(stepSizePlaceCmd(t, "one-step", "85"))
 		require.NoError(t, err)
 
 		matches := matchLogs(t, batch)
@@ -146,6 +146,7 @@ func stepValidationBook(t *testing.T) *OrderBook {
 	return book
 }
 
+//nolint:revive // argument-limit: one parameter per field of the order under test keeps each case readable
 func stepValidationPlace(
 	t *testing.T,
 	book *OrderBook,

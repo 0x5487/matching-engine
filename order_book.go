@@ -60,7 +60,7 @@ func WithSkiplistSeed(seed int64) OrderBookOption {
 type OrderBook struct {
 	engineID     string
 	marketID     string
-	skiplistSeed int64            // PRNG seed for price skiplist
+	skiplistSeed int64 // PRNG seed for price skiplist
 	// seqID is this book's depth version; it advances only when resting size was
 	// added or removed. Per book, never global.
 	seqID        atomic.Uint64
@@ -97,13 +97,11 @@ func newOrderBookWithPublisher(
 	engineID string,
 	marketID string,
 	publishTrader Publisher,
-	opts ...OrderBookOption,
 ) *OrderBook {
-	allOpts := append([]OrderBookOption{
+	return NewOrderBook(marketID,
 		WithEngineID(engineID),
 		WithPublisher(publishTrader),
-	}, opts...)
-	return NewOrderBook(marketID, allOpts...)
+	)
 }
 
 // LastCmdSeqID returns the sequence ID of the last processed command.
@@ -192,10 +190,13 @@ func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, e
 		if req.Size.IsZero() && req.StepSize.IsZero() {
 			isValid = false
 		}
-	} else {
-		if req.Price.IsZero() || req.Size.IsZero() {
+		// A market order's Price is an optional protection price, not a limit: zero
+		// means none, and a negative bound has no meaning on either side.
+		if req.Price.LessThan(udecimal.Zero) {
 			isValid = false
 		}
+	} else if req.Price.IsZero() || req.Size.IsZero() {
+		isValid = false
 	}
 
 	// A quantity-sized order carrying a step size must be a whole number of
@@ -665,27 +666,6 @@ func (book *OrderBook) rejectInvalidPayload(
 	batch.Release()
 }
 
-func (book *OrderBook) validateBasic(
-	commandID string,
-	userID uint64,
-	orderID string,
-	timestamp int64,
-) bool {
-	if timestamp <= 0 {
-		book.rejectInvalidPayload(
-			commandID,
-			book.marketID,
-			orderID,
-			userID,
-			protocol.RejectReasonInvalidPayload,
-			timestamp,
-		)
-		return false
-	}
-
-	return true
-}
-
 func (book *OrderBook) findOrder(orderID string) (*Order, bool) {
 	order := book.bidQueue.order(orderID)
 	if order != nil {
@@ -1082,8 +1062,32 @@ func (book *OrderBook) handleMarketOrder(
 			break
 		}
 
+		useQuote := order.Size.IsZero() && order.Type == Market && !quoteSize.IsZero()
+		// A protection price bounds the fill: the walk stops at the first level beyond
+		// it, and the remainder goes back unfrozen. The bound is inclusive.
+		if order.Price.GreaterThan(udecimal.Zero) && beyondProtectionPrice(order.Side, tOrd.Price, order.Price) {
+			log := NewRejectLog(
+				0,
+				commandID,
+				book.engineID,
+				book.marketID,
+				order.ID,
+				order.UserID,
+				protocol.RejectReasonPriceProtection,
+				timestamp,
+			)
+			log.Side, log.Price, log.OrderType = order.Side, order.Price, order.Type
+			if useQuote {
+				log.Size = quoteSize // Remaining quote size the protection price left unmatched
+			} else {
+				log.Size = order.Size
+			}
+			batch.Logs = append(batch.Logs, log)
+			releaseOrder(order)
+			break
+		}
+
 		matchSize := order.Size
-		useQuote := matchSize.IsZero() && order.Type == Market && !quoteSize.IsZero()
 		if useQuote {
 			// Floor first, then take the minimum with the resting order. The order
 			// of those two operations is what keeps an offer placed under an older,
@@ -1172,6 +1176,16 @@ func (book *OrderBook) handleMarketOrder(
 		}
 	}
 	return batch
+}
+
+// beyondProtectionPrice reports whether a resting level at makerPrice lies outside
+// the protection price for a taker on side. A buyer will not pay above protection
+// and a seller will not accept below it; a level exactly at protection is takeable.
+func beyondProtectionPrice(side Side, makerPrice, protection udecimal.Decimal) bool {
+	if side == Buy {
+		return makerPrice.GreaterThan(protection)
+	}
+	return makerPrice.LessThan(protection)
 }
 
 func (book *OrderBook) checkReplenish(

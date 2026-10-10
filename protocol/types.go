@@ -135,6 +135,9 @@ const (
 	RejectReasonNone RejectReason = ""
 	// RejectReasonNoLiquidity indicates no orders available to match.
 	RejectReasonNoLiquidity RejectReason = "no_liquidity" // Market/IOC/FOK: No orders available to match
+	// RejectReasonPriceProtection indicates a market order with a protection price
+	// stopped at the next level beyond that price. The reject carries the unfilled remainder.
+	RejectReasonPriceProtection RejectReason = "price_protection" // Market: Next level is beyond the protection price
 	// RejectReasonPriceMismatch indicates price does not meet requirements.
 	RejectReasonPriceMismatch RejectReason = "price_mismatch" // IOC/FOK: Price does not meet requirements
 	// RejectReasonInsufficientSize indicates order cannot be fully filled.

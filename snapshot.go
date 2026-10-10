@@ -5,8 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-
-
 )
 
 // OrderBookSnapshot contains the full state of a single OrderBook.
@@ -22,11 +20,11 @@ type OrderBookSnapshot struct {
 	// the first depth log after recovery reports a jump, which costs a downstream
 	// reader one rebuild. Discard snapshots taken before the upgrade, or reset
 	// that reader; see the CHANGELOG.
-	SeqID        uint64                  `json:"seq_id"`
-	LastCmdSeqID uint64                  `json:"last_cmd_seq_id"` // Last processed command sequence ID from MQ
-	TradeID      uint64                  `json:"trade_id"`        // Current Trade sequence ID
-	Bids         []*Order                `json:"bids"`            // Ordered list of bids (best price first)
-	Asks         []*Order                `json:"asks"`            // Ordered list of asks (best price first)
+	SeqID        uint64   `json:"seq_id"`
+	LastCmdSeqID uint64   `json:"last_cmd_seq_id"` // Last processed command sequence ID from MQ
+	TradeID      uint64   `json:"trade_id"`        // Current Trade sequence ID
+	Bids         []*Order `json:"bids"`            // Ordered list of bids (best price first)
+	Asks         []*Order `json:"asks"`            // Ordered list of asks (best price first)
 }
 
 // SnapshotMetadata holds the global metadata for a snapshot (stored in metadata.json).

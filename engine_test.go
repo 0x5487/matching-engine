@@ -80,7 +80,6 @@ func TestMatchingEngineInitialization(t *testing.T) {
 		assert.NotNil(t, engine.ring)
 	})
 
-
 	t.Run("PlaceOrders", func(t *testing.T) {
 		publishTrader := NewMemoryPublishLog()
 		engine := setupEngine(t, publishTrader)

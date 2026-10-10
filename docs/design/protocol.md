@@ -145,6 +145,9 @@ Common reject reasons include:
 - `price_mismatch`
 - `insufficient_size`
 - `post_only_match`
+- `price_protection`
+
+For `Market` orders, `Price` is an optional protection price rather than a limit. `Price = 0` means no bound. When set, a buy takes only asks with price `<=` `Price` and a sell takes only bids with price `>=` `Price`; when the next level lies beyond the bound the book stops and emits a `price_protection` reject carrying the unfilled remainder. A negative `Price` on a market order is `invalid_payload`.
 
 ## 6. Read / Write Responsibility Split
 

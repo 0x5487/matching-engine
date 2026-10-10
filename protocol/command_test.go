@@ -1,6 +1,8 @@
 package protocol
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -396,4 +398,56 @@ func TestUnmarshalRequest_InvalidTimestamp(t *testing.T) {
 
 	_, err = UnmarshalRequest(data)
 	require.ErrorIs(t, err, errInvalidRequest)
+}
+
+// TestPlaceOrderRequest_MarketProtectionPriceRoundTrip pins that a market order's
+// protection price survives both encodings. The binary check is made on the raw
+// bytes: the price must appear as its length-prefixed string, so a dropped or
+// reordered field fails here instead of decoding to a plausible zero.
+func TestPlaceOrderRequest_MarketProtectionPriceRoundTrip(t *testing.T) {
+	req := &PlaceOrderRequest{
+		BaseCommand: BaseCommand{
+			CommandID: "cmd-market-protected",
+			UserID:    789,
+			MarketID:  "BTC-USDT",
+			Timestamp: 1678901234,
+		},
+		OrderID:   "order-market",
+		Side:      SideBuy,
+		OrderType: OrderTypeMarket,
+		Price:     udecimal.MustFromInt64(100, 0),
+		QuoteSize: udecimal.MustParse("1000"),
+		StepSize:  udecimal.MustParse("0.01"),
+	}
+
+	t.Run("binary", func(t *testing.T) {
+		data, err := MarshalRequest(req)
+		require.NoError(t, err)
+
+		wantPrice := append([]byte{0, 3}, []byte("100")...)
+		require.True(t, bytes.Contains(data, wantPrice),
+			"the protection price must be on the wire as a length-prefixed string: % x", data)
+
+		decoded, err := UnmarshalRequest(data)
+		require.NoError(t, err)
+		got, ok := decoded.(*PlaceOrderRequest)
+		require.True(t, ok)
+		require.Equal(t, "100", got.Price.String())
+		require.Equal(t, req, got)
+	})
+
+	t.Run("json", func(t *testing.T) {
+		// BaseCommand carries no json tags, which is the existing wire shape for every
+		// request; this test only asserts on the Price field.
+		data, err := json.Marshal(req) //nolint:musttag // see above
+		require.NoError(t, err)
+
+		var raw map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(data, &raw))
+		require.Equal(t, "100", strings.Trim(string(raw["price"]), `"`), "the price field must be on the wire")
+
+		var decoded PlaceOrderRequest
+		require.NoError(t, json.Unmarshal(data, &decoded)) //nolint:musttag // see above
+		require.Equal(t, "100", decoded.Price.String())
+	})
 }

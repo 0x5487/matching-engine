@@ -20,7 +20,7 @@ const (
 	CmdCancelOrder CommandType = 2
 	// CmdAmendOrder represents an amend-order command.
 	CmdAmendOrder CommandType = 3
-					// CmdUserEvent represents a user-event command.
+	// CmdUserEvent represents a user-event command.
 	CmdUserEvent CommandType = 21
 )
 
