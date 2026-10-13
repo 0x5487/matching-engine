@@ -822,106 +822,16 @@ func (book *OrderBook) prepareIcebergForResting(order *Order) {
 }
 
 // handleIOCOrder handles Immediate Or Cancel orders.
+//
+// An IOC is a taker walk whose price is a required bound: Price is the limit the
+// order will pay or accept, and a Price of zero is a bound of zero, not "no
+// bound". The remainder blocked by that bound is a price mismatch. An IOC is
+// always sized in base.
 func (book *OrderBook) handleIOCOrder(commandID string, order *Order, timestamp int64) *LogBatch {
-	var targetQueue *queue
-	if order.Side == Buy {
-		targetQueue = book.askQueue
-	} else {
-		targetQueue = book.bidQueue
-	}
-
-	batch := acquireLogBatch()
-	for {
-		tOrd := targetQueue.peekHeadOrder()
-		if tOrd == nil {
-			log := NewRejectLog(
-				0,
-				commandID,
-				book.engineID,
-				book.marketID,
-				order.ID,
-				order.UserID,
-				protocol.RejectReasonNoLiquidity,
-				timestamp,
-			)
-			log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
-			batch.Logs = append(batch.Logs, log)
-			releaseOrder(order)
-			return batch
-		}
-
-		if (order.Side == Buy && order.Price.LessThan(tOrd.Price)) ||
-			(order.Side == Sell && order.Price.GreaterThan(tOrd.Price)) {
-			log := NewRejectLog(
-				0,
-				commandID,
-				book.engineID,
-				book.marketID,
-				order.ID,
-				order.UserID,
-				protocol.RejectReasonPriceMismatch,
-				timestamp,
-			)
-			log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
-			batch.Logs = append(batch.Logs, log)
-			releaseOrder(order)
-			return batch
-		}
-
-		tOrd = targetQueue.popHeadOrder()
-		if order.Size.LessThan(tOrd.Size) {
-			log := NewMatchLog(
-				book.seqID.Add(1),
-				commandID,
-				book.engineID,
-				book.tradeID.Add(1),
-				book.marketID,
-				order.ID,
-				order.UserID,
-				order.Side,
-				order.Type,
-				tOrd.ID,
-				tOrd.UserID,
-				tOrd.Price,
-				order.Size,
-				timestamp,
-			)
-			batch.Logs = append(batch.Logs, log)
-			tOrd.Size = tOrd.Size.Sub(order.Size)
-			targetQueue.pushFront(tOrd)
-			releaseOrder(order)
-			break
-		}
-
-		log := NewMatchLog(
-			book.seqID.Add(1),
-			commandID,
-			book.engineID,
-			book.tradeID.Add(1),
-			book.marketID,
-			order.ID,
-			order.UserID,
-			order.Side,
-			order.Type,
-			tOrd.ID,
-			tOrd.UserID,
-			tOrd.Price,
-			tOrd.Size,
-			timestamp,
-		)
-		batch.Logs = append(batch.Logs, log)
-		order.Size = order.Size.Sub(tOrd.Size)
-
-		if !book.checkReplenish(commandID, tOrd, targetQueue, batch, timestamp) {
-			releaseOrder(tOrd)
-		}
-
-		if order.Size.Equal(udecimal.Zero) {
-			releaseOrder(order)
-			break
-		}
-	}
-	return batch
+	return book.takeLiquidity(commandID, order, takerWalk{
+		priceRequired: true,
+		blockedReason: protocol.RejectReasonPriceMismatch,
+	}, timestamp)
 }
 
 // handleFOKOrder handles Fill Or Kill orders.
@@ -1023,6 +933,11 @@ func (book *OrderBook) handlePostOnlyOrder(
 }
 
 // handleMarketOrder handles Market orders.
+//
+// A Market order is a taker walk whose price is an optional protection price:
+// a Price of zero means no bound. The remainder blocked by that bound is a price
+// protection reject. A Market order may also be sized in quote, in which case
+// quoteSize and stepSize drive the walk.
 func (book *OrderBook) handleMarketOrder(
 	commandID string,
 	order *Order,
@@ -1030,6 +945,39 @@ func (book *OrderBook) handleMarketOrder(
 	stepSize udecimal.Decimal,
 	timestamp int64,
 ) *LogBatch {
+	return book.takeLiquidity(commandID, order, takerWalk{
+		blockedReason: protocol.RejectReasonPriceProtection,
+		quoteSize:     quoteSize,
+		stepSize:      stepSize,
+	}, timestamp)
+}
+
+// takerWalk carries what differs between the orders that take liquidity. Each
+// handler decides these; takeLiquidity never looks at the order's type to decide
+// them.
+type takerWalk struct {
+	// priceRequired makes the order's Price a bound even when it is zero. Without
+	// it a zero Price means the walk has no bound.
+	priceRequired bool
+	// blockedReason is the reject reason when the next level lies beyond the bound.
+	blockedReason protocol.RejectReason
+	// quoteSize, when non-zero on an order with no base Size, is the quote the walk
+	// spends instead of a quantity, and what is left of it is the reject's Size.
+	quoteSize udecimal.Decimal
+	// stepSize is the unit the quote conversion is floored to.
+	stepSize udecimal.Decimal
+}
+
+// takeLiquidity walks the side opposite the taker level by level, filling until the
+// order is done, the next level lies beyond the price bound, or the book has no
+// more liquidity. It is the one place a taker order matches.
+func (book *OrderBook) takeLiquidity(
+	commandID string,
+	order *Order,
+	walk takerWalk,
+	timestamp int64,
+) *LogBatch {
+	quoteSize := walk.quoteSize
 	var targetQueue *queue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -1052,7 +1000,7 @@ func (book *OrderBook) handleMarketOrder(
 				timestamp,
 			)
 			log.Side, log.Price, log.OrderType = order.Side, order.Price, order.Type
-			if order.Type == Market && !quoteSize.IsZero() {
+			if !quoteSize.IsZero() {
 				log.Size = quoteSize
 			} else {
 				log.Size = order.Size
@@ -1062,10 +1010,11 @@ func (book *OrderBook) handleMarketOrder(
 			break
 		}
 
-		useQuote := order.Size.IsZero() && order.Type == Market && !quoteSize.IsZero()
-		// A protection price bounds the fill: the walk stops at the first level beyond
-		// it, and the remainder goes back unfrozen. The bound is inclusive.
-		if order.Price.GreaterThan(udecimal.Zero) && beyondProtectionPrice(order.Side, tOrd.Price, order.Price) {
+		useQuote := order.Size.IsZero() && !quoteSize.IsZero()
+		// The price bound stops the walk at the first level beyond it, and the
+		// remainder goes back unfrozen. The bound is inclusive.
+		if (walk.priceRequired || order.Price.GreaterThan(udecimal.Zero)) &&
+			beyondProtectionPrice(order.Side, tOrd.Price, order.Price) {
 			log := NewRejectLog(
 				0,
 				commandID,
@@ -1073,12 +1022,12 @@ func (book *OrderBook) handleMarketOrder(
 				book.marketID,
 				order.ID,
 				order.UserID,
-				protocol.RejectReasonPriceProtection,
+				walk.blockedReason,
 				timestamp,
 			)
 			log.Side, log.Price, log.OrderType = order.Side, order.Price, order.Type
 			if useQuote {
-				log.Size = quoteSize // Remaining quote size the protection price left unmatched
+				log.Size = quoteSize // Remaining quote size the price bound left unmatched
 			} else {
 				log.Size = order.Size
 			}
@@ -1099,8 +1048,8 @@ func (book *OrderBook) handleMarketOrder(
 			// result already is, so flooring a quantity-based order would change
 			// nothing and cost a division on the hot path.
 			maxSize, _ := quoteSize.Div(tOrd.Price)
-			steps, _ := maxSize.Div(stepSize)
-			matchSize = steps.Floor().Mul(stepSize)
+			steps, _ := maxSize.Div(walk.stepSize)
+			matchSize = steps.Floor().Mul(walk.stepSize)
 		}
 
 		if matchSize.GreaterThan(tOrd.Size) {
