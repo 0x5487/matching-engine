@@ -92,12 +92,14 @@ Implications:
 - trade logs still report the actual executed quantity
 - cancel logs account for both visible and hidden remainder when applicable
 
-Two meanings of size on the log. `Size` and `OldSize` are the order's facts and
-always carry the order total (visible plus hidden). Depth needs the visible part,
-so cancel and amend logs also carry `VisibleRemoved`: the visible size the log takes
-off the book (at `OldPrice` when priority is lost, at `Price` otherwise). Depth moves
-by `VisibleRemoved`, never by `Size` or `OldSize`. A cancel of an iceberg with visible
-size 2 and total size 10 has `Size` 10 and `VisibleRemoved` 2.
+Each quantity on the log has one meaning (see the README, "Log quantity fields"). `Remaining`
+and `OldRemaining` are the order's total (visible plus hidden): an open carries the total after
+it rests, a cancel the total it removes, an amend the new and the old total. Depth needs the
+visible part, which the log carries as `VisibleAdded` (an open) or `VisibleRemoved` (a cancel or
+an amend: the visible size the log takes off the book, at `OldPrice` when priority is lost, at
+`Price` otherwise). Depth moves by `VisibleAdded`, `VisibleRemoved` and `MatchSize`, never by a
+total. A cancel of an iceberg with visible size 2 and total size 10 has `Remaining` 10 and
+`VisibleRemoved` 2.
 
 ## 5. Amend and Cancel Semantics
 

@@ -487,19 +487,12 @@ func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, e
 		order.Price = newPrice
 		order.Timestamp = req.Timestamp
 
-		// Recalculate Iceberg fields for the new total size
-		if order.VisibleLimit.IsZero() {
-			order.Size = newSize
-			order.HiddenSize = udecimal.Zero
-		} else {
-			if newSize.GreaterThan(order.VisibleLimit) {
-				order.Size = order.VisibleLimit
-				order.HiddenSize = newSize.Sub(order.VisibleLimit)
-			} else {
-				order.Size = newSize
-				order.HiddenSize = udecimal.Zero
-			}
-		}
+		// The new total is matched whole, as a new limit order is. Splitting it into
+		// visible and hidden parts here would match only the visible part, and a
+		// crossing amend would then lose its hidden part. prepareIcebergForResting
+		// splits the order when it rests.
+		order.Size = newSize
+		order.HiddenSize = udecimal.Zero
 
 		book.handleLimitOrder(req.CommandID, order, req.Timestamp)
 	} else if newSize.LessThan(oldTotalSize) {
@@ -533,6 +526,18 @@ func (book *OrderBook) BestPrice(side Side) (udecimal.Decimal, bool) {
 		return book.askQueue.bestPrice()
 	}
 	return book.bidQueue.bestPrice()
+}
+
+// Remaining returns the total base size an order still has on the book: its
+// visible part plus its hidden iceberg part. The second result is false when the
+// book holds no order with that ID, which includes an order that has been filled
+// or canceled. It does not allocate.
+func (book *OrderBook) Remaining(orderID string) (udecimal.Decimal, bool) {
+	order, ok := book.findOrder(orderID)
+	if !ok {
+		return udecimal.Zero, false
+	}
+	return order.Size.Add(order.HiddenSize), true
 }
 
 // beginCall starts an SDK call. The call's depth logs take the next version, and

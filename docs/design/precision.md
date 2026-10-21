@@ -42,7 +42,7 @@ func WithLotSize(size udecimal.Decimal) OrderBookOption {
 For market orders using quote mode:
 
 - if available liquidity exists but computed `matchSize` drops below `lotSize`, the engine emits a reject log for the remainder
-- the reject log preserves the remaining unfilled notional in `Size`
+- the reject log preserves the remaining unfilled notional in `QuoteRemaining`
 
 ## 5. Validation Guidance
 
