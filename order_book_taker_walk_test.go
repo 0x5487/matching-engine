@@ -45,13 +45,16 @@ func renderLog(l *OrderBookLog) string {
 	str("tr", strconv.FormatUint(l.TradeID, 10))
 	str("s", fmt.Sprint(l.Side))
 	str("px", l.Price.String())
-	str("sz", l.Size.String())
+	str("msz", l.MatchSize.String())
+	str("rem", l.Remaining.String())
+	str("vadd", l.VisibleAdded.String())
+	str("qrem", l.QuoteRemaining.String())
 	str("amt", l.Amount.String())
 	str("o", l.OrderID)
 	str("u", strconv.FormatUint(l.UserID, 10))
 	str("ot", string(l.OrderType))
 	str("opx", l.OldPrice.String())
-	str("osz", l.OldSize.String())
+	str("orem", l.OldRemaining.String())
 	str("mk", l.MakerOrderID)
 	str("mku", strconv.FormatUint(l.MakerUserID, 10))
 	str("why", string(l.RejectReason))
@@ -172,141 +175,141 @@ func TestIOCAndMarketWithProtectionPriceWalkIdentically(t *testing.T) {
 		{
 			name: "buy partial level inside the bound", rest: walkAsksLadder, side: Buy, price: "100", size: "1.5",
 			wantIOC: []string{
-				"match seq=4 c=c-taker tr=1 s=1 px=99 sz=1 amt=99 o=taker u=2 ot=ioc mk=ask-99 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=2 s=1 px=100 sz=0.5 amt=50 o=taker u=2 ot=ioc mk=ask-100 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=1 s=1 px=99 msz=1 amt=99 o=taker u=2 ot=ioc mk=ask-99 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=2 s=1 px=100 msz=0.5 amt=50 o=taker u=2 ot=ioc mk=ask-100 mku=1 ts=2",
 			},
 		},
 		{
 			name: "buy stops at the first level beyond the bound", rest: walkAsksLadder, side: Buy,
 			price: "100", size: "3", blocked: true,
 			wantIOC: []string{
-				"match seq=4 c=c-taker tr=1 s=1 px=99 sz=1 amt=99 o=taker u=2 ot=ioc mk=ask-99 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=2 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=ioc mk=ask-100 mku=1 ts=2",
-				"reject c=c-taker s=1 px=100 sz=1 o=taker u=2 ot=ioc why=price_mismatch ts=2",
+				"match seq=4 c=c-taker tr=1 s=1 px=99 msz=1 amt=99 o=taker u=2 ot=ioc mk=ask-99 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=2 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=ioc mk=ask-100 mku=1 ts=2",
+				"reject c=c-taker s=1 px=100 rem=1 o=taker u=2 ot=ioc why=price_mismatch ts=2",
 			},
 		},
 		{
 			name: "buy bound is inclusive and the remainder finds no liquidity", rest: walkAsksLadder, side: Buy,
 			price: "101", size: "4",
 			wantIOC: []string{
-				"match seq=4 c=c-taker tr=1 s=1 px=99 sz=1 amt=99 o=taker u=2 ot=ioc mk=ask-99 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=2 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=ioc mk=ask-100 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=3 s=1 px=101 sz=1 amt=101 o=taker u=2 ot=ioc mk=ask-101 mku=1 ts=2",
-				"reject c=c-taker s=1 px=101 sz=1 o=taker u=2 ot=ioc why=no_liquidity ts=2",
+				"match seq=4 c=c-taker tr=1 s=1 px=99 msz=1 amt=99 o=taker u=2 ot=ioc mk=ask-99 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=2 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=ioc mk=ask-100 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=3 s=1 px=101 msz=1 amt=101 o=taker u=2 ot=ioc mk=ask-101 mku=1 ts=2",
+				"reject c=c-taker s=1 px=101 rem=1 o=taker u=2 ot=ioc why=no_liquidity ts=2",
 			},
 		},
 		{
 			name: "buy blocked before any fill", rest: walkAsksLadder, side: Buy, price: "98", size: "1", blocked: true,
 			wantIOC: []string{
-				"reject c=c-taker s=1 px=98 sz=1 o=taker u=2 ot=ioc why=price_mismatch ts=2",
+				"reject c=c-taker s=1 px=98 rem=1 o=taker u=2 ot=ioc why=price_mismatch ts=2",
 			},
 		},
 		{
 			name: "buy exact fill of one level", rest: walkAsksLadder, side: Buy, price: "99", size: "1",
 			wantIOC: []string{
-				"match seq=4 c=c-taker tr=1 s=1 px=99 sz=1 amt=99 o=taker u=2 ot=ioc mk=ask-99 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=1 s=1 px=99 msz=1 amt=99 o=taker u=2 ot=ioc mk=ask-99 mku=1 ts=2",
 			},
 		},
 		{
 			name: "buy on an empty book", rest: walkEmpty, side: Buy, price: "100", size: "1",
 			wantIOC: []string{
-				"reject c=c-taker s=1 px=100 sz=1 o=taker u=2 ot=ioc why=no_liquidity ts=2",
+				"reject c=c-taker s=1 px=100 rem=1 o=taker u=2 ot=ioc why=no_liquidity ts=2",
 			},
 		},
 		{
 			name: "buy through an iceberg, partial", rest: walkAsksIceberg, side: Buy, price: "100", size: "4",
 			wantIOC: []string{
-				"match seq=4 c=c-taker tr=1 s=1 px=100 sz=2 amt=200 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
-				"open seq=4 c=c-taker s=2 px=100 sz=2 o=ask-ice u=1 ot=limit ts=2",
-				"match seq=4 c=c-taker tr=2 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=ioc mk=ask-100 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=3 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
+				"match seq=4 c=c-taker tr=1 s=1 px=100 msz=2 amt=200 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
+				"open seq=4 c=c-taker s=2 px=100 rem=3 vadd=2 o=ask-ice u=1 ot=limit ts=2",
+				"match seq=4 c=c-taker tr=2 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=ioc mk=ask-100 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=3 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
 			},
 		},
 		{
 			name: "buy through an iceberg and past it", rest: walkAsksIceberg, side: Buy, price: "101", size: "20",
 			wantIOC: []string{
-				"match seq=4 c=c-taker tr=1 s=1 px=100 sz=2 amt=200 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
-				"open seq=4 c=c-taker s=2 px=100 sz=2 o=ask-ice u=1 ot=limit ts=2",
-				"match seq=4 c=c-taker tr=2 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=ioc mk=ask-100 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=3 s=1 px=100 sz=2 amt=200 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
-				"open seq=4 c=c-taker s=2 px=100 sz=1 o=ask-ice u=1 ot=limit ts=2",
-				"match seq=4 c=c-taker tr=4 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
-				"match seq=4 c=c-taker tr=5 s=1 px=101 sz=3 amt=303 o=taker u=2 ot=ioc mk=ask-101 mku=1 ts=2",
-				"reject c=c-taker s=1 px=101 sz=11 o=taker u=2 ot=ioc why=no_liquidity ts=2",
+				"match seq=4 c=c-taker tr=1 s=1 px=100 msz=2 amt=200 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
+				"open seq=4 c=c-taker s=2 px=100 rem=3 vadd=2 o=ask-ice u=1 ot=limit ts=2",
+				"match seq=4 c=c-taker tr=2 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=ioc mk=ask-100 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=3 s=1 px=100 msz=2 amt=200 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
+				"open seq=4 c=c-taker s=2 px=100 rem=1 vadd=1 o=ask-ice u=1 ot=limit ts=2",
+				"match seq=4 c=c-taker tr=4 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
+				"match seq=4 c=c-taker tr=5 s=1 px=101 msz=3 amt=303 o=taker u=2 ot=ioc mk=ask-101 mku=1 ts=2",
+				"reject c=c-taker s=1 px=101 rem=11 o=taker u=2 ot=ioc why=no_liquidity ts=2",
 			},
 		},
 		{
 			name: "buy through an iceberg, blocked above it", rest: walkAsksIceberg, side: Buy,
 			price: "100", size: "7", blocked: true,
 			wantIOC: []string{
-				"match seq=4 c=c-taker tr=1 s=1 px=100 sz=2 amt=200 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
-				"open seq=4 c=c-taker s=2 px=100 sz=2 o=ask-ice u=1 ot=limit ts=2",
-				"match seq=4 c=c-taker tr=2 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=ioc mk=ask-100 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=3 s=1 px=100 sz=2 amt=200 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
-				"open seq=4 c=c-taker s=2 px=100 sz=1 o=ask-ice u=1 ot=limit ts=2",
-				"match seq=4 c=c-taker tr=4 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
-				"reject c=c-taker s=1 px=100 sz=1 o=taker u=2 ot=ioc why=price_mismatch ts=2",
+				"match seq=4 c=c-taker tr=1 s=1 px=100 msz=2 amt=200 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
+				"open seq=4 c=c-taker s=2 px=100 rem=3 vadd=2 o=ask-ice u=1 ot=limit ts=2",
+				"match seq=4 c=c-taker tr=2 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=ioc mk=ask-100 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=3 s=1 px=100 msz=2 amt=200 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
+				"open seq=4 c=c-taker s=2 px=100 rem=1 vadd=1 o=ask-ice u=1 ot=limit ts=2",
+				"match seq=4 c=c-taker tr=4 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=ioc mk=ask-ice mku=1 ts=2",
+				"reject c=c-taker s=1 px=100 rem=1 o=taker u=2 ot=ioc why=price_mismatch ts=2",
 			},
 		},
 		{
 			name: "sell partial level inside the bound", rest: walkBidsLadder, side: Sell, price: "100", size: "1.5",
 			wantIOC: []string{
-				"match seq=4 c=c-taker tr=1 s=2 px=101 sz=1 amt=101 o=taker u=2 ot=ioc mk=bid-101 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=2 s=2 px=100 sz=0.5 amt=50 o=taker u=2 ot=ioc mk=bid-100 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=1 s=2 px=101 msz=1 amt=101 o=taker u=2 ot=ioc mk=bid-101 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=2 s=2 px=100 msz=0.5 amt=50 o=taker u=2 ot=ioc mk=bid-100 mku=1 ts=2",
 			},
 		},
 		{
 			name: "sell stops at the first level beyond the bound", rest: walkBidsLadder, side: Sell,
 			price: "100", size: "3", blocked: true,
 			wantIOC: []string{
-				"match seq=4 c=c-taker tr=1 s=2 px=101 sz=1 amt=101 o=taker u=2 ot=ioc mk=bid-101 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=2 s=2 px=100 sz=1 amt=100 o=taker u=2 ot=ioc mk=bid-100 mku=1 ts=2",
-				"reject c=c-taker s=2 px=100 sz=1 o=taker u=2 ot=ioc why=price_mismatch ts=2",
+				"match seq=4 c=c-taker tr=1 s=2 px=101 msz=1 amt=101 o=taker u=2 ot=ioc mk=bid-101 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=2 s=2 px=100 msz=1 amt=100 o=taker u=2 ot=ioc mk=bid-100 mku=1 ts=2",
+				"reject c=c-taker s=2 px=100 rem=1 o=taker u=2 ot=ioc why=price_mismatch ts=2",
 			},
 		},
 		{
 			name: "sell bound is inclusive and the remainder finds no liquidity", rest: walkBidsLadder, side: Sell,
 			price: "99", size: "4",
 			wantIOC: []string{
-				"match seq=4 c=c-taker tr=1 s=2 px=101 sz=1 amt=101 o=taker u=2 ot=ioc mk=bid-101 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=2 s=2 px=100 sz=1 amt=100 o=taker u=2 ot=ioc mk=bid-100 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=3 s=2 px=99 sz=1 amt=99 o=taker u=2 ot=ioc mk=bid-99 mku=1 ts=2",
-				"reject c=c-taker s=2 px=99 sz=1 o=taker u=2 ot=ioc why=no_liquidity ts=2",
+				"match seq=4 c=c-taker tr=1 s=2 px=101 msz=1 amt=101 o=taker u=2 ot=ioc mk=bid-101 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=2 s=2 px=100 msz=1 amt=100 o=taker u=2 ot=ioc mk=bid-100 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=3 s=2 px=99 msz=1 amt=99 o=taker u=2 ot=ioc mk=bid-99 mku=1 ts=2",
+				"reject c=c-taker s=2 px=99 rem=1 o=taker u=2 ot=ioc why=no_liquidity ts=2",
 			},
 		},
 		{
 			name: "sell blocked before any fill", rest: walkBidsLadder, side: Sell,
 			price: "102", size: "1", blocked: true,
 			wantIOC: []string{
-				"reject c=c-taker s=2 px=102 sz=1 o=taker u=2 ot=ioc why=price_mismatch ts=2",
+				"reject c=c-taker s=2 px=102 rem=1 o=taker u=2 ot=ioc why=price_mismatch ts=2",
 			},
 		},
 		{
 			name: "sell on an empty book", rest: walkEmpty, side: Sell, price: "100", size: "1",
 			wantIOC: []string{
-				"reject c=c-taker s=2 px=100 sz=1 o=taker u=2 ot=ioc why=no_liquidity ts=2",
+				"reject c=c-taker s=2 px=100 rem=1 o=taker u=2 ot=ioc why=no_liquidity ts=2",
 			},
 		},
 		{
 			name: "sell through an iceberg, partial", rest: walkBidsIceberg, side: Sell, price: "100", size: "4",
 			wantIOC: []string{
-				"match seq=4 c=c-taker tr=1 s=2 px=100 sz=2 amt=200 o=taker u=2 ot=ioc mk=bid-ice mku=1 ts=2",
-				"open seq=4 c=c-taker s=1 px=100 sz=2 o=bid-ice u=1 ot=limit ts=2",
-				"match seq=4 c=c-taker tr=2 s=2 px=100 sz=1 amt=100 o=taker u=2 ot=ioc mk=bid-100 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=3 s=2 px=100 sz=1 amt=100 o=taker u=2 ot=ioc mk=bid-ice mku=1 ts=2",
+				"match seq=4 c=c-taker tr=1 s=2 px=100 msz=2 amt=200 o=taker u=2 ot=ioc mk=bid-ice mku=1 ts=2",
+				"open seq=4 c=c-taker s=1 px=100 rem=3 vadd=2 o=bid-ice u=1 ot=limit ts=2",
+				"match seq=4 c=c-taker tr=2 s=2 px=100 msz=1 amt=100 o=taker u=2 ot=ioc mk=bid-100 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=3 s=2 px=100 msz=1 amt=100 o=taker u=2 ot=ioc mk=bid-ice mku=1 ts=2",
 			},
 		},
 		{
 			name: "sell through an iceberg, blocked below it", rest: walkBidsIceberg, side: Sell,
 			price: "100", size: "7", blocked: true,
 			wantIOC: []string{
-				"match seq=4 c=c-taker tr=1 s=2 px=100 sz=2 amt=200 o=taker u=2 ot=ioc mk=bid-ice mku=1 ts=2",
-				"open seq=4 c=c-taker s=1 px=100 sz=2 o=bid-ice u=1 ot=limit ts=2",
-				"match seq=4 c=c-taker tr=2 s=2 px=100 sz=1 amt=100 o=taker u=2 ot=ioc mk=bid-100 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=3 s=2 px=100 sz=2 amt=200 o=taker u=2 ot=ioc mk=bid-ice mku=1 ts=2",
-				"open seq=4 c=c-taker s=1 px=100 sz=1 o=bid-ice u=1 ot=limit ts=2",
-				"match seq=4 c=c-taker tr=4 s=2 px=100 sz=1 amt=100 o=taker u=2 ot=ioc mk=bid-ice mku=1 ts=2",
-				"reject c=c-taker s=2 px=100 sz=1 o=taker u=2 ot=ioc why=price_mismatch ts=2",
+				"match seq=4 c=c-taker tr=1 s=2 px=100 msz=2 amt=200 o=taker u=2 ot=ioc mk=bid-ice mku=1 ts=2",
+				"open seq=4 c=c-taker s=1 px=100 rem=3 vadd=2 o=bid-ice u=1 ot=limit ts=2",
+				"match seq=4 c=c-taker tr=2 s=2 px=100 msz=1 amt=100 o=taker u=2 ot=ioc mk=bid-100 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=3 s=2 px=100 msz=2 amt=200 o=taker u=2 ot=ioc mk=bid-ice mku=1 ts=2",
+				"open seq=4 c=c-taker s=1 px=100 rem=1 vadd=1 o=bid-ice u=1 ot=limit ts=2",
+				"match seq=4 c=c-taker tr=4 s=2 px=100 msz=1 amt=100 o=taker u=2 ot=ioc mk=bid-ice mku=1 ts=2",
+				"reject c=c-taker s=2 px=100 rem=1 o=taker u=2 ot=ioc why=price_mismatch ts=2",
 			},
 		},
 	}
@@ -370,79 +373,79 @@ func TestMarketByQuoteWalk(t *testing.T) {
 		{
 			name: "buy through an iceberg, the rest runs out of liquidity", rest: walkAsksIceberg, side: Buy,
 			quote: "1000", price: "0", step: "0.1", want: []string{
-				"match seq=4 c=c-taker tr=1 s=1 px=100 sz=2 amt=200 o=taker u=2 ot=market mk=ask-ice mku=1 ts=2",
-				"open seq=4 c=c-taker s=2 px=100 sz=2 o=ask-ice u=1 ot=limit ts=2",
-				"match seq=4 c=c-taker tr=2 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=3 s=1 px=100 sz=2 amt=200 o=taker u=2 ot=market mk=ask-ice mku=1 ts=2",
-				"open seq=4 c=c-taker s=2 px=100 sz=1 o=ask-ice u=1 ot=limit ts=2",
-				"match seq=4 c=c-taker tr=4 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=market mk=ask-ice mku=1 ts=2",
-				"match seq=4 c=c-taker tr=5 s=1 px=101 sz=3 amt=303 o=taker u=2 ot=market mk=ask-101 mku=1 ts=2",
-				"reject c=c-taker s=1 sz=97 o=taker u=2 ot=market why=no_liquidity ts=2",
+				"match seq=4 c=c-taker tr=1 s=1 px=100 msz=2 amt=200 o=taker u=2 ot=market mk=ask-ice mku=1 ts=2",
+				"open seq=4 c=c-taker s=2 px=100 rem=3 vadd=2 o=ask-ice u=1 ot=limit ts=2",
+				"match seq=4 c=c-taker tr=2 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=3 s=1 px=100 msz=2 amt=200 o=taker u=2 ot=market mk=ask-ice mku=1 ts=2",
+				"open seq=4 c=c-taker s=2 px=100 rem=1 vadd=1 o=ask-ice u=1 ot=limit ts=2",
+				"match seq=4 c=c-taker tr=4 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=market mk=ask-ice mku=1 ts=2",
+				"match seq=4 c=c-taker tr=5 s=1 px=101 msz=3 amt=303 o=taker u=2 ot=market mk=ask-101 mku=1 ts=2",
+				"reject c=c-taker s=1 qrem=97 o=taker u=2 ot=market why=no_liquidity ts=2",
 			},
 		},
 		{
 			name: "buy leaves less than one step", rest: walkAsksLadder, side: Buy,
 			quote: "150", price: "0", step: "0.1", want: []string{
-				"match seq=4 c=c-taker tr=1 s=1 px=99 sz=1 amt=99 o=taker u=2 ot=market mk=ask-99 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=2 s=1 px=100 sz=0.5 amt=50 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
-				"reject c=c-taker s=1 sz=1 o=taker u=2 ot=market why=no_liquidity ts=2",
+				"match seq=4 c=c-taker tr=1 s=1 px=99 msz=1 amt=99 o=taker u=2 ot=market mk=ask-99 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=2 s=1 px=100 msz=0.5 amt=50 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
+				"reject c=c-taker s=1 qrem=1 o=taker u=2 ot=market why=no_liquidity ts=2",
 			},
 		},
 		{
 			name: "buy spends the whole quote", rest: walkAsksLadder, side: Buy,
 			quote: "199", price: "0", step: "0.1", want: []string{
-				"match seq=4 c=c-taker tr=1 s=1 px=99 sz=1 amt=99 o=taker u=2 ot=market mk=ask-99 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=2 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=1 s=1 px=99 msz=1 amt=99 o=taker u=2 ot=market mk=ask-99 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=2 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
 			},
 		},
 		{
 			name: "buy with a protection price", rest: walkAsksLadder, side: Buy,
 			quote: "1000", price: "100", step: "0.1", want: []string{
-				"match seq=4 c=c-taker tr=1 s=1 px=99 sz=1 amt=99 o=taker u=2 ot=market mk=ask-99 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=2 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
-				"reject c=c-taker s=1 px=100 sz=801 o=taker u=2 ot=market why=price_protection ts=2",
+				"match seq=4 c=c-taker tr=1 s=1 px=99 msz=1 amt=99 o=taker u=2 ot=market mk=ask-99 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=2 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
+				"reject c=c-taker s=1 px=100 qrem=801 o=taker u=2 ot=market why=price_protection ts=2",
 			},
 		},
 		{
 			name: "sell through an iceberg, the rest runs out of liquidity", rest: walkBidsIceberg, side: Sell,
 			quote: "1000", price: "0", step: "0.1", want: []string{
-				"match seq=4 c=c-taker tr=1 s=2 px=100 sz=2 amt=200 o=taker u=2 ot=market mk=bid-ice mku=1 ts=2",
-				"open seq=4 c=c-taker s=1 px=100 sz=2 o=bid-ice u=1 ot=limit ts=2",
-				"match seq=4 c=c-taker tr=2 s=2 px=100 sz=1 amt=100 o=taker u=2 ot=market mk=bid-100 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=3 s=2 px=100 sz=2 amt=200 o=taker u=2 ot=market mk=bid-ice mku=1 ts=2",
-				"open seq=4 c=c-taker s=1 px=100 sz=1 o=bid-ice u=1 ot=limit ts=2",
-				"match seq=4 c=c-taker tr=4 s=2 px=100 sz=1 amt=100 o=taker u=2 ot=market mk=bid-ice mku=1 ts=2",
-				"match seq=4 c=c-taker tr=5 s=2 px=99 sz=3 amt=297 o=taker u=2 ot=market mk=bid-99 mku=1 ts=2",
-				"reject c=c-taker s=2 sz=103 o=taker u=2 ot=market why=no_liquidity ts=2",
+				"match seq=4 c=c-taker tr=1 s=2 px=100 msz=2 amt=200 o=taker u=2 ot=market mk=bid-ice mku=1 ts=2",
+				"open seq=4 c=c-taker s=1 px=100 rem=3 vadd=2 o=bid-ice u=1 ot=limit ts=2",
+				"match seq=4 c=c-taker tr=2 s=2 px=100 msz=1 amt=100 o=taker u=2 ot=market mk=bid-100 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=3 s=2 px=100 msz=2 amt=200 o=taker u=2 ot=market mk=bid-ice mku=1 ts=2",
+				"open seq=4 c=c-taker s=1 px=100 rem=1 vadd=1 o=bid-ice u=1 ot=limit ts=2",
+				"match seq=4 c=c-taker tr=4 s=2 px=100 msz=1 amt=100 o=taker u=2 ot=market mk=bid-ice mku=1 ts=2",
+				"match seq=4 c=c-taker tr=5 s=2 px=99 msz=3 amt=297 o=taker u=2 ot=market mk=bid-99 mku=1 ts=2",
+				"reject c=c-taker s=2 qrem=103 o=taker u=2 ot=market why=no_liquidity ts=2",
 			},
 		},
 		{
 			name: "sell leaves less than one step", rest: walkBidsLadder, side: Sell,
 			quote: "150", price: "0", step: "0.1", want: []string{
-				"match seq=4 c=c-taker tr=1 s=2 px=101 sz=1 amt=101 o=taker u=2 ot=market mk=bid-101 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=2 s=2 px=100 sz=0.4 amt=40 o=taker u=2 ot=market mk=bid-100 mku=1 ts=2",
-				"reject c=c-taker s=2 sz=9 o=taker u=2 ot=market why=no_liquidity ts=2",
+				"match seq=4 c=c-taker tr=1 s=2 px=101 msz=1 amt=101 o=taker u=2 ot=market mk=bid-101 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=2 s=2 px=100 msz=0.4 amt=40 o=taker u=2 ot=market mk=bid-100 mku=1 ts=2",
+				"reject c=c-taker s=2 qrem=9 o=taker u=2 ot=market why=no_liquidity ts=2",
 			},
 		},
 		{
 			name: "sell spends the whole quote", rest: walkBidsLadder, side: Sell,
 			quote: "201", price: "0", step: "0.1", want: []string{
-				"match seq=4 c=c-taker tr=1 s=2 px=101 sz=1 amt=101 o=taker u=2 ot=market mk=bid-101 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=2 s=2 px=100 sz=1 amt=100 o=taker u=2 ot=market mk=bid-100 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=1 s=2 px=101 msz=1 amt=101 o=taker u=2 ot=market mk=bid-101 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=2 s=2 px=100 msz=1 amt=100 o=taker u=2 ot=market mk=bid-100 mku=1 ts=2",
 			},
 		},
 		{
 			name: "sell with a protection price", rest: walkBidsLadder, side: Sell,
 			quote: "1000", price: "100", step: "0.1", want: []string{
-				"match seq=4 c=c-taker tr=1 s=2 px=101 sz=1 amt=101 o=taker u=2 ot=market mk=bid-101 mku=1 ts=2",
-				"match seq=4 c=c-taker tr=2 s=2 px=100 sz=1 amt=100 o=taker u=2 ot=market mk=bid-100 mku=1 ts=2",
-				"reject c=c-taker s=2 px=100 sz=799 o=taker u=2 ot=market why=price_protection ts=2",
+				"match seq=4 c=c-taker tr=1 s=2 px=101 msz=1 amt=101 o=taker u=2 ot=market mk=bid-101 mku=1 ts=2",
+				"match seq=4 c=c-taker tr=2 s=2 px=100 msz=1 amt=100 o=taker u=2 ot=market mk=bid-100 mku=1 ts=2",
+				"reject c=c-taker s=2 px=100 qrem=799 o=taker u=2 ot=market why=price_protection ts=2",
 			},
 		},
 		{
 			name: "quote order on an empty book", rest: walkEmpty, side: Buy,
 			quote: "1000", price: "0", step: "0.1", want: []string{
-				"reject c=c-taker s=1 sz=1000 o=taker u=2 ot=market why=no_liquidity ts=2",
+				"reject c=c-taker s=1 qrem=1000 o=taker u=2 ot=market why=no_liquidity ts=2",
 			},
 		},
 	}
@@ -478,8 +481,8 @@ func TestMarketWithBothSizesKeepsQuoteInTheEmptyBookReject(t *testing.T) {
 			Size: udecimal.MustParse("2"), QuoteSize: udecimal.MustParse("50"),
 		})
 		assert.Equal(t, []string{
-			"match seq=2 c=c-taker tr=1 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
-			"reject c=c-taker s=1 sz=50 o=taker u=2 ot=market why=no_liquidity ts=2",
+			"match seq=2 c=c-taker tr=1 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
+			"reject c=c-taker s=1 qrem=50 o=taker u=2 ot=market why=no_liquidity ts=2",
 		}, renderBatch(batch))
 	})
 
@@ -493,8 +496,8 @@ func TestMarketWithBothSizesKeepsQuoteInTheEmptyBookReject(t *testing.T) {
 			Size: udecimal.MustParse("2"), QuoteSize: udecimal.MustParse("50"),
 		})
 		assert.Equal(t, []string{
-			"match seq=3 c=c-taker tr=1 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
-			"reject c=c-taker s=1 px=100 sz=1 o=taker u=2 ot=market why=price_protection ts=2",
+			"match seq=3 c=c-taker tr=1 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
+			"reject c=c-taker s=1 px=100 rem=1 o=taker u=2 ot=market why=price_protection ts=2",
 		}, renderBatch(batch))
 	})
 }
@@ -511,9 +514,9 @@ func TestZeroPriceMarketIsUnboundedAndZeroPriceIOCIsRefused(t *testing.T) {
 			OrderID: "taker", OrderType: Market, Side: Buy, Size: udecimal.MustParse("3"),
 		})
 		assert.Equal(t, []string{
-			"match seq=4 c=c-taker tr=1 s=1 px=99 sz=1 amt=99 o=taker u=2 ot=market mk=ask-99 mku=1 ts=2",
-			"match seq=4 c=c-taker tr=2 s=1 px=100 sz=1 amt=100 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
-			"match seq=4 c=c-taker tr=3 s=1 px=101 sz=1 amt=101 o=taker u=2 ot=market mk=ask-101 mku=1 ts=2",
+			"match seq=4 c=c-taker tr=1 s=1 px=99 msz=1 amt=99 o=taker u=2 ot=market mk=ask-99 mku=1 ts=2",
+			"match seq=4 c=c-taker tr=2 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
+			"match seq=4 c=c-taker tr=3 s=1 px=101 msz=1 amt=101 o=taker u=2 ot=market mk=ask-101 mku=1 ts=2",
 		}, renderBatch(batch))
 		assert.Equal(t, int64(0), book.askQueue.depthCount())
 	})

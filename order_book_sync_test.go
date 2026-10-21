@@ -50,7 +50,7 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 		assert.Equal(t, "sell-order-1", batch.Logs[0].OrderID)
 		assert.Equal(t, uint64(1001), batch.Logs[0].UserID)
 		assert.Equal(t, "50000", batch.Logs[0].Price.String())
-		assert.Equal(t, "1", batch.Logs[0].Size.String())
+		assert.Equal(t, "1", batch.Logs[0].Remaining.String())
 
 		depth := book.GetDepth(10)
 		require.NotNil(t, depth)
@@ -85,7 +85,7 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 		assert.Equal(t, "sell-order-1", trade.MakerOrderID)
 		assert.Equal(t, uint64(1001), trade.MakerUserID)
 		assert.Equal(t, "50000", trade.Price.String())
-		assert.Equal(t, "0.4", trade.Size.String())
+		assert.Equal(t, "0.4", trade.MatchSize.String())
 		assert.Equal(t, "20000", trade.Amount.String()) // 50000 * 0.4 = 20000
 
 		// Remaining ask size should be 0.6
@@ -186,7 +186,7 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 
 		require.Len(t, aBatch.Logs, 1)
 		assert.Equal(t, protocol.LogTypeAmend, aBatch.Logs[0].Type)
-		assert.Equal(t, "1", aBatch.Logs[0].Size.String())
+		assert.Equal(t, "1", aBatch.Logs[0].Remaining.String())
 
 		depth := book.GetDepth(10)
 		require.Len(t, depth.Bids, 1)

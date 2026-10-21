@@ -25,7 +25,7 @@ func fokRun(t *testing.T, h *dlHarness, id string, price, size int64) (protocol.
 	for _, l := range logs {
 		switch l.Type {
 		case protocol.LogTypeMatch:
-			filled = filled.Add(l.Size)
+			filled = filled.Add(l.MatchSize)
 		case protocol.LogTypeReject:
 			reason = l.RejectReason
 		default:

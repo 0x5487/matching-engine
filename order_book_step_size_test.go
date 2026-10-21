@@ -75,7 +75,7 @@ func TestStepSizeKeepsOrdersPlacedUnderAnOlderStep(t *testing.T) {
 
 	matches := matchLogs(t, batch)
 	require.Len(t, matches, 1, "the resting offer is matchable and must not be skipped")
-	assert.Equal(t, "0.0003", matches[0].Size.String(),
+	assert.Equal(t, "0.0003", matches[0].MatchSize.String(),
 		"the resting size is taken whole; flooring it to 0.001 would reject a matchable order")
 	assert.Equal(t, "85000", matches[0].Price.String(), "a market order fills at the resting price")
 }
@@ -90,7 +90,7 @@ func TestStepSizeDoesNotFloorTheQuantityPath(t *testing.T) {
 
 	matches := matchLogs(t, batch)
 	require.Len(t, matches, 1)
-	assert.Equal(t, "0.0003", matches[0].Size.String(),
+	assert.Equal(t, "0.0003", matches[0].MatchSize.String(),
 		"min-then-floor would make this zero and reject the whole order over someone else's dust")
 }
 
@@ -115,7 +115,7 @@ func TestStepSizeFloorsTheQuoteConversion(t *testing.T) {
 
 		matches := matchLogs(t, batch)
 		require.Len(t, matches, 1)
-		assert.Equal(t, "0.0003", matches[0].Size.String(),
+		assert.Equal(t, "0.0003", matches[0].MatchSize.String(),
 			"the resting size caps the fill below the whole step the quote would buy")
 	})
 }
@@ -241,7 +241,7 @@ func TestQuantityStepSkipsZeroStep(t *testing.T) {
 	require.NotNil(t, batch)
 	matches := matchLogs(t, batch)
 	require.Len(t, matches, 1, "without a step there is nothing to refuse")
-	assert.Equal(t, "0.0003", matches[0].Size.String())
+	assert.Equal(t, "0.0003", matches[0].MatchSize.String())
 }
 
 // TestQuantityStepAcceptsWholeMultiples pins that the check only refuses
@@ -251,7 +251,7 @@ func TestQuantityStepAcceptsWholeMultiples(t *testing.T) {
 	batch := stepValidationPlace(t, book, "clean", Limit, Buy, "85000", "0.002", "0.001")
 	matches := matchLogs(t, batch)
 	require.Len(t, matches, 1, "a clean taker matches exactly as before")
-	assert.Equal(t, "0.002", matches[0].Size.String())
+	assert.Equal(t, "0.002", matches[0].MatchSize.String())
 }
 
 // TestQuantityStepRejectsDustVisibleSize pins that the iceberg peak answers
@@ -332,9 +332,9 @@ func TestNonStepQuantitiesStillTerminate(t *testing.T) {
 		require.NotNil(t, batch)
 		matches := matchLogs(t, batch)
 		require.Len(t, matches, 3, "every offer is reachable, including the sub-step ones")
-		assert.Equal(t, "0.0003", matches[0].Size.String(), "the whole offer is taken, not floored to zero")
-		assert.Equal(t, "0.00005", matches[1].Size.String())
-		assert.Equal(t, "0.0000075", matches[2].Size.String())
+		assert.Equal(t, "0.0003", matches[0].MatchSize.String(), "the whole offer is taken, not floored to zero")
+		assert.Equal(t, "0.00005", matches[1].MatchSize.String())
+		assert.Equal(t, "0.0000075", matches[2].MatchSize.String())
 		assert.Zero(t, book.askQueue.orderCount(), "the taker consumed all three")
 	case <-time.After(5 * time.Second):
 		t.Fatal("the matching loop did not terminate on non-step quantities")

@@ -157,7 +157,7 @@ func syncBenchFills(batch *LogBatch, err error, makerID string, size udecimal.De
 		return false
 	}
 	l := batch.Logs[0]
-	return l.Type == protocol.LogTypeMatch && l.MakerOrderID == makerID && l.Size.Equal(size)
+	return l.Type == protocol.LogTypeMatch && l.MakerOrderID == makerID && l.MatchSize.Equal(size)
 }
 
 // syncBenchSweepOK reports whether a batch is exactly k matches and nothing else, and releases it.

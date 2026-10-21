@@ -66,15 +66,33 @@ type OrderBookLog struct {
 	MarketID  string           `json:"market_id"`
 	Side      Side             `json:"side"`
 	Price     udecimal.Decimal `json:"price"`
-	Size      udecimal.Decimal `json:"size"`
 	Amount    udecimal.Decimal `json:"amount"`
 	OrderID   string           `json:"order_id"`
 	UserID    uint64           `json:"user_id"`
 	OrderType OrderType        `json:"order_type"`
 	OldPrice  udecimal.Decimal `json:"old_price"`
-	OldSize   udecimal.Decimal `json:"old_size"`
-	// VisibleRemoved is the visible (depth) size this log takes off the book.
-	VisibleRemoved udecimal.Decimal      `json:"visible_removed,omitzero"`
+	// The quantity fields below each have one meaning. A log that does not use a
+	// field leaves it zero, and the table in the README says which log fills which.
+	//
+	// MatchSize is the base quantity a Match log trades. A match consumes only the
+	// visible part of the maker, so it is also the visible size the maker gives up.
+	MatchSize udecimal.Decimal `json:"match_size,omitzero"`
+	// Remaining is the order's total remaining base size, visible plus hidden. An
+	// Open carries it after the order rests, an Amend its new total, and a Cancel
+	// the total the cancel removes. A Reject carries the base quantity the order did
+	// not get.
+	Remaining udecimal.Decimal `json:"remaining,omitzero"`
+	// OldRemaining is an Amend's total before the amend. Zero on every other log.
+	OldRemaining udecimal.Decimal `json:"old_remaining,omitzero"`
+	// VisibleAdded is the visible size an Open puts on the book: the visible part
+	// of Remaining. The hidden part of an iceberg is never depth.
+	VisibleAdded udecimal.Decimal `json:"visible_added,omitzero"`
+	// VisibleRemoved is the visible (depth) size a Cancel or an Amend takes off the
+	// book.
+	VisibleRemoved udecimal.Decimal `json:"visible_removed,omitzero"`
+	// QuoteRemaining is the quote a Reject of a quote-sized market order leaves
+	// unspent. Zero on every other log, including a base-sized reject.
+	QuoteRemaining udecimal.Decimal      `json:"quote_remaining,omitzero"`
 	MakerOrderID   string                `json:"maker_order_id,omitempty"`
 	MakerUserID    uint64                `json:"maker_user_id,omitempty"`
 	RejectReason   protocol.RejectReason `json:"reject_reason,omitempty"`
@@ -176,7 +194,9 @@ func (p *DiscardPublishLog) Publish(_ []*OrderBookLog) {
 
 // --- Log Creation Helpers ---
 
-// NewOpenLog creates a new OrderBookLog for an open order event.
+// NewOpenLog creates a new OrderBookLog for an open order event. visible is the
+// visible size the order puts on the book and remaining its total, visible plus
+// hidden.
 //
 //nolint:revive // argument-limit
 func NewOpenLog(
@@ -185,7 +205,7 @@ func NewOpenLog(
 	orderID string,
 	userID uint64,
 	side Side,
-	price, size udecimal.Decimal,
+	price, visible, remaining udecimal.Decimal,
 	orderType OrderType,
 	timestamp int64,
 ) *OrderBookLog {
@@ -197,7 +217,8 @@ func NewOpenLog(
 	log.MarketID = marketID
 	log.Side = side
 	log.Price = price
-	log.Size = size
+	log.VisibleAdded = visible
+	log.Remaining = remaining
 	log.OrderID = orderID
 	log.UserID = userID
 	log.OrderType = orderType
@@ -220,7 +241,7 @@ func NewMatchLog(
 	makerID string,
 	makerUserID uint64,
 	price udecimal.Decimal,
-	size udecimal.Decimal,
+	matchSize udecimal.Decimal,
 	timestamp int64,
 ) *OrderBookLog {
 	log := acquireBookLog()
@@ -232,8 +253,8 @@ func NewMatchLog(
 	log.MarketID = marketID
 	log.Side = takerSide
 	log.Price = price
-	log.Size = size
-	log.Amount = price.Mul(size)
+	log.MatchSize = matchSize
+	log.Amount = price.Mul(matchSize)
 	log.OrderID = takerID
 	log.UserID = takerUserID
 	log.OrderType = takerType
@@ -243,7 +264,8 @@ func NewMatchLog(
 	return log
 }
 
-// NewCancelLog creates a new OrderBookLog for an order cancellation event.
+// NewCancelLog creates a new OrderBookLog for an order cancellation event. remaining
+// is the order's total before the cancel. The caller sets VisibleRemoved.
 //
 //nolint:revive // argument-limit
 func NewCancelLog(
@@ -252,7 +274,7 @@ func NewCancelLog(
 	orderID string,
 	userID uint64,
 	side Side,
-	price, size udecimal.Decimal,
+	price, remaining udecimal.Decimal,
 	orderType OrderType,
 	timestamp int64,
 ) *OrderBookLog {
@@ -264,7 +286,7 @@ func NewCancelLog(
 	log.MarketID = marketID
 	log.Side = side
 	log.Price = price
-	log.Size = size
+	log.Remaining = remaining
 	log.OrderID = orderID
 	log.UserID = userID
 	log.OrderType = orderType
@@ -272,7 +294,9 @@ func NewCancelLog(
 	return log
 }
 
-// NewAmendLog creates a new OrderBookLog for an order amendment event.
+// NewAmendLog creates a new OrderBookLog for an order amendment event. remaining is
+// the order's total after the amend, oldRemaining its total before. The caller sets
+// VisibleRemoved.
 //
 //nolint:revive // argument-limit
 func NewAmendLog(
@@ -281,9 +305,9 @@ func NewAmendLog(
 	orderID string,
 	userID uint64,
 	side Side,
-	price, size udecimal.Decimal,
+	price, remaining udecimal.Decimal,
 	oldPrice udecimal.Decimal,
-	oldSize udecimal.Decimal,
+	oldRemaining udecimal.Decimal,
 	orderType OrderType,
 	timestamp int64,
 ) *OrderBookLog {
@@ -295,9 +319,9 @@ func NewAmendLog(
 	log.MarketID = marketID
 	log.Side = side
 	log.Price = price
-	log.Size = size
+	log.Remaining = remaining
 	log.OldPrice = oldPrice
-	log.OldSize = oldSize
+	log.OldRemaining = oldRemaining
 	log.OrderID = orderID
 	log.UserID = userID
 	log.OrderType = orderType

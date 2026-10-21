@@ -63,14 +63,24 @@ func requireMatchLog(t *testing.T, log *OrderBookLog, price, size string) {
 	t.Helper()
 	require.Equal(t, protocol.LogTypeMatch, log.Type)
 	assert.Equal(t, price, log.Price.String(), "fill price")
-	assert.Equal(t, size, log.Size.String(), "fill size")
+	assert.Equal(t, size, log.MatchSize.String(), "fill size")
 }
 
 func requireProtectionReject(t *testing.T, log *OrderBookLog, remaining string) {
 	t.Helper()
 	require.Equal(t, protocol.LogTypeReject, log.Type)
 	assert.Equal(t, protocol.RejectReasonPriceProtection, log.RejectReason)
-	assert.Equal(t, remaining, log.Size.String(), "the reject carries the unfilled remainder")
+	assert.Equal(t, remaining, log.Remaining.String(), "the reject carries the unfilled remainder")
+}
+
+// requireProtectionQuoteReject is requireProtectionReject for a quote-sized order:
+// the unfilled remainder is quote, and the base field stays zero.
+func requireProtectionQuoteReject(t *testing.T, log *OrderBookLog, quote string) {
+	t.Helper()
+	require.Equal(t, protocol.LogTypeReject, log.Type)
+	assert.Equal(t, protocol.RejectReasonPriceProtection, log.RejectReason)
+	assert.Equal(t, quote, log.QuoteRemaining.String(), "the reject carries the unfilled quote")
+	assert.True(t, log.Remaining.IsZero(), "a quote-sized reject has no base remainder")
 }
 
 // AC-01-1: a quantity-sized buy stops at the first ask above the protection price.
@@ -132,7 +142,7 @@ func TestPriceProtectionBuyQuoteStopsAboveBound(t *testing.T) {
 	require.Len(t, batch.Logs, 3)
 	requireMatchLog(t, batch.Logs[0], "99", "1")
 	requireMatchLog(t, batch.Logs[1], "100", "1")
-	requireProtectionReject(t, batch.Logs[2], "801")
+	requireProtectionQuoteReject(t, batch.Logs[2], "801")
 	assert.Equal(t, int64(1), book.askQueue.depthCount())
 }
 
@@ -165,7 +175,7 @@ func TestPriceProtectionSellQuoteStopsBelowBound(t *testing.T) {
 
 	require.Len(t, batch.Logs, 2)
 	requireMatchLog(t, batch.Logs[0], "101", "1")
-	requireProtectionReject(t, batch.Logs[1], "399")
+	requireProtectionQuoteReject(t, batch.Logs[1], "399")
 	assert.Equal(t, int64(1), book.bidQueue.depthCount())
 	assert.Equal(t, "99", book.bidQueue.peekHeadOrder().Price.String())
 }

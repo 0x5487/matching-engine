@@ -160,13 +160,13 @@ func TestBookBatch_AmendLogsStayInTheBooksBatch(t *testing.T) {
 		assert.Equal(t, w.orderID, l.OrderID, "log %d order", i)
 		assert.Equal(t, w.makerOrderID, l.MakerOrderID, "log %d maker", i)
 		assert.Equal(t, w.price, l.Price.String(), "log %d price", i)
-		assert.Equal(t, w.size, l.Size.String(), "log %d size", i)
+		assert.Equal(t, w.size, quantityOf(l).String(), "log %d size", i)
 		assert.Equal(t, w.tradeID, l.TradeID, "log %d trade", i)
 		assert.Equal(t, uint64(5), l.SeqID, "log %d depth version", i)
 	}
 	amendLog := batch.Logs[0]
 	assert.Equal(t, "99", amendLog.OldPrice.String(), "amend keeps the pre-amend price")
-	assert.Equal(t, "1", amendLog.OldSize.String(), "amend keeps the pre-amend size")
+	assert.Equal(t, "1", amendLog.OldRemaining.String(), "amend keeps the pre-amend size")
 	assert.Equal(t, "1", amendLog.VisibleRemoved.String(), "amend reports the visible size it took off")
 }
 

@@ -787,6 +787,7 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 				order.Side,
 				order.Price,
 				order.Size,
+				order.Size.Add(order.HiddenSize),
 				order.Type,
 				timestamp,
 			)
@@ -808,6 +809,7 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 				order.Side,
 				order.Price,
 				order.Size,
+				order.Size.Add(order.HiddenSize),
 				order.Type,
 				timestamp,
 			)
@@ -945,7 +947,7 @@ func (book *OrderBook) handleFOKOrder(commandID string, order *Order, timestamp 
 			reason,
 			timestamp,
 		)
-		log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
+		log.Side, log.Price, log.Remaining, log.OrderType = order.Side, order.Price, order.Size, order.Type
 		book.batch.Logs = append(book.batch.Logs, log)
 		releaseOrder(order)
 		return
@@ -982,7 +984,7 @@ func (book *OrderBook) handlePostOnlyOrder(
 				protocol.RejectReasonPostOnlyMatch,
 				timestamp,
 			)
-			log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
+			log.Side, log.Price, log.Remaining, log.OrderType = order.Side, order.Price, order.Size, order.Type
 			book.batch.Logs = append(book.batch.Logs, log)
 			releaseOrder(order)
 			return
@@ -1060,9 +1062,9 @@ func (book *OrderBook) takeLiquidity(
 			)
 			log.Side, log.Price, log.OrderType = order.Side, order.Price, order.Type
 			if !quoteSize.IsZero() {
-				log.Size = quoteSize
+				log.QuoteRemaining = quoteSize
 			} else {
-				log.Size = order.Size
+				log.Remaining = order.Size
 			}
 			book.batch.Logs = append(book.batch.Logs, log)
 			releaseOrder(order)
@@ -1086,9 +1088,9 @@ func (book *OrderBook) takeLiquidity(
 			)
 			log.Side, log.Price, log.OrderType = order.Side, order.Price, order.Type
 			if useQuote {
-				log.Size = quoteSize // Remaining quote size the price bound left unmatched
+				log.QuoteRemaining = quoteSize // Remaining quote size the price bound left unmatched
 			} else {
-				log.Size = order.Size
+				log.Remaining = order.Size
 			}
 			book.batch.Logs = append(book.batch.Logs, log)
 			releaseOrder(order)
@@ -1134,9 +1136,9 @@ func (book *OrderBook) takeLiquidity(
 			)
 			log.Side, log.Price, log.OrderType = order.Side, order.Price, order.Type
 			if useQuote {
-				log.Size = quoteSize // Remaining quote size that couldn't be matched
+				log.QuoteRemaining = quoteSize // Remaining quote size that couldn't be matched
 			} else {
-				log.Size = order.Size
+				log.Remaining = order.Size
 			}
 			book.batch.Logs = append(book.batch.Logs, log)
 			releaseOrder(order)
@@ -1221,6 +1223,7 @@ func (book *OrderBook) checkReplenish(
 			order.Side,
 			order.Price,
 			order.Size,
+			order.Size.Add(order.HiddenSize),
 			order.Type,
 			timestamp,
 		)

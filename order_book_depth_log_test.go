@@ -173,9 +173,11 @@ func (h *dlHarness) requireAggregatedMatchesBook() {
 type dlWantLog struct {
 	typ            protocol.LogType
 	price          string
-	size           string
 	oldPrice       string
-	oldSize        string
+	matchSize      string
+	remaining      string
+	oldRemaining   string
+	visibleAdded   string
 	visibleRemoved string
 }
 
@@ -186,9 +188,11 @@ func dlRequireLogs(t *testing.T, got []OrderBookLog, want []dlWantLog) {
 		gotRows = append(gotRows, dlWantLog{
 			typ:            l.Type,
 			price:          l.Price.String(),
-			size:           l.Size.String(),
 			oldPrice:       l.OldPrice.String(),
-			oldSize:        l.OldSize.String(),
+			matchSize:      l.MatchSize.String(),
+			remaining:      l.Remaining.String(),
+			oldRemaining:   l.OldRemaining.String(),
+			visibleAdded:   l.VisibleAdded.String(),
 			visibleRemoved: l.VisibleRemoved.String(),
 		})
 	}
@@ -224,8 +228,8 @@ func TestDepthLogTable(t *testing.T) {
 			setup: func(h *dlHarness) { h.place("s1", Buy, 100, 5, 0) },
 			act:   func(h *dlHarness) []OrderBookLog { return h.amend("s1", 101, 0) },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeAmend, "101", "5", "100", "5", "5"},
-				{protocol.LogTypeOpen, "101", "5", "0", "0", "0"},
+				{protocol.LogTypeAmend, "101", "100", "0", "5", "5", "0", "5"},
+				{protocol.LogTypeOpen, "101", "0", "0", "5", "0", "5", "0"},
 			},
 			wantBids:     []string{"101@5"},
 			versionMoves: true,
@@ -235,8 +239,8 @@ func TestDepthLogTable(t *testing.T) {
 			setup: func(h *dlHarness) { h.place("s1", Buy, 100, 5, 0) },
 			act:   func(h *dlHarness) []OrderBookLog { return h.amend("s1", 0, 8) },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeAmend, "100", "8", "100", "5", "5"},
-				{protocol.LogTypeOpen, "100", "8", "0", "0", "0"},
+				{protocol.LogTypeAmend, "100", "100", "0", "8", "5", "0", "5"},
+				{protocol.LogTypeOpen, "100", "0", "0", "8", "0", "8", "0"},
 			},
 			wantBids:     []string{"100@8"},
 			versionMoves: true,
@@ -246,7 +250,7 @@ func TestDepthLogTable(t *testing.T) {
 			setup: func(h *dlHarness) { h.place("s1", Buy, 100, 5, 0) },
 			act:   func(h *dlHarness) []OrderBookLog { return h.amend("s1", 0, 3) },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeAmend, "100", "3", "100", "5", "2"},
+				{protocol.LogTypeAmend, "100", "100", "0", "3", "5", "0", "2"},
 			},
 			wantBids:     []string{"100@3"},
 			versionMoves: true,
@@ -259,7 +263,7 @@ func TestDepthLogTable(t *testing.T) {
 			},
 			act: func(h *dlHarness) []OrderBookLog { return h.cancel("i1") },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeCancel, "100", "10", "0", "0", "2"},
+				{protocol.LogTypeCancel, "100", "0", "0", "10", "0", "0", "2"},
 			},
 			wantBids:     []string{"100@5"},
 			versionMoves: true,
@@ -272,7 +276,7 @@ func TestDepthLogTable(t *testing.T) {
 			},
 			act: func(h *dlHarness) []OrderBookLog { return h.amend("i1", 0, 9) },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeAmend, "100", "9", "100", "10", "0"},
+				{protocol.LogTypeAmend, "100", "100", "0", "9", "10", "0", "0"},
 			},
 			wantBids:     []string{"100@7"},
 			versionMoves: false,
@@ -284,8 +288,8 @@ func TestDepthLogTable(t *testing.T) {
 			},
 			act: func(h *dlHarness) []OrderBookLog { return h.place("t1", Sell, 100, 2, 0) },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeMatch, "100", "2", "0", "0", "0"},
-				{protocol.LogTypeOpen, "100", "2", "0", "0", "0"},
+				{protocol.LogTypeMatch, "100", "0", "2", "0", "0", "0", "0"},
+				{protocol.LogTypeOpen, "100", "0", "0", "8", "0", "2", "0"},
 			},
 			wantBids:     []string{"100@2"},
 			versionMoves: true,
@@ -298,9 +302,9 @@ func TestDepthLogTable(t *testing.T) {
 			},
 			act: func(h *dlHarness) []OrderBookLog { return h.place("t1", Sell, 100, 4, 0) },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeMatch, "100", "2", "0", "0", "0"},
-				{protocol.LogTypeOpen, "100", "2", "0", "0", "0"},
-				{protocol.LogTypeMatch, "100", "2", "0", "0", "0"},
+				{protocol.LogTypeMatch, "100", "0", "2", "0", "0", "0", "0"},
+				{protocol.LogTypeOpen, "100", "0", "0", "8", "0", "2", "0"},
+				{protocol.LogTypeMatch, "100", "0", "2", "0", "0", "0", "0"},
 			},
 			wantBids:     []string{"100@5"},
 			versionMoves: true,
@@ -313,8 +317,8 @@ func TestDepthLogTable(t *testing.T) {
 			},
 			act: func(h *dlHarness) []OrderBookLog { return h.amend("b1", 101, 0) },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeAmend, "101", "5", "100", "5", "5"},
-				{protocol.LogTypeMatch, "101", "5", "0", "0", "0"},
+				{protocol.LogTypeAmend, "101", "100", "0", "5", "5", "0", "5"},
+				{protocol.LogTypeMatch, "101", "0", "5", "0", "0", "0", "0"},
 			},
 			wantAsks:     []string{"101@5"},
 			versionMoves: true,
@@ -327,9 +331,9 @@ func TestDepthLogTable(t *testing.T) {
 			},
 			act: func(h *dlHarness) []OrderBookLog { return h.amend("b1", 101, 0) },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeAmend, "101", "5", "100", "5", "5"},
-				{protocol.LogTypeMatch, "101", "2", "0", "0", "0"},
-				{protocol.LogTypeOpen, "101", "3", "0", "0", "0"},
+				{protocol.LogTypeAmend, "101", "100", "0", "5", "5", "0", "5"},
+				{protocol.LogTypeMatch, "101", "0", "2", "0", "0", "0", "0"},
+				{protocol.LogTypeOpen, "101", "0", "0", "3", "0", "3", "0"},
 			},
 			wantBids:     []string{"101@3"},
 			versionMoves: true,
@@ -339,7 +343,7 @@ func TestDepthLogTable(t *testing.T) {
 			setup: func(h *dlHarness) { dlIceberg(h) },
 			act:   func(h *dlHarness) []OrderBookLog { return h.amend("i1", 0, 7) },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeAmend, "100", "7", "100", "10", "0"},
+				{protocol.LogTypeAmend, "100", "100", "0", "7", "10", "0", "0"},
 			},
 			wantBids:     []string{"100@2"},
 			versionMoves: false,
@@ -352,7 +356,7 @@ func TestDepthLogTable(t *testing.T) {
 			setup: func(h *dlHarness) { dlIceberg(h) },
 			act:   func(h *dlHarness) []OrderBookLog { return h.amend("i1", 0, 1) },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeAmend, "100", "1", "100", "10", "1"},
+				{protocol.LogTypeAmend, "100", "100", "0", "1", "10", "0", "1"},
 			},
 			wantBids:     []string{"100@1"},
 			versionMoves: true,
@@ -362,7 +366,7 @@ func TestDepthLogTable(t *testing.T) {
 			setup: func(h *dlHarness) { dlIceberg(h) },
 			act:   func(h *dlHarness) []OrderBookLog { return h.amend("i1", 0, 2) },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeAmend, "100", "2", "100", "10", "0"},
+				{protocol.LogTypeAmend, "100", "100", "0", "2", "10", "0", "0"},
 			},
 			wantBids:     []string{"100@2"},
 			versionMoves: false,
@@ -375,8 +379,8 @@ func TestDepthLogTable(t *testing.T) {
 			},
 			act: func(h *dlHarness) []OrderBookLog { return h.amend("i1", 101, 0) },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeAmend, "101", "10", "100", "10", "2"},
-				{protocol.LogTypeOpen, "101", "2", "0", "0", "0"},
+				{protocol.LogTypeAmend, "101", "100", "0", "10", "10", "0", "2"},
+				{protocol.LogTypeOpen, "101", "0", "0", "10", "0", "2", "0"},
 			},
 			wantBids:     []string{"101@2", "100@5"},
 			versionMoves: true,
@@ -392,7 +396,7 @@ func TestDepthLogTable(t *testing.T) {
 			setup: func(h *dlHarness) { dlIceberg(h) },
 			act:   func(h *dlHarness) []OrderBookLog { return h.amend("i1", 100, 10) },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeAmend, "100", "10", "100", "10", "0"},
+				{protocol.LogTypeAmend, "100", "100", "0", "10", "10", "0", "0"},
 			},
 			wantBids:     []string{"100@2"},
 			versionMoves: false,
@@ -405,7 +409,7 @@ func TestDepthLogTable(t *testing.T) {
 			},
 			act: func(h *dlHarness) []OrderBookLog { return h.cancel("i1") },
 			wantLogs: []dlWantLog{
-				{protocol.LogTypeCancel, "100", "9", "0", "0", "1"},
+				{protocol.LogTypeCancel, "100", "0", "0", "9", "0", "0", "1"},
 			},
 			wantBids:     nil,
 			versionMoves: true,
@@ -469,14 +473,14 @@ func TestDepthLogSnapshotWithRestingIceberg(t *testing.T) {
 	// Hidden-only decrease on the restored sell iceberg: no version move.
 	before := h.book.SeqID()
 	dlRequireLogs(t, h.amend("i2", 0, 5), []dlWantLog{
-		{protocol.LogTypeAmend, "105", "5", "105", "9", "0"},
+		{protocol.LogTypeAmend, "105", "105", "0", "5", "9", "0", "0"},
 	})
 	require.Equal(t, before, h.book.SeqID())
 	h.requireAggregatedMatchesBook()
 
 	// Cancel the restored buy iceberg: removes its visible 2, not its total 10.
 	dlRequireLogs(t, h.cancel("i1"), []dlWantLog{
-		{protocol.LogTypeCancel, "100", "10", "0", "0", "2"},
+		{protocol.LogTypeCancel, "100", "0", "0", "10", "0", "0", "2"},
 	})
 	h.requireAggregatedMatchesBook()
 	require.Equal(t, []string{"100@5"}, dlLevels(h.book.GetDepth(dlDepthLimit).Bids))
@@ -500,12 +504,12 @@ func TestDepthDeltaBuilderAllocatesNothing(t *testing.T) {
 		seq++
 		logs = append(logs, &OrderBookLog{
 			SeqID: seq, Type: protocol.LogTypeOpen, Side: Buy,
-			Price: udecimal.MustParse("100"), Size: udecimal.MustParse("1"),
+			Price: udecimal.MustParse("100"), Remaining: udecimal.MustParse("1"), VisibleAdded: udecimal.MustParse("1"),
 		})
 		seq++
 		logs = append(logs, &OrderBookLog{
 			SeqID: seq, Type: protocol.LogTypeCancel, Side: Buy,
-			Price: udecimal.MustParse("100"), Size: udecimal.MustParse("1"),
+			Price: udecimal.MustParse("100"), Remaining: udecimal.MustParse("1"),
 			VisibleRemoved: udecimal.MustParse("1"),
 		})
 	}

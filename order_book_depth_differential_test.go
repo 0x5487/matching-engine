@@ -111,9 +111,24 @@ func (r *dlRef) rendered(side Side) []string {
 // compared with the path that never snapshots.
 func dlLogKey(l *OrderBookLog) string {
 	return fmt.Sprintf(
-		"%s seq=%d cmd=%s order=%s side=%d price=%s size=%s old=%s/%s vis=%s maker=%s trade=%d ts=%d",
-		l.Type, l.SeqID, l.CommandID, l.OrderID, l.Side, l.Price, l.Size,
-		l.OldPrice, l.OldSize, l.VisibleRemoved, l.MakerOrderID, l.TradeID, l.Timestamp,
+		"%s seq=%d cmd=%s order=%s side=%d price=%s match=%s rem=%s vadd=%s qrem=%s old=%s/%s orem=%s vis=%s maker=%s trade=%d ts=%d",
+		l.Type,
+		l.SeqID,
+		l.CommandID,
+		l.OrderID,
+		l.Side,
+		l.Price,
+		l.MatchSize,
+		l.Remaining,
+		l.VisibleAdded,
+		l.QuoteRemaining,
+		l.OldPrice,
+		l.OldRemaining,
+		l.OldRemaining,
+		l.VisibleRemoved,
+		l.MakerOrderID,
+		l.TradeID,
+		l.Timestamp,
 	)
 }
 
@@ -551,7 +566,7 @@ func (r *dlDiffRun) execute(step int, cmd dlDiffCmd) {
 		case protocol.LogTypeMatch:
 			sawMatch = true
 			if fok != nil {
-				filled = filled.Add(l.Size)
+				filled = filled.Add(l.MatchSize)
 			}
 		case protocol.LogTypeReject:
 			reject = true

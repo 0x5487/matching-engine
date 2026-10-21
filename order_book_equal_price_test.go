@@ -272,7 +272,7 @@ func requireMakerFills(t *testing.T, batch *LogBatch, makers, sizes []string) {
 	for i, log := range batch.Logs {
 		require.Equal(t, protocol.LogTypeMatch, log.Type, "log %d", i)
 		require.Equal(t, makers[i], log.MakerOrderID, "log %d maker", i)
-		require.Equal(t, sizes[i], log.Size.String(), "log %d size", i)
+		require.Equal(t, sizes[i], log.MatchSize.String(), "log %d size", i)
 	}
 }
 
@@ -302,7 +302,7 @@ func bookLogOf(t *testing.T, book *OrderBook, orderID string) *OrderBookLog {
 	order, ok := book.findOrder(orderID)
 	require.True(t, ok, "order %s rests on the book", orderID)
 	log := NewOpenLog(book.SeqID(), "log-"+orderID, book.engineID, book.marketID,
-		order.ID, order.UserID, order.Side, order.Price, order.Size, order.Type, 1)
+		order.ID, order.UserID, order.Side, order.Price, order.Size, order.Size, order.Type, 1)
 	return log
 }
 

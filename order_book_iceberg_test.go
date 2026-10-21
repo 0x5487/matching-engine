@@ -70,11 +70,11 @@ func TestIceberg_Replenishment(t *testing.T) {
 	for _, l := range logs {
 		if l.Type == protocol.LogTypeMatch && l.MakerOrderID == orderIDIceberg {
 			matchFound = true
-			assert.Equal(t, "10", l.Size.String())
+			assert.Equal(t, "10", l.MatchSize.String())
 		}
 		if l.Type == protocol.LogTypeOpen && l.OrderID == orderIDIceberg {
 			openFound = true
-			assert.Equal(t, "10", l.Size.String())
+			assert.Equal(t, "10", l.VisibleAdded.String())
 		}
 	}
 	assert.True(t, matchFound, "Match log not found")
@@ -306,7 +306,7 @@ func TestIceberg_TakerAggressiveMatch(t *testing.T) {
 	totalMatched := udecimal.Zero
 	for _, l := range logs {
 		if l.Type == protocol.LogTypeMatch && l.OrderID == "ice-buyer" {
-			totalMatched = totalMatched.Add(l.Size)
+			totalMatched = totalMatched.Add(l.MatchSize)
 		}
 	}
 	assert.Equal(t, "80", totalMatched.String())

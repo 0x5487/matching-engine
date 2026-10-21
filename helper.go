@@ -9,9 +9,10 @@ import (
 // DepthDeltaBuilder applies this and nothing else, so a consumer and the matching
 // book cannot disagree about the same log.
 //
-// Size and OldSize are order totals (the visible part plus the hidden part) and
-// are not read here. Depth counts only visible size, so the removal side uses
-// VisibleRemoved. It is set on cancel and amend logs; see OrderBookLog.
+// Only the visible quantities are read here: VisibleAdded for an open, MatchSize
+// for a match and VisibleRemoved for a cancel or an amend. Remaining and
+// OldRemaining are order totals (the visible part plus the hidden part) and depth
+// does not count them. See OrderBookLog.
 //
 // Note: For LogTypeMatch, the side returned is the Maker's side (opposite of the log's side).
 func CalculateDepthChange(log *OrderBookLog) DepthChange {
@@ -20,7 +21,7 @@ func CalculateDepthChange(log *OrderBookLog) DepthChange {
 		return DepthChange{
 			Side:     log.Side,
 			Price:    log.Price,
-			SizeDiff: log.Size,
+			SizeDiff: log.VisibleAdded,
 		}
 	case protocol.LogTypeCancel:
 		return DepthChange{
@@ -38,7 +39,7 @@ func CalculateDepthChange(log *OrderBookLog) DepthChange {
 		return DepthChange{
 			Side:     makerSide,
 			Price:    log.Price,
-			SizeDiff: log.Size.Neg(),
+			SizeDiff: log.MatchSize.Neg(),
 		}
 	case protocol.LogTypeAmend:
 		// One rule for every amend. The visible part the amend takes off the book is

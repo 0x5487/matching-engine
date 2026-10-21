@@ -91,7 +91,7 @@ func main() {
 	for _, log := range buyBatch.Logs {
 		if log.Type == protocol.LogTypeMatch {
 			fmt.Printf("[MATCH] TradeID: %d, Price: %s, Size: %s, Maker: %s, Taker: %s\n",
-				log.TradeID, log.Price, log.Size, log.MakerOrderID, log.OrderID)
+				log.TradeID, log.Price, log.MatchSize, log.MakerOrderID, log.OrderID)
 		}
 	}
 
@@ -190,7 +190,7 @@ func main() {
 		switch log.Type {
 		case protocol.LogTypeMatch:
 			fmt.Printf("[MATCH] TradeID: %d, Price: %s, Size: %s\n",
-				log.TradeID, log.Price, log.Size)
+				log.TradeID, log.Price, log.MatchSize)
 		case protocol.LogTypeOpen:
 			fmt.Printf("[OPEN] OrderID: %s, Price: %s\n", log.OrderID, log.Price)
 		}
@@ -418,6 +418,21 @@ func (h *MyHandler) Publish(logs []*match.OrderBookLog) {
 ```
 
 A user event keeps the upstream message queue's command sequence in `log.CmdSeqID`; its `SeqID` is 0, since a user event has no depth version.
+
+#### Log quantity fields
+
+Each quantity field of `OrderBookLog` has one meaning. A log leaves the fields that do not apply at zero, so a field that is non-zero says what its log did:
+
+| Field | Meaning | Set by |
+| :--- | :--- | :--- |
+| `MatchSize` | the base quantity traded; the visible size the maker gives up (a match never consumes an iceberg's hidden part) | `Match` |
+| `Remaining` | the order's total remaining base size, visible plus hidden: the total after an open rests, the new total of an amend, the total a cancel removes, the base quantity a reject did not get | `Open`, `Amend`, `Cancel`, `Reject` (base-sized) |
+| `OldRemaining` | the total before the amend | `Amend` |
+| `VisibleAdded` | the visible size an open puts on the book (the visible part of `Remaining`) | `Open` |
+| `VisibleRemoved` | the visible size a cancel or an amend takes off the book, at `OldPrice` | `Cancel`, `Amend` |
+| `QuoteRemaining` | the quote a quote-sized market order did not spend | `Reject` (quote-sized) |
+
+`Price`, `OldPrice`, `Amount` and the identifiers keep their usual meaning. `Open` and `Cancel` do not use `Amount`; `Amount` is the quote of a match only.
 
 A publisher that only inspects the logs in place, as below, is also correct:
 
