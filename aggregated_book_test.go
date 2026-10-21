@@ -202,13 +202,15 @@ func TestAggregatedBook_Replay_Cancel(t *testing.T) {
 		Size:  udecimal.MustParse("10"),
 	}))
 
-	// 1. Cancel partial size on Buy side (cancel 5 out of 15)
+	// 1. Cancel partial size on Buy side (cancel 5 out of 15). A plain order is all
+	// visible, so the visible removal equals the canceled size.
 	require.NoError(t, ab.Replay(&OrderBookLog{
-		SeqID: 3,
-		Type:  protocol.LogTypeCancel,
-		Side:  Buy,
-		Price: udecimal.MustParse("100"),
-		Size:  udecimal.MustParse("5"),
+		SeqID:          3,
+		Type:           protocol.LogTypeCancel,
+		Side:           Buy,
+		Price:          udecimal.MustParse("100"),
+		Size:           udecimal.MustParse("5"),
+		VisibleRemoved: udecimal.MustParse("5"),
 	}))
 
 	bidDepth, err := ab.Depth(Buy, udecimal.MustParse("100"))
@@ -217,11 +219,12 @@ func TestAggregatedBook_Replay_Cancel(t *testing.T) {
 
 	// 2. Cancel full size on Sell side (cancel 10 out of 10)
 	require.NoError(t, ab.Replay(&OrderBookLog{
-		SeqID: 4,
-		Type:  protocol.LogTypeCancel,
-		Side:  Sell,
-		Price: udecimal.MustParse("105"),
-		Size:  udecimal.MustParse("10"),
+		SeqID:          4,
+		Type:           protocol.LogTypeCancel,
+		Side:           Sell,
+		Price:          udecimal.MustParse("105"),
+		Size:           udecimal.MustParse("10"),
+		VisibleRemoved: udecimal.MustParse("10"),
 	}))
 
 	askDepth, err := ab.Depth(Sell, udecimal.MustParse("105"))
@@ -244,30 +247,41 @@ func TestAggregatedBook_Replay_Amend(t *testing.T) {
 			Size:  udecimal.MustParse("10"),
 		}))
 
-		// Amend increase size from 10 to 15
+		// Amend increase size from 10 to 15. Losing priority removes the whole
+		// visible part (10) at the old price; the re-entry at 15 is the Open log
+		// that the book emits next.
 		require.NoError(t, ab.Replay(&OrderBookLog{
-			SeqID:    2,
-			Type:     protocol.LogTypeAmend,
-			Side:     Buy,
-			Price:    udecimal.MustParse("100"),
-			Size:     udecimal.MustParse("15"),
-			OldPrice: udecimal.MustParse("100"),
-			OldSize:  udecimal.MustParse("10"),
+			SeqID:          2,
+			Type:           protocol.LogTypeAmend,
+			Side:           Buy,
+			Price:          udecimal.MustParse("100"),
+			Size:           udecimal.MustParse("15"),
+			OldPrice:       udecimal.MustParse("100"),
+			OldSize:        udecimal.MustParse("10"),
+			VisibleRemoved: udecimal.MustParse("10"),
+		}))
+		require.NoError(t, ab.Replay(&OrderBookLog{
+			SeqID: 3,
+			Type:  protocol.LogTypeOpen,
+			Side:  Buy,
+			Price: udecimal.MustParse("100"),
+			Size:  udecimal.MustParse("15"),
 		}))
 
 		depth, err := ab.Depth(Buy, udecimal.MustParse("100"))
 		require.NoError(t, err)
 		require.Equal(t, udecimal.MustParse("15"), depth)
 
-		// Amend decrease size from 15 to 6
+		// Amend decrease size from 15 to 6 in place: 9 of visible size leaves.
 		require.NoError(t, ab.Replay(&OrderBookLog{
-			SeqID:    3,
-			Type:     protocol.LogTypeAmend,
-			Side:     Buy,
-			Price:    udecimal.MustParse("100"),
-			Size:     udecimal.MustParse("6"),
-			OldPrice: udecimal.MustParse("100"),
-			OldSize:  udecimal.MustParse("15"),
+			SeqID:          4,
+			Type:           protocol.LogTypeAmend,
+			Side:           Buy,
+			Price:          udecimal.MustParse("100"),
+			Size:           udecimal.MustParse("6"),
+			OldPrice:       udecimal.MustParse("100"),
+			OldSize:        udecimal.MustParse("15"),
+			VisibleRemoved: udecimal.MustParse("9"),
 		}))
 
 		depth, err = ab.Depth(Buy, udecimal.MustParse("100"))
@@ -286,15 +300,24 @@ func TestAggregatedBook_Replay_Amend(t *testing.T) {
 			Size:  udecimal.MustParse("5"),
 		}))
 
-		// Amend price from 90 (size 5) to 95 (size 8)
+		// Amend price from 90 (size 5) to 95 (size 8). The amend removes the old
+		// visible part at 90; the order's place at 95 is the Open log that follows.
 		require.NoError(t, ab.Replay(&OrderBookLog{
-			SeqID:    2,
-			Type:     protocol.LogTypeAmend,
-			Side:     Buy,
-			Price:    udecimal.MustParse("95"),
-			Size:     udecimal.MustParse("8"),
-			OldPrice: udecimal.MustParse("90"),
-			OldSize:  udecimal.MustParse("5"),
+			SeqID:          2,
+			Type:           protocol.LogTypeAmend,
+			Side:           Buy,
+			Price:          udecimal.MustParse("95"),
+			Size:           udecimal.MustParse("8"),
+			OldPrice:       udecimal.MustParse("90"),
+			OldSize:        udecimal.MustParse("5"),
+			VisibleRemoved: udecimal.MustParse("5"),
+		}))
+		require.NoError(t, ab.Replay(&OrderBookLog{
+			SeqID: 3,
+			Type:  protocol.LogTypeOpen,
+			Side:  Buy,
+			Price: udecimal.MustParse("95"),
+			Size:  udecimal.MustParse("8"),
 		}))
 
 		oldDepth, err := ab.Depth(Buy, udecimal.MustParse("90"))

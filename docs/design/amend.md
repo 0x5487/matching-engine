@@ -45,6 +45,15 @@ Current implementation behavior:
 - **size increase**: loses priority and is re-matched as a fresh limit order
 - **same price + size decrease**: retains priority via in-place queue update
 
+### 3.4 Amend Log Fields
+
+The amend log carries two kinds of size, and they must not be mixed:
+
+- `Size` and `OldSize` are the order total (visible plus hidden). They are the order's facts, for example for releasing funds.
+- `VisibleRemoved` is the visible (depth) size the amend takes off the book. Losing priority removes the whole visible part at `OldPrice`. An in-place decrease removes only the part that reaches past the hidden size, so a decrease that stays inside the hidden size has `VisibleRemoved` 0.
+
+The depth version advances only when the amend changes visible depth (a price change, a size increase, or a visible decrease). A no-op amend, and a decrease that only touches hidden size, repeat the current version.
+
 ### 3.3 Concurrency Model
 
 The engine processes amend commands on the single event loop, so the order state at amend time is deterministic with respect to prior fills and cancels.

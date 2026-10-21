@@ -92,6 +92,13 @@ Implications:
 - trade logs still report the actual executed quantity
 - cancel logs account for both visible and hidden remainder when applicable
 
+Two meanings of size on the log. `Size` and `OldSize` are the order's facts and
+always carry the order total (visible plus hidden). Depth needs the visible part,
+so cancel and amend logs also carry `VisibleRemoved`: the visible size the log takes
+off the book (at `OldPrice` when priority is lost, at `Price` otherwise). Depth moves
+by `VisibleRemoved`, never by `Size` or `OldSize`. A cancel of an iceberg with visible
+size 2 and total size 10 has `Size` 10 and `VisibleRemoved` 2.
+
 ## 5. Amend and Cancel Semantics
 
 Iceberg orders follow the same amend framework described in [amend.md](./amend.md).
@@ -99,6 +106,7 @@ Iceberg orders follow the same amend framework described in [amend.md](./amend.m
 Current behavior:
 
 - size decrease consumes hidden quantity first when possible
+- a decrease that stays inside the hidden size changes no visible depth and does not advance the depth version
 - price change loses priority
 - size increase loses priority
 - cancel removes both visible and hidden remainder from engine state

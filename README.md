@@ -204,8 +204,8 @@ func main() {
 `AggregatedBook` is designed for downstream read services (such as Market Data Services, WebSocket broadcast gateways, or Redis snapshot updaters) that consume `OrderBookLog` events from a message queue (e.g. NATS JetStream, Kafka) to maintain a live, aggregated view of the order book depth.
 
 Key capabilities:
-- **Event Replay**: Accurately tracks price level depth by replaying `LogTypeOpen`, `LogTypeMatch`, `LogTypeCancel`, and `LogTypeAmend`.
-- **Depth Version**: An order book's `SeqID` is its per-market depth version, advancing only when resting size is added or removed. Refusals and admin logs carry no version, so a consumer may forward only the four depth-changing log types above and still hand `Replay` a contiguous version — which is what keeps a version jump meaningful as a lost-update signal.
+- **Event Replay**: Accurately tracks price level depth by replaying `LogTypeOpen`, `LogTypeMatch`, `LogTypeCancel`, and `LogTypeAmend`. Each log's effect on depth comes from `CalculateDepthChange`, the single depth rule. Cancel and amend logs carry `VisibleRemoved` (the visible size they take off the book); `Size` and `OldSize` are order totals and do not move depth.
+- **Depth Version**: An order book's `SeqID` is its per-market depth version, advancing only when visible resting size is added or removed. A shrink that stays inside an iceberg's hidden size repeats the version. Refusals and admin logs carry no version, so a consumer may forward only the four depth-changing log types above and still hand `Replay` a contiguous version — which is what keeps a version jump meaningful as a lost-update signal.
 - **Deduplication & Gap Detection**: Guarantees deterministic state sync using `SequenceID`. Duplicates (`SeqID <= current`) are automatically skipped; sequence gaps (`SeqID > current + 1`) trigger the `OnRebuild` callback to reload a snapshot.
 - **Thread-Safe Queries**: Protected by internal `sync.RWMutex`, allowing concurrent background event replay and foreground depth queries (`GetDepth`).
 - **High Throughput**: Capable of replaying over 7,000,000 events/sec with **0 B/op and 0 allocs/op**.

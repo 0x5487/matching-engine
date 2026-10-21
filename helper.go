@@ -4,8 +4,15 @@ import (
 	"github.com/0x5487/matching-engine/protocol"
 )
 
-// CalculateDepthChange calculates the depth change based on the book log.
-// It returns a DepthChange struct indicating which side and price level should be updated.
+// CalculateDepthChange is the only rule for how a book log moves depth. It returns
+// the side, the price level and the signed visible size change that the log causes.
+// AggregatedBook.Replay applies this and nothing else, so a consumer and the
+// matching book cannot disagree about the same log.
+//
+// Size and OldSize are order totals (the visible part plus the hidden part) and
+// are not read here. Depth counts only visible size, so the removal side uses
+// VisibleRemoved. It is set on cancel and amend logs; see OrderBookLog.
+//
 // Note: For LogTypeMatch, the side returned is the Maker's side (opposite of the log's side).
 func CalculateDepthChange(log *OrderBookLog) DepthChange {
 	switch log.Type {
@@ -19,7 +26,7 @@ func CalculateDepthChange(log *OrderBookLog) DepthChange {
 		return DepthChange{
 			Side:     log.Side,
 			Price:    log.Price,
-			SizeDiff: log.Size.Neg(),
+			SizeDiff: log.VisibleRemoved.Neg(),
 		}
 	case protocol.LogTypeMatch:
 		// Match reduces liquidity from the Maker side.
@@ -35,22 +42,24 @@ func CalculateDepthChange(log *OrderBookLog) DepthChange {
 		}
 	case protocol.LogTypeAmend:
 		// Scenario 1: Priority Lost (Price changed OR Size increased)
-		// Logic: The order is removed from the book. The new order will be handled by a subsequent protocol.LogTypeOpen or protocol.LogTypeMatch.
-		// So we only need to remove the OldSize from OldPrice.
+		// Logic: The visible part is removed from OldPrice. The new order is then
+		// handled by a subsequent protocol.LogTypeOpen or protocol.LogTypeMatch,
+		// which adds whatever is visible at the new place.
 		if !log.OldPrice.Equal(log.Price) || log.Size.GreaterThan(log.OldSize) {
 			return DepthChange{
 				Side:     log.Side,
 				Price:    log.OldPrice,
-				SizeDiff: log.OldSize.Neg(),
+				SizeDiff: log.VisibleRemoved.Neg(),
 			}
 		}
 
-		// Scenario 2: Priority Kept (Price same AND Size decreased)
-		// Logic: Update in-place. The difference is (NewSize - OldSize).
+		// Scenario 2: Priority Kept (Price same AND Size not increased)
+		// Logic: Update in-place. Only the visible size the decrease reached is removed;
+		// a decrease that stays inside the hidden size removes nothing.
 		return DepthChange{
 			Side:     log.Side,
 			Price:    log.Price,
-			SizeDiff: log.Size.Sub(log.OldSize),
+			SizeDiff: log.VisibleRemoved.Neg(),
 		}
 	case protocol.LogTypeReject, protocol.LogTypeUser, protocol.LogTypeAdmin:
 		// Rejected orders never entered the book, so no depth change.

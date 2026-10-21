@@ -344,27 +344,28 @@ func (book *OrderBook) CancelOrder(req *protocol.CancelOrderRequest) (*LogBatch,
 		order.Type,
 		req.Timestamp,
 	)
+	// The whole visible part leaves the book at its price. The hidden part was
+	// never depth, so it does not appear here even though Size carries it.
+	log.VisibleRemoved = order.Size
 	batch.Logs = append(batch.Logs, log)
 	releaseOrder(order)
 
 	return batch, nil
 }
 
-// amendChangesDepth reports whether an amend alters the book.
+// amendChangesDepth reports whether an amend alters the book's visible depth.
 //
-// An amend moves resting size whenever it relocates the order - a price change
-// emits an amend plus an open at the new price - or resizes it. Both directions
-// of resize count: the shrink path keeps the order in place but still changes
-// the size at that price level.
+// An amend moves visible size whenever it relocates the order - a price change
+// emits an amend plus an open at the new price - or grows it. A shrink that stays
+// inside the hidden part moves no visible size: the order keeps its place, its
+// visible part is unchanged, and the book is the same as before. Such an amend
+// reuses the current version, exactly like a no-op.
 //
 // A no-op amend is the one command that reaches the amend log without changing
 // the book: the new price and size both resolve to the current ones, so none of
 // the three conditions hold and neither AmendOrder branch is taken.
-func amendChangesDepth(
-	isPriceChange, isSizeIncrease bool,
-	newSize, oldTotalSize udecimal.Decimal,
-) bool {
-	return isPriceChange || isSizeIncrease || newSize.LessThan(oldTotalSize)
+func amendChangesDepth(isPriceChange, isSizeIncrease bool, visibleRemoved udecimal.Decimal) bool {
+	return isPriceChange || isSizeIncrease || visibleRemoved.GreaterThan(udecimal.Zero)
 }
 
 // AmendOrder processes an order amendment synchronously and returns the resulting LogBatch.
@@ -417,13 +418,30 @@ func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, e
 	isPriceChange := !oldPrice.Equal(newPrice)
 	isSizeIncrease := newSize.GreaterThan(oldTotalSize)
 
+	// The visible size this amend takes off the book. Losing priority removes the
+	// whole visible part at the old price. An in-place shrink removes only the part
+	// of the decrease that reaches past the hidden size; a shrink that stays inside
+	// the hidden size removes nothing from depth.
+	var visibleRemoved udecimal.Decimal
+	switch {
+	case isPriceChange || isSizeIncrease:
+		visibleRemoved = order.Size
+	case newSize.LessThan(oldTotalSize):
+		if delta := oldTotalSize.Sub(newSize); delta.GreaterThan(order.HiddenSize) {
+			visibleRemoved = delta.Sub(order.HiddenSize)
+		}
+	default:
+		visibleRemoved = udecimal.Zero
+	}
+
 	amendBatch := acquireLogBatch()
 	// Computed once and reused for both the version and the branch below, so the
 	// two cannot disagree about whether the book changed.
-	depthChanged := amendChangesDepth(isPriceChange, isSizeIncrease, newSize, oldTotalSize)
-	// A no-op amend changes no depth, so it must not advance the version.
-	// Emitting the log is still right - the command happened and an operator
-	// wants to see it - but the version belongs to depth only.
+	depthChanged := amendChangesDepth(isPriceChange, isSizeIncrease, visibleRemoved)
+	// An amend that changes no visible depth (a no-op, or a shrink inside the
+	// hidden size) must not advance the version. Emitting the log is still right -
+	// the command happened and an operator wants to see it - but the version
+	// belongs to visible depth only.
 	amendSeqID := book.seqID.Load()
 	if depthChanged {
 		amendSeqID = book.seqID.Add(1)
@@ -443,6 +461,7 @@ func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, e
 		order.Type,
 		req.Timestamp,
 	)
+	log.VisibleRemoved = visibleRemoved
 	amendBatch.Logs = append(amendBatch.Logs, log)
 
 	if isPriceChange || isSizeIncrease {

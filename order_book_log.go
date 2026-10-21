@@ -53,8 +53,8 @@ func releaseLogBatchContainer(b *LogBatch) {
 type OrderBookLog struct {
 	// SeqID is the book depth version at the moment this log was produced.
 	//
-	// It advances only when resting size was added or removed: an open, a
-	// match, a cancel or an amend. Refusals and admin commands leave it alone,
+	// It advances only when visible resting size was added or removed: an open,
+	// a match, a cancel or an amend. Hidden iceberg size is not depth. Refusals and admin commands leave it alone,
 	// because they move no depth - a rejected order produces a new version with
 	// identical levels, which tells a reader nothing.
 	//
@@ -66,8 +66,8 @@ type OrderBookLog struct {
 	//
 	// Two encodings mean "no depth change", and a consumer filtering on SeqID
 	// drops both correctly: 0 for a refusal or admin log, and a repeat of the
-	// current version for a no-op amend (new price and size both equal the
-	// current ones).
+	// current version for an amend that moves no visible size (a no-op amend, or
+	// a shrink that stays inside the hidden size).
 	//
 	// It is not a timestamp and not comparable across markets - the counter
 	// belongs to one order book.
@@ -77,27 +77,29 @@ type OrderBookLog struct {
 	// message queue's command sequence, so for LogTypeUser this is that
 	// sequence rather than a depth version. AggregatedBook must not be fed user
 	// events; see its Replay doc.
-	SeqID        uint64                `json:"seq_id"`
-	CommandID    string                `json:"command_id"`
-	EngineID     string                `json:"engine_id"`
-	TradeID      uint64                `json:"trade_id,omitempty"`
-	Type         protocol.LogType      `json:"type"`
-	MarketID     string                `json:"market_id"`
-	Side         Side                  `json:"side"`
-	Price        udecimal.Decimal      `json:"price"`
-	Size         udecimal.Decimal      `json:"size"`
-	Amount       udecimal.Decimal      `json:"amount"`
-	OrderID      string                `json:"order_id"`
-	UserID       uint64                `json:"user_id"`
-	OrderType    OrderType             `json:"order_type"`
-	OldPrice     udecimal.Decimal      `json:"old_price"`
-	OldSize      udecimal.Decimal      `json:"old_size"`
-	MakerOrderID string                `json:"maker_order_id,omitempty"`
-	MakerUserID  uint64                `json:"maker_user_id,omitempty"`
-	RejectReason protocol.RejectReason `json:"reject_reason,omitempty"`
-	EventType    string                `json:"event_type,omitempty"` // For Admin/User events
-	Data         []byte                `json:"data,omitempty"`       // For User events
-	Timestamp    int64                 `json:"timestamp"`
+	SeqID     uint64           `json:"seq_id"`
+	CommandID string           `json:"command_id"`
+	EngineID  string           `json:"engine_id"`
+	TradeID   uint64           `json:"trade_id,omitempty"`
+	Type      protocol.LogType `json:"type"`
+	MarketID  string           `json:"market_id"`
+	Side      Side             `json:"side"`
+	Price     udecimal.Decimal `json:"price"`
+	Size      udecimal.Decimal `json:"size"`
+	Amount    udecimal.Decimal `json:"amount"`
+	OrderID   string           `json:"order_id"`
+	UserID    uint64           `json:"user_id"`
+	OrderType OrderType        `json:"order_type"`
+	OldPrice  udecimal.Decimal `json:"old_price"`
+	OldSize   udecimal.Decimal `json:"old_size"`
+	// VisibleRemoved is the visible (depth) size this log takes off the book.
+	VisibleRemoved udecimal.Decimal      `json:"visible_removed,omitzero"`
+	MakerOrderID   string                `json:"maker_order_id,omitempty"`
+	MakerUserID    uint64                `json:"maker_user_id,omitempty"`
+	RejectReason   protocol.RejectReason `json:"reject_reason,omitempty"`
+	EventType      string                `json:"event_type,omitempty"` // For Admin/User events
+	Data           []byte                `json:"data,omitempty"`       // For User events
+	Timestamp      int64                 `json:"timestamp"`
 }
 
 var bookLogPool = sync.Pool{

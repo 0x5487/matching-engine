@@ -167,48 +167,20 @@ func (ab *AggregatedBook) Replay(log *OrderBookLog) error {
 
 	ab.seqID.Store(log.SeqID)
 
-	switch log.Type {
-	case protocol.LogTypeOpen:
-		tree := ab.ask
-		if log.Side == Buy {
-			tree = ab.bid
-		}
-		addDepth(tree, log.Price, log.Size)
-
-	case protocol.LogTypeMatch:
-		// log.Side is the taker's side; resting maker order is on the opposite side
-		tree := ab.ask
-		if log.Side == Sell {
-			tree = ab.bid
-		}
-		deductDepth(tree, log.Price, log.Size)
-
-	case protocol.LogTypeCancel:
-		tree := ab.ask
-		if log.Side == Buy {
-			tree = ab.bid
-		}
-		deductDepth(tree, log.Price, log.Size)
-
-	case protocol.LogTypeAmend:
-		tree := ab.ask
-		if log.Side == Buy {
-			tree = ab.bid
-		}
-		if log.OldPrice.Equal(log.Price) {
-			if log.Size.GreaterThan(log.OldSize) {
-				addDepth(tree, log.Price, log.Size.Sub(log.OldSize))
-			} else if log.OldSize.GreaterThan(log.Size) {
-				deductDepth(tree, log.Price, log.OldSize.Sub(log.Size))
-			}
-		} else {
-			deductDepth(tree, log.OldPrice, log.OldSize)
-			addDepth(tree, log.Price, log.Size)
-		}
-
+	// The depth rule lives in CalculateDepthChange and is shared with every other
+	// reader of the log. Replay only applies its result to the right side.
+	change := CalculateDepthChange(log)
+	tree := ab.ask
+	if change.Side == Buy {
+		tree = ab.bid
+	}
+	switch change.SizeDiff.Sign() {
+	case 1:
+		addDepth(tree, change.Price, change.SizeDiff)
+	case -1:
+		deductDepth(tree, change.Price, change.SizeDiff.Neg())
 	default:
-		// LogTypeReject, LogTypeUser, LogTypeAdmin, and unknown events
-		// do not affect order book depth state.
+		// Zero change: the log does not move visible depth.
 	}
 
 	return nil
