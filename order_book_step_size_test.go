@@ -172,9 +172,10 @@ func stepValidationPlace(
 	return batch
 }
 
+// requireInvalidPayload only inspects the batch. The caller owns it and releases it
+// exactly once; a helper that released it too would put the batch in the pool twice.
 func requireInvalidPayload(t *testing.T, batch *LogBatch, id string) {
 	t.Helper()
-	defer batch.Release()
 	require.Len(t, batch.Logs, 1, "a refused order emits exactly one log, never a match beside it")
 	log := batch.Logs[0]
 	assert.Equal(t, protocol.LogTypeReject, log.Type, "order %q must be rejected", id)
@@ -215,6 +216,7 @@ func TestQuantityStepRejectsDustTakers(t *testing.T) {
 				t, book, "dust", tc.orderType, tc.side,
 				tc.price, "0.0003", "0.001",
 			)
+			defer batch.Release()
 			requireInvalidPayload(t, batch, "dust")
 		})
 	}
@@ -274,6 +276,7 @@ func TestQuantityStepRejectsDustVisibleSize(t *testing.T) {
 	})
 	require.NoError(t, err, "PlaceOrder returns rejects as logs, not errors")
 	require.NotNil(t, batch)
+	defer batch.Release()
 	requireInvalidPayload(t, batch, "iceberg")
 }
 

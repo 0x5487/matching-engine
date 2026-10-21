@@ -65,6 +65,10 @@ func TestAmendStepSize(t *testing.T) {
 			defer batch.Release()
 			if tc.refused {
 				requireInvalidPayload(t, batch, "rest")
+				// The helper only inspects the batch. The batch is owned here and
+				// released once by the defer above; a helper that released it would
+				// put it in the pool twice, and two later owners would share it.
+				require.Len(t, batch.Logs, 1, "the helper must leave the batch to its caller")
 			} else {
 				require.Len(t, batch.Logs, 1)
 				require.Equal(t, protocol.LogTypeAmend, batch.Logs[0].Type)
