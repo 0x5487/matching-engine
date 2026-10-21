@@ -9,7 +9,7 @@ A high-performance, in-memory matching engine SDK written in Go. Designed for cr
 - **Dual Integration Modes**:
   - **Synchronous `OrderBook`**: Direct in-memory matching without background workers, ideal for embedding into single-goroutine state machines, Raft loops, or partitioned workers.
   - **Asynchronous `MatchingEngine`**: Complete multi-market actor with Disruptor MPSC ring buffer for high-concurrency standalone services.
-- **Market Data Read-Replica (`AggregatedBook`)**: Downstream aggregated order book state machine supporting event replay (`Open`, `Match`, `Cancel`, `Amend`), sequence deduplication, automatic gap recovery (`OnRebuild`), and thread-safe depth queries (`GetDepth`) with over 7M events/sec replay throughput.
+- **Market Data Depth Feed (`DepthDeltaBuilder` / `AggregatedBook`)**: The book produces one `DepthDelta` per SDK call that moves visible depth, with the new absolute size of each changed level. A downstream `AggregatedBook` applies it with `ApplyDelta`, which checks the version, skips resends, and reloads a snapshot on a gap (`OnRebuild`). Thread-safe depth queries (`GetDepth`).
 - **Single Thread Actor**: Adopts a **Lock-Free** architecture where a single pinned goroutine processes all state mutations. This eliminates context switching and mutex contention, maximizing CPU cache locality.
 - **Concurrency Safe**: All state mutations are serialized through the RingBuffer or single-actor loops, eliminating race conditions without mutex lock contention.
 - **Low Allocation Hot Paths**: Uses `udecimal` (uint64-based), intrusive lists, and object pooling to achieve **0 allocs/op** on core matching paths.
@@ -199,16 +199,16 @@ func main() {
 }
 ```
 
-### 3. AggregatedBook (Downstream Market Data Read-Replica)
+### 3. Depth Feed: `DepthDeltaBuilder` and `AggregatedBook` (Downstream Market Data)
 
-`AggregatedBook` is designed for downstream read services (such as Market Data Services, WebSocket broadcast gateways, or Redis snapshot updaters) that consume `OrderBookLog` events from a message queue (e.g. NATS JetStream, Kafka) to maintain a live, aggregated view of the order book depth.
+Downstream read services (Market Data Services, WebSocket gateways, Redis snapshot updaters) keep a live, aggregated view of the depth. The book itself produces the changes; the view only applies them.
 
 Key capabilities:
-- **Event Replay**: Accurately tracks price level depth by replaying `LogTypeOpen`, `LogTypeMatch`, `LogTypeCancel`, and `LogTypeAmend`. Each log's effect on depth comes from `CalculateDepthChange`, the single depth rule. Cancel and amend logs carry `VisibleRemoved` (the visible size they take off the book); `Size` and `OldSize` are order totals and do not move depth.
-- **Depth Version**: An order book's `SeqID` is its per-market depth version, advancing only when visible resting size is added or removed. A shrink that stays inside an iceberg's hidden size repeats the version. Refusals and admin logs carry no version, so a consumer may forward only the four depth-changing log types above and still hand `Replay` a contiguous version — which is what keeps a version jump meaningful as a lost-update signal.
-- **Deduplication & Gap Detection**: Guarantees deterministic state sync using `SequenceID`. Duplicates (`SeqID <= current`) are automatically skipped; sequence gaps (`SeqID > current + 1`) trigger the `OnRebuild` callback to reload a snapshot.
-- **Thread-Safe Queries**: Protected by internal `sync.RWMutex`, allowing concurrent background event replay and foreground depth queries (`GetDepth`).
-- **High Throughput**: Capable of replaying over 7,000,000 events/sec with **0 B/op and 0 allocs/op**.
+- **One version per call**: `OrderBook.SeqID()` is the depth version. One SDK call (`PlaceOrder`, `CancelOrder`, `AmendOrder`) that moves visible depth advances it by exactly one, and every depth log of that call carries the new value. A refusal, an admin command, a no-op amend or a shrink inside the hidden size does not advance it.
+- **Producer (`DepthDeltaBuilder`)**: `Add` or `AddBatch` the logs of a call, then `Flush(book, &delta)` reads the touched levels from the book and fills a `protocol.DepthDelta` (`Seq`, `Asks` ascending, `Bids` descending; a size of zero means the level is gone), then `Reset`. Which levels a log moves comes from `CalculateDepthChange`, the single depth rule. Flush must run before the next call changes the book, because it reads sizes as they are then. Several calls may be added before one Flush; the delta then holds each level once at its final size and carries the last version.
+- **Follower (`AggregatedBook.ApplyDelta`)**: a delta with `Seq` one past the follower's version sets each level and advances the version. A resend (`Seq` at or below the version) is skipped. A gap calls `OnRebuild` for a snapshot; the snapshot is applied only if it reaches the delta, and otherwise `ErrSequenceGap` is returned with the book unchanged. A malformed delta is refused with `ErrInvalidDepthDelta` before anything changes.
+- **Queries on the book**: `LevelSize(side, price)` is the visible size at one price, and `BestPrice(side)` the best price of a side. Both are read from the book, so a caller holds no second copy of depth.
+- **Thread-Safe Queries**: `AggregatedBook` is protected by an internal `sync.RWMutex`; `GetDepth` and `Depth` may run beside `ApplyDelta`, which has one writer.
 
 ```go
 package main
@@ -221,32 +221,37 @@ import (
 )
 
 func main() {
-	ab := match.NewAggregatedBook()
+	book := match.NewOrderBook("BTC-USDT")
+	feed := match.NewDepthDeltaBuilder()
+	view := match.NewAggregatedBook()
 
-	// 1. Configure OnRebuild callback for automatic gap recovery
-	ab.OnRebuild = func() (*match.Snapshot, error) {
-		// Fetch latest snapshot from Engine API or Redis
+	// 1. Configure OnRebuild for a gap: a snapshot at the version the follower missed.
+	view.OnRebuild = func() (*match.Snapshot, error) {
 		return &match.Snapshot{
 			SequenceID: 100,
-			Asks: []*protocol.DepthItem{
-				{Price: "50100", Size: "2.5"},
-			},
-			Bids: []*protocol.DepthItem{
-				{Price: "50000", Size: "1.2"},
-			},
+			Asks:       []*protocol.DepthItem{{Price: "50100", Size: "2.5"}},
+			Bids:       []*protocol.DepthItem{{Price: "50000", Size: "1.2"}},
 		}, nil
 	}
 
-	// 2. Replay incoming OrderBookLog events from MQ.
-	// Forward only Open, Match, Cancel and Amend. Refusals and admin logs carry
-	// no depth version and are dropped anyway; a user event carries the upstream
-	// command sequence in SeqID and would read as a gap.
-	if err := ab.Replay(logEvent); err != nil {
+	// 2. After each call on the book, turn its logs into a delta and apply it.
+	batch, err := book.PlaceOrder(&protocol.PlaceOrderRequest{ /* ... */ })
+	if err != nil {
 		panic(err)
 	}
+	feed.AddBatch(batch.Logs)
+	batch.Release()
+
+	var delta protocol.DepthDelta
+	if feed.Flush(book, &delta) {
+		if err := view.ApplyDelta(&delta); err != nil {
+			panic(err)
+		}
+	}
+	feed.Reset()
 
 	// 3. Query top N depth levels (e.g. to write to Redis or push via WebSocket)
-	depth := ab.GetDepth(20)
+	depth := view.GetDepth(20)
 	fmt.Printf("UpdateID: %d\n", depth.UpdateID)
 	if len(depth.Asks) > 0 {
 		fmt.Printf("Best Ask: %s (%s)\n", depth.Asks[0].Price, depth.Asks[0].Size)

@@ -61,14 +61,19 @@ type OrderBook struct {
 	engineID     string
 	marketID     string
 	skiplistSeed int64 // PRNG seed for price skiplist
-	// seqID is this book's depth version; it advances only when resting size was
-	// added or removed. Per book, never global.
+	// seqID is this book's depth version. One SDK call that moves visible depth
+	// advances it by exactly one; the logs of that call all carry the new value.
+	// Per book, never global.
 	seqID        atomic.Uint64
 	lastCmdSeqID atomic.Uint64 // Last sequence ID of the command
 	tradeID      atomic.Uint64 // Sequential trade ID counter
-	bidQueue     *queue
-	askQueue     *queue
-	publisher    Publisher
+	// callSeq is the version the call in progress produces: seqID+1 while the call
+	// runs. callMoved records whether a log of the call has taken it.
+	callSeq   uint64
+	callMoved bool
+	bidQueue  *queue
+	askQueue  *queue
+	publisher Publisher
 }
 
 // NewOrderBook creates a new pure OrderBook instance.
@@ -137,8 +142,9 @@ func (book *OrderBook) EngineID() string {
 	return book.engineID
 }
 
-// SeqID returns the current book depth version: how many depth-changing logs
-// this book has emitted. Refusals and admin commands do not advance it.
+// SeqID returns the current book depth version: how many SDK calls have moved
+// visible depth. A call that moves none, such as a refusal or an admin command,
+// does not advance it.
 func (book *OrderBook) SeqID() uint64 {
 	return book.seqID.Load()
 }
@@ -165,6 +171,8 @@ func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, e
 	if req == nil {
 		return nil, ErrInvalidParam
 	}
+	book.beginCall()
+	defer book.endCall()
 	if req.Timestamp <= 0 {
 		return book.createRejectBatch(
 			req.CommandID,
@@ -213,9 +221,8 @@ func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, e
 	// unit to measure against", and older callers that never send one keep
 	// the old behavior rather than failing every order overnight.
 	//
-	// Amendments are a separate door this check does not guard:
-	// AmendOrderRequest carries no step, so an amended size is never
-	// measured here. See the CHANGELOG entry for the tracked follow-up.
+	// AmendOrder applies the same check to its new size, against the step it
+	// carries.
 	if isValid && !req.Size.IsZero() && !req.StepSize.IsZero() &&
 		!isWholeSteps(req.Size, req.StepSize) {
 		isValid = false
@@ -302,6 +309,8 @@ func (book *OrderBook) CancelOrder(req *protocol.CancelOrderRequest) (*LogBatch,
 	if req == nil {
 		return nil, ErrInvalidParam
 	}
+	book.beginCall()
+	defer book.endCall()
 	if req.Timestamp <= 0 || req.OrderID == "" {
 		return book.createRejectBatch(
 			req.CommandID,
@@ -332,7 +341,7 @@ func (book *OrderBook) CancelOrder(req *protocol.CancelOrderRequest) (*LogBatch,
 	batch := acquireLogBatch()
 	totalSize := order.Size.Add(order.HiddenSize)
 	log := NewCancelLog(
-		book.seqID.Add(1),
+		book.depthSeq(),
 		req.CommandID,
 		book.engineID,
 		book.marketID,
@@ -375,7 +384,12 @@ func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, e
 	if req == nil {
 		return nil, ErrInvalidParam
 	}
-	if req.Timestamp <= 0 || req.OrderID == "" {
+	book.beginCall()
+	defer book.endCall()
+	// A new size must be a whole number of steps when the amend names a step. Zero
+	// on either side means no size or no unit is given, and nothing is checked.
+	offStep := !req.NewSize.IsZero() && !req.StepSize.IsZero() && !isWholeSteps(req.NewSize, req.StepSize)
+	if req.Timestamp <= 0 || req.OrderID == "" || offStep {
 		return book.createRejectBatch(
 			req.CommandID,
 			req.OrderID,
@@ -444,7 +458,7 @@ func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, e
 	// belongs to visible depth only.
 	amendSeqID := book.seqID.Load()
 	if depthChanged {
-		amendSeqID = book.seqID.Add(1)
+		amendSeqID = book.depthSeq()
 	}
 	log := NewAmendLog(
 		amendSeqID,
@@ -496,16 +510,56 @@ func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, e
 		// Path 2: Priority Retention (In-place update)
 		delta := oldTotalSize.Sub(newSize)
 		if delta.LessThanOrEqual(order.HiddenSize) {
-			order.HiddenSize = order.HiddenSize.Sub(delta)
+			myQueue.resizeOrder(order.ID, order.Size, order.HiddenSize.Sub(delta))
 		} else {
 			remainingDelta := delta.Sub(order.HiddenSize)
-			order.HiddenSize = udecimal.Zero
-			newVisibleSize := order.Size.Sub(remainingDelta)
-			myQueue.updateOrderSize(order.ID, newVisibleSize)
+			myQueue.resizeOrder(order.ID, order.Size.Sub(remainingDelta), udecimal.Zero)
 		}
 	}
 
 	return amendBatch, nil
+}
+
+// LevelSize returns the visible size resting at price on side: the depth of that
+// level, not counting hidden iceberg size. It returns zero when no order rests
+// there. It does not allocate.
+func (book *OrderBook) LevelSize(side Side, price udecimal.Decimal) udecimal.Decimal {
+	if side == Sell {
+		return book.askQueue.levelSize(price)
+	}
+	return book.bidQueue.levelSize(price)
+}
+
+// BestPrice returns the best price on side: the highest bid or the lowest ask. The
+// second result is false when that side is empty. It does not allocate.
+func (book *OrderBook) BestPrice(side Side) (udecimal.Decimal, bool) {
+	if side == Sell {
+		return book.askQueue.bestPrice()
+	}
+	return book.bidQueue.bestPrice()
+}
+
+// beginCall starts an SDK call. The call's depth logs take the next version, and
+// the book advances to it only if the call moves visible depth (see endCall).
+func (book *OrderBook) beginCall() {
+	book.callSeq = book.seqID.Load() + 1
+	book.callMoved = false
+}
+
+// depthSeq returns the version for a log that moves visible depth, and marks the
+// call as having moved depth.
+func (book *OrderBook) depthSeq() uint64 {
+	book.callMoved = true
+	return book.callSeq
+}
+
+// endCall finishes an SDK call. The version advances by one when the call moved
+// visible depth and not otherwise, so a refusal, a no-op amend or a shrink inside
+// the hidden size leaves the version where it was.
+func (book *OrderBook) endCall() {
+	if book.callMoved {
+		book.seqID.Store(book.callSeq)
+	}
 }
 
 func (book *OrderBook) processCommand(ev *InputEvent) {
@@ -737,7 +791,7 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 			book.prepareIcebergForResting(order)
 			myQueue.insertOrder(order)
 			log := NewOpenLog(
-				book.seqID.Add(1),
+				book.depthSeq(),
 				commandID,
 				book.engineID,
 				book.marketID,
@@ -758,7 +812,7 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 			book.prepareIcebergForResting(order)
 			myQueue.insertOrder(order)
 			log := NewOpenLog(
-				book.seqID.Add(1),
+				book.depthSeq(),
 				commandID,
 				book.engineID,
 				book.marketID,
@@ -777,7 +831,7 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 		tOrd = targetQueue.popHeadOrder()
 		if order.Size.LessThan(tOrd.Size) {
 			log := NewMatchLog(
-				book.seqID.Add(1),
+				book.depthSeq(),
 				commandID,
 				book.engineID,
 				book.tradeID.Add(1),
@@ -800,7 +854,7 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 		}
 
 		log := NewMatchLog(
-			book.seqID.Add(1),
+			book.depthSeq(),
 			commandID,
 			book.engineID,
 			book.tradeID.Add(1),
@@ -874,11 +928,14 @@ func (book *OrderBook) handleFOKOrder(commandID string, order *Order, timestamp 
 			break
 		}
 		hasLiquidityAtPrice = true
-		if remainingSize.LessThanOrEqual(unit.totalSize) {
+		// The level can give its visible size and the iceberg size behind it: a
+		// taker that eats the visible part reloads the hidden part at the same price.
+		levelTotal := unit.totalSize.Add(unit.hiddenSize)
+		if remainingSize.LessThanOrEqual(levelTotal) {
 			canFill = true
 			break
 		}
-		remainingSize = remainingSize.Sub(unit.totalSize)
+		remainingSize = remainingSize.Sub(levelTotal)
 		it.Next()
 	}
 
@@ -1104,7 +1161,7 @@ func (book *OrderBook) takeLiquidity(
 		}
 
 		log := NewMatchLog(
-			book.seqID.Add(1),
+			book.depthSeq(),
 			commandID,
 			book.engineID,
 			book.tradeID.Add(1),
@@ -1174,7 +1231,7 @@ func (book *OrderBook) checkReplenish(
 		q.insertOrder(order) // Insert at end (Priority Loss)
 
 		log := NewOpenLog(
-			book.seqID.Add(1),
+			book.depthSeq(),
 			commandID,
 			book.engineID,
 			book.marketID,

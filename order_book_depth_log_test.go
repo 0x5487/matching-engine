@@ -18,23 +18,29 @@ const (
 )
 
 // dlHarness drives one OrderBook and one AggregatedBook with the same commands.
-// Every batch is replayed into the AggregatedBook as it is produced, so a test
-// can state the expected log fields and the expected depth at each step.
+// The logs of each command go through a DepthDeltaBuilder, and the delta it
+// settles is applied to the AggregatedBook, so a test can state the expected log
+// fields and the expected depth at each step.
 type dlHarness struct {
-	t    *testing.T
-	book *OrderBook
-	ab   *AggregatedBook
-	seq  int
-	ts   int64
+	t       *testing.T
+	book    *OrderBook
+	ab      *AggregatedBook
+	builder *DepthDeltaBuilder
+	seq     int
+	ts      int64
+	// changed and last describe the delta settled by the most recent command.
+	changed bool
+	last    protocol.DepthDelta
 }
 
 func newDLHarness(t *testing.T) *dlHarness {
 	t.Helper()
 	return &dlHarness{
-		t:    t,
-		book: NewOrderBook(dlMarket, WithPublisher(NewDiscardPublishLog())),
-		ab:   NewAggregatedBook(),
-		ts:   1000,
+		t:       t,
+		book:    NewOrderBook(dlMarket, WithPublisher(NewDiscardPublishLog())),
+		ab:      NewAggregatedBook(),
+		builder: NewDepthDeltaBuilder(),
+		ts:      1000,
 	}
 }
 
@@ -49,19 +55,45 @@ func (h *dlHarness) base() protocol.BaseCommand {
 	}
 }
 
-// apply runs one command, replays its logs into the AggregatedBook, and returns
-// copies of the logs. The copies are taken before Release zeroes the originals.
+// apply runs one command, settles its depth delta into the AggregatedBook, and
+// returns copies of the logs. The copies are taken before Release zeroes the
+// originals.
 func (h *dlHarness) apply(run func(*OrderBook) (*LogBatch, error)) []OrderBookLog {
+	h.t.Helper()
+	copies := h.collect(run)
+	h.settle()
+	return copies
+}
+
+// collect runs one command and feeds its logs to the builder without settling.
+// A test uses it to put several SDK calls under one delta.
+func (h *dlHarness) collect(run func(*OrderBook) (*LogBatch, error)) []OrderBookLog {
 	h.t.Helper()
 	batch, err := run(h.book)
 	require.NoError(h.t, err)
 	copies := make([]OrderBookLog, 0, len(batch.Logs))
 	for _, l := range batch.Logs {
-		require.NoError(h.t, h.ab.Replay(l), "replay %s seq %d", l.Type, l.SeqID)
+		h.builder.Add(l)
 		copies = append(copies, *l)
 	}
 	batch.Release()
 	return copies
+}
+
+// settle reads the book once, as a caller does before the next command changes
+// it, and applies the delta to the AggregatedBook. It requires that a delta exists
+// exactly when the depth version moved.
+func (h *dlHarness) settle() {
+	h.t.Helper()
+	versionBefore := h.ab.SequenceID()
+	h.changed = h.builder.Flush(h.book, &h.last)
+	h.builder.Reset()
+	require.Equal(h.t, h.book.SeqID() != versionBefore, h.changed,
+		"a delta is produced iff the depth version moved")
+	if h.changed {
+		require.NoError(h.t, h.ab.ApplyDelta(&h.last), "apply delta %d", h.last.Seq)
+		require.Equal(h.t, h.book.SeqID(), h.last.Seq, "the delta ends at the book version")
+	}
 }
 
 func (h *dlHarness) place(id string, side Side, price, size, visible int64) []OrderBookLog {
@@ -439,23 +471,17 @@ func TestDepthLogSnapshotWithRestingIceberg(t *testing.T) {
 	require.Equal(t, []string{"105@3"}, dlLevels(h.book.GetDepth(dlDepthLimit).Asks))
 }
 
-// TestAggregatedBookReplayAllocatesNothing pins AC-CP24-5. Replay routes every
-// log through CalculateDepthChange, so the rule must stay a value computation.
-// The logs are built before measuring, so only Replay itself is counted.
-func TestAggregatedBookReplayAllocatesNothing(t *testing.T) {
+// TestDepthDeltaBuilderAllocatesNothing pins the steady-state producer: with a
+// reused DepthDelta, Add and Flush allocate nothing. The logs are built before
+// measuring, and the level they touch keeps its size, so only the producer is
+// counted.
+func TestDepthDeltaBuilderAllocatesNothing(t *testing.T) {
 	const rounds = 1000
-	ab := NewAggregatedBook()
-	require.NoError(t, ab.Replay(&OrderBookLog{
-		SeqID: 1,
-		Type:  protocol.LogTypeOpen,
-		Side:  Buy,
-		Price: udecimal.MustParse("100"),
-		Size:  udecimal.MustParse("50"),
-	}))
+	h := newDLHarness(t)
+	h.place("resting", Buy, 100, 50, 0)
 
-	// Alternating open and cancel keep the level alive, so Replay never has to
-	// create or delete a tree node in the measured loop.
-	// AllocsPerRun makes one warm-up call before the measured rounds.
+	// Alternating open and cancel touch the same level, so every round is the same
+	// shape: one level, sized from the book, which the synthetic logs never change.
 	logs := make([]*OrderBookLog, 0, 2*(rounds+1))
 	seq := uint64(1)
 	for range rounds + 1 {
@@ -472,10 +498,13 @@ func TestAggregatedBookReplayAllocatesNothing(t *testing.T) {
 		})
 	}
 
+	builder := NewDepthDeltaBuilder()
+	var out protocol.DepthDelta
 	next := 0
 	allocs := testing.AllocsPerRun(rounds, func() {
-		require.NoError(t, ab.Replay(logs[next]))
+		builder.Add(logs[next])
 		next++
+		builder.Flush(h.book, &out)
 	})
-	require.Zero(t, allocs, "AggregatedBook.Replay must not allocate")
+	require.Zero(t, allocs, "DepthDeltaBuilder Add and Flush must not allocate with a reused DepthDelta")
 }

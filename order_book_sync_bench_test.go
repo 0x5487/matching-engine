@@ -36,7 +36,6 @@ const (
 	syncBenchSnapLevels   = 1000
 	syncBenchSnapPerLevel = 5
 	syncBenchRestoreBatch = 8
-	syncBenchReplayPairs  = 1024
 	syncBenchDepthN       = 20
 	syncBenchMixLen       = 4096
 	syncBenchMixCross     = 80 // percent of mixed units that are a 1:1 cross
@@ -467,72 +466,61 @@ func BenchmarkSyncS6_GetDepth20(b *testing.B) {
 	require.Zero(b, bad, "%d depth reads were not %d levels per side", bad, syncBenchDepthN)
 }
 
-// syncBenchReplayLogs returns copies of every log the warm book produced, in order, then the logs of pairs 1:1
-// crosses after them. Copies are needed because a LogBatch recycles its logs.
-func syncBenchReplayLogs(tb testing.TB, pairs int) []OrderBookLog {
+// syncBenchFollower returns an AggregatedBook that holds the levels of book at its
+// version, as a follower holds them once it has applied every delta. Lookups on it
+// read the same sizes the book reports.
+func syncBenchFollower(tb testing.TB, book *OrderBook) *AggregatedBook {
 	tb.Helper()
-	book := NewOrderBook(syncBenchMarket)
-	var logs []OrderBookLog
-	keep := func(batch *LogBatch, err error) {
-		require.NoError(tb, err)
-		for _, l := range batch.Logs {
-			logs = append(logs, *l)
-		}
-		batch.Release()
-	}
+	depth := book.GetDepth(syncBenchWarmLevels * 2)
+	ab := NewAggregatedBook()
+	require.NoError(tb, ab.ApplySnapshot(&Snapshot{SequenceID: book.SeqID(), Asks: depth.Asks, Bids: depth.Bids}))
+	return ab
+}
 
-	for _, s := range syncBenchWarmSpecs(syncBenchWarmLevels, syncBenchWarmPerLevel) {
-		batch, err := book.PlaceOrder(syncBenchLimitReq(s, syncBenchUnit))
-		keep(batch, err)
-	}
+// BenchmarkSyncS7_DepthDelta: what trading-poc pays per command to produce the depth delta of the S2 cross. Each
+// order is one call on the warm book; its logs go to a DepthDeltaBuilder, which is settled and reset after the
+// call. One op is one order. The produced delta must end at the book's version.
+func BenchmarkSyncS7_DepthDelta(b *testing.B) {
+	book, _ := syncBenchWarm(b, syncBenchWarmLevels, syncBenchWarmPerLevel)
 	maker := syncBenchLimitReq(syncBenchSpec{
 		id: "s2-maker", user: 1001, side: Sell, price: syncBenchCrossPrice,
 	}, syncBenchUnit)
 	taker := syncBenchLimitReq(syncBenchSpec{
 		id: "s2-taker", user: 2002, side: Buy, price: syncBenchCrossPrice,
 	}, syncBenchUnit)
-	for range pairs {
-		batch, err := book.PlaceOrder(maker)
-		keep(batch, err)
-		batch, err = book.PlaceOrder(taker)
-		keep(batch, err)
-	}
-	return logs
-}
 
-// BenchmarkSyncS7_ReplayCross: AggregatedBook.Replay of the logs the warm book and the S2 crosses produce, into a
-// fresh depth view per chunk (Replay drops a log whose SeqID is already applied, so a view cannot be replayed
-// twice). Timed: Replay of each log. Untimed: the fresh view.
-func BenchmarkSyncS7_ReplayCross(b *testing.B) {
-	logs := syncBenchReplayLogs(b, syncBenchReplayPairs)
-
-	var view *AggregatedBook
-	lastN, bad := 0, 0
-	syncBenchRun(b, len(logs),
-		func(_ int) {
-			view = NewAggregatedBook()
-		},
-		func(n int) {
-			for j := range n {
-				if err := view.Replay(&logs[j]); err != nil {
-					bad++
-				}
+	builder := NewDepthDeltaBuilder()
+	var delta protocol.DepthDelta
+	bad := 0
+	syncBenchRun(b, syncBenchChunk, nil, func(n int) {
+		for j := range n {
+			var batch *LogBatch
+			var err error
+			if j%2 == 0 {
+				batch, err = book.PlaceOrder(maker)
+			} else {
+				batch, err = book.PlaceOrder(taker)
 			}
-			lastN = n
-		},
-	)
-	require.Zero(b, bad, "%d logs failed to replay", bad)
-	require.Equal(b, logs[lastN-1].SeqID, view.SequenceID(), "view did not reach the last log")
+			if err != nil || batch == nil {
+				bad++
+				continue
+			}
+			builder.AddBatch(batch.Logs)
+			batch.Release()
+			if !builder.Flush(book, &delta) || delta.Seq != book.SeqID() {
+				bad++
+			}
+			builder.Reset()
+		}
+	})
+	require.Zero(b, bad, "%d orders produced no delta that ends at the book version", bad)
 }
 
 // BenchmarkSyncS7_DepthLookup: AggregatedBook.Depth(side, price) on a view that holds the warm book's 200 levels
 // per side, 5 orders each. Every lookup must return 5.
 func BenchmarkSyncS7_DepthLookup(b *testing.B) {
-	view := NewAggregatedBook()
-	logs := syncBenchReplayLogs(b, 0)
-	for j := range logs {
-		require.NoError(b, view.Replay(&logs[j]))
-	}
+	book, _ := syncBenchWarm(b, syncBenchWarmLevels, syncBenchWarmPerLevel)
+	view := syncBenchFollower(b, book)
 
 	type lookup struct {
 		side  Side

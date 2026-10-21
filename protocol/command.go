@@ -128,6 +128,9 @@ type AmendOrderRequest struct {
 	OrderID  string           `json:"order_id"`
 	NewPrice udecimal.Decimal `json:"new_price"`
 	NewSize  udecimal.Decimal `json:"new_size"`
+	// StepSize is the unit NewSize must be a whole number of. Zero means no
+	// unit is given and NewSize is not checked, as for a new order.
+	StepSize udecimal.Decimal `json:"step_size"`
 }
 
 // Base returns the embedded BaseCommand.
@@ -244,7 +247,8 @@ func MarshalRequest(req any) ([]byte, error) {
 		}
 		priceStr := r.NewPrice.String()
 		sizeStr := r.NewSize.String()
-		buf := make([]byte, stringLenSize*3+len(r.OrderID)+len(priceStr)+len(sizeStr))
+		stepStr := r.StepSize.String()
+		buf := make([]byte, stringLenSize*4+len(r.OrderID)+len(priceStr)+len(sizeStr)+len(stepStr))
 		offset := 0
 		n, err := writeString(buf[offset:], r.OrderID)
 		if err != nil {
@@ -256,7 +260,12 @@ func MarshalRequest(req any) ([]byte, error) {
 			return nil, err
 		}
 		offset += n
-		_, err = writeString(buf[offset:], sizeStr)
+		n, err = writeString(buf[offset:], sizeStr)
+		if err != nil {
+			return nil, err
+		}
+		offset += n
+		_, err = writeString(buf[offset:], stepStr)
 		if err != nil {
 			return nil, err
 		}
@@ -491,11 +500,20 @@ func UnmarshalRequest(data []byte) (any, error) {
 			return nil, errInvalidDecimal
 		}
 		pOffset += n
-		sizeStr, _, err := readString(pData[pOffset:])
+		sizeStr, n, err := readString(pData[pOffset:])
 		if err != nil {
 			return nil, err
 		}
 		size, err := udecimal.Parse(sizeStr)
+		if err != nil {
+			return nil, errInvalidDecimal
+		}
+		pOffset += n
+		stepStr, _, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		stepSize, err := udecimal.Parse(stepStr)
 		if err != nil {
 			return nil, errInvalidDecimal
 		}
@@ -504,6 +522,7 @@ func UnmarshalRequest(data []byte) (any, error) {
 			OrderID:     orderID,
 			NewPrice:    price,
 			NewSize:     size,
+			StepSize:    stepSize,
 		}, nil
 	case CmdUserEvent:
 		pOffset := 0

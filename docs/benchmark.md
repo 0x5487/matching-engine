@@ -1,7 +1,7 @@
 # Benchmark: synchronous OrderBook suite
 
 This suite measures `*OrderBook` the way trading-poc calls it: one goroutine, with `PlaceOrder`, `CancelOrder`,
-`GetDepth`, `Snapshot`, `Restore` and `AggregatedBook.Replay` called directly. It does not go through
+`GetDepth`, `Snapshot`, `Restore` and `DepthDeltaBuilder` and `AggregatedBook.Depth` called directly. It does not go through
 `MatchingEngine`, the disruptor or a channel. The engine-path benchmarks (`make bench`) are kept for reference at
 the end and are not comparable with these numbers.
 
@@ -40,7 +40,7 @@ Per-scenario profiles were taken with a test binary built by `go test -c`, run w
   that does not fill the named maker, or a cancel that does not find its order). The count must be zero after
   the timer stops, otherwise the benchmark fails.
 - **Units.** `ns/op` is per op of the scenario: S2 per order (maker and taker each count one); S3 per sweep
-  (divide by k for per consumed maker); S4 per cancel; S7 per log replayed or per lookup; S8 per snapshot or per
+  (divide by k for per consumed maker); S4 per cancel; S7 per order produced or per lookup; S8 per snapshot or per
   restore of a 10000-order book; Mixed per unit, where every unit is two book ops.
 - **`allocs/op`.** The testing package truncates `allocs/op` to an integer, so a benchmark that allocates one
   object per two ops reports 0. Use the alloc_objects profiles for exact counts.
@@ -55,8 +55,8 @@ Per-scenario profiles were taken with a test binary built by `go test -c`, run w
 | `BenchmarkSyncS4_CancelDeep` | `CancelOrder` at a random position in 1000 levels x 10 orders per side; refill re-places the same orders |
 | `BenchmarkSyncS5_MarketSlippage` | `GetDepth(1)`, protection price = best ask x 1.01, then a market buy of size 1; refill places sells at the best ask |
 | `BenchmarkSyncS6_GetDepth20` | `GetDepth(20)` on the warm book; read only |
-| `BenchmarkSyncS7_ReplayCross` | `AggregatedBook.Replay` of every log the warm book and 1024 S2 crosses produce, into a fresh view per chunk |
-| `BenchmarkSyncS7_DepthLookup` | `AggregatedBook.Depth(side, price)` over 400 levels of a replayed warm book |
+| `BenchmarkSyncS7_DepthDelta` | `DepthDeltaBuilder` Add, Flush and Reset for each order of the S2 cross on the warm book |
+| `BenchmarkSyncS7_DepthLookup` | `AggregatedBook.Depth(side, price)` over 200 levels per side of a follower built from the warm book |
 | `BenchmarkSyncS8_Snapshot` | `Snapshot()` of 1000 levels x 5 orders per side (10000 orders) |
 | `BenchmarkSyncS8_Restore` | `Restore` of that snapshot into fresh books, 8 per chunk |
 | `BenchmarkSyncMixed` | seeded schedule: 80% crosses (2 ops), 10% rest and cancel (2 ops), 10% market buys with slippage limit and a replenishing sell (2 ops) |
@@ -80,7 +80,6 @@ are shown.
 | S4 CancelDeep | 943.4 ns ±11% | 927.3 ns ±5% | 0 | 0 |
 | S5 MarketSlippage | 1.200 µs ±2% | - | 196 | 7 |
 | S6 GetDepth20 | 6.559 µs ±2% | - | 2.46 KiB | 83 |
-| S7 ReplayCross (per log) | 699.0 ns ±3% | - | 33 | 0 |
 | S7 DepthLookup | 267.7 ns ±7% | 264.2 ns ±4% | 0 | 0 |
 | S8 Snapshot (10k orders) | 1.828 ms ±7% | 1.863 ms ±3% | 2.06 MiB | 10000 |
 | S8 Restore (10k orders) | 5.275 ms ±6% | 5.308 ms ±10% | 3.30 MiB | 12140 |

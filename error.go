@@ -27,6 +27,10 @@ var (
 	ErrUnknownQuery = errors.New("unknown query")
 	// ErrSequenceGap is returned when a sequence gap is detected in order book logs.
 	ErrSequenceGap = errors.New("sequence gap detected")
+	// ErrInvalidDepthDelta is returned when a depth delta is malformed: nil, Seq zero,
+	// a negative size, or a side whose levels are not strictly ordered by price. The
+	// book is left unchanged.
+	ErrInvalidDepthDelta = errors.New("invalid depth delta")
 	// ErrNilSnapshot is returned when attempting to apply a nil snapshot.
 	ErrNilSnapshot = errors.New("snapshot is nil")
 	// ErrOnRebuildNotSet is returned when rebuild is triggered but OnRebuild callback is not set.

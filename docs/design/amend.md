@@ -21,11 +21,12 @@ type AmendOrderCommand struct {
     UserID    uint64 `json:"user_id"`
     NewPrice  string `json:"new_price"`
     NewSize   string `json:"new_size"`
+    StepSize  string `json:"step_size"`
     Timestamp int64  `json:"timestamp"`
 }
 ```
 
-`NewPrice` and `NewSize` are string-encoded and parsed inside the engine. Malformed values are rejected as `invalid_payload`.
+`NewPrice`, `NewSize` and `StepSize` are string-encoded and parsed inside the engine. Malformed values are rejected as `invalid_payload`. `StepSize` is the unit `NewSize` must be a whole number of; zero means no unit is given and the size is not checked, as for a new order.
 
 ## 3. Current Behavior
 
@@ -34,6 +35,7 @@ type AmendOrderCommand struct {
 - order must exist
 - `UserID` must match the owner
 - `NewPrice` and `NewSize` must parse successfully
+- when `StepSize` is non-zero and `NewSize` is not zero, `NewSize` must be a whole number of steps, measured from zero (otherwise `invalid_payload`)
 
 Failures emit `RejectLog` with the appropriate reject reason.
 
@@ -52,7 +54,7 @@ The amend log carries two kinds of size, and they must not be mixed:
 - `Size` and `OldSize` are the order total (visible plus hidden). They are the order's facts, for example for releasing funds.
 - `VisibleRemoved` is the visible (depth) size the amend takes off the book. Losing priority removes the whole visible part at `OldPrice`. An in-place decrease removes only the part that reaches past the hidden size, so a decrease that stays inside the hidden size has `VisibleRemoved` 0.
 
-The depth version advances only when the amend changes visible depth (a price change, a size increase, or a visible decrease). A no-op amend, and a decrease that only touches hidden size, repeat the current version.
+The depth version advances by one, once for the whole call, only when the amend changes visible depth (a price change, a size increase, or a visible decrease). The amend log and the open or match logs of a re-match all carry that one version. A no-op amend, and a decrease that only touches hidden size, repeat the current version.
 
 ### 3.3 Concurrency Model
 

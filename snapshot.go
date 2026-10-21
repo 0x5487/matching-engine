@@ -10,16 +10,16 @@ import (
 // OrderBookSnapshot contains the full state of a single OrderBook.
 type OrderBookSnapshot struct {
 	MarketID string `json:"market_id"`
-	// SeqID is the book depth version this snapshot was taken at. It advances
-	// only when resting size was added or removed, so restoring this value lets
-	// the book resume the version a downstream reader is already following.
+	// SeqID is the book depth version this snapshot was taken at. It advances once
+	// per SDK call that moves visible depth, so restoring this value lets the book
+	// resume the version a downstream reader is already following.
 	//
-	// A snapshot written before that rule counted refusals and admin commands, so
-	// its SeqID is ahead of what a depth reader expects. Restore accepts such a
-	// snapshot - the schema version is unchanged and nothing validates it - and
-	// the first depth log after recovery reports a jump, which costs a downstream
-	// reader one rebuild. Discard snapshots taken before the upgrade, or reset
-	// that reader; see the CHANGELOG.
+	// A snapshot written before that rule advanced once per depth log, so its SeqID
+	// is ahead of what a depth reader expects. Restore accepts such a snapshot - the
+	// schema version is unchanged and nothing validates it - and the first depth
+	// call after recovery reports a jump, which costs a downstream reader one
+	// rebuild. Discard snapshots taken before the upgrade, or reset that reader; see
+	// the CHANGELOG.
 	SeqID        uint64   `json:"seq_id"`
 	LastCmdSeqID uint64   `json:"last_cmd_seq_id"` // Last processed command sequence ID from MQ
 	TradeID      uint64   `json:"trade_id"`        // Current Trade sequence ID

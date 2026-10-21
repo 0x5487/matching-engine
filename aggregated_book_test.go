@@ -1,10 +1,11 @@
 package match
 
 import (
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/quagmt/udecimal"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/0x5487/matching-engine/protocol"
@@ -63,431 +64,6 @@ func TestAggregatedBook_GetDepth(t *testing.T) {
 	})
 }
 
-func TestAggregatedBook_Replay_Open(t *testing.T) {
-	ab := NewAggregatedBook()
-
-	// 1. Buy order opens at price 100 with size 10
-	err := ab.Replay(&OrderBookLog{
-		SeqID: 1,
-		Type:  protocol.LogTypeOpen,
-		Side:  Buy,
-		Price: udecimal.MustParse("100"),
-		Size:  udecimal.MustParse("10"),
-	})
-	require.NoError(t, err)
-
-	// 2. Another buy order opens at price 100 with size 5
-	err = ab.Replay(&OrderBookLog{
-		SeqID: 2,
-		Type:  protocol.LogTypeOpen,
-		Side:  Buy,
-		Price: udecimal.MustParse("100"),
-		Size:  udecimal.MustParse("5"),
-	})
-	require.NoError(t, err)
-
-	// 3. Sell order opens at price 105 with size 8
-	err = ab.Replay(&OrderBookLog{
-		SeqID: 3,
-		Type:  protocol.LogTypeOpen,
-		Side:  Sell,
-		Price: udecimal.MustParse("105"),
-		Size:  udecimal.MustParse("8"),
-	})
-	require.NoError(t, err)
-
-	require.Equal(t, uint64(3), ab.SequenceID())
-
-	bidDepth, err := ab.Depth(Buy, udecimal.MustParse("100"))
-	require.NoError(t, err)
-	require.Equal(t, udecimal.MustParse("15"), bidDepth)
-
-	askDepth, err := ab.Depth(Sell, udecimal.MustParse("105"))
-	require.NoError(t, err)
-	require.Equal(t, udecimal.MustParse("8"), askDepth)
-
-	depth := ab.GetDepth(10)
-	require.Len(t, depth.Asks, 1)
-	require.Equal(t, "105", depth.Asks[0].Price)
-	require.Equal(t, "8", depth.Asks[0].Size)
-
-	require.Len(t, depth.Bids, 1)
-	require.Equal(t, "100", depth.Bids[0].Price)
-	require.Equal(t, "15", depth.Bids[0].Size)
-}
-
-func TestAggregatedBook_Replay_Match(t *testing.T) {
-	ab := NewAggregatedBook()
-
-	// Initial book: Sell 10 @ 105, Buy 20 @ 100
-	require.NoError(t, ab.Replay(&OrderBookLog{
-		SeqID: 1,
-		Type:  protocol.LogTypeOpen,
-		Side:  Sell,
-		Price: udecimal.MustParse("105"),
-		Size:  udecimal.MustParse("10"),
-	}))
-	require.NoError(t, ab.Replay(&OrderBookLog{
-		SeqID: 2,
-		Type:  protocol.LogTypeOpen,
-		Side:  Buy,
-		Price: udecimal.MustParse("100"),
-		Size:  udecimal.MustParse("20"),
-	}))
-
-	// 1. Taker Buy matches 4 @ 105 against maker Ask
-	require.NoError(t, ab.Replay(&OrderBookLog{
-		SeqID: 3,
-		Type:  protocol.LogTypeMatch,
-		Side:  Buy, // taker side
-		Price: udecimal.MustParse("105"),
-		Size:  udecimal.MustParse("4"),
-	}))
-
-	askDepth, err := ab.Depth(Sell, udecimal.MustParse("105"))
-	require.NoError(t, err)
-	require.Equal(t, udecimal.MustParse("6"), askDepth)
-
-	// 2. Taker Buy matches remaining 6 @ 105 against maker Ask
-	require.NoError(t, ab.Replay(&OrderBookLog{
-		SeqID: 4,
-		Type:  protocol.LogTypeMatch,
-		Side:  Buy,
-		Price: udecimal.MustParse("105"),
-		Size:  udecimal.MustParse("6"),
-	}))
-
-	askDepth, err = ab.Depth(Sell, udecimal.MustParse("105"))
-	require.NoError(t, err)
-	require.Equal(t, udecimal.Zero, askDepth)
-
-	depth := ab.GetDepth(10)
-	require.Empty(t, depth.Asks)
-
-	// 3. Taker Sell matches 15 @ 100 against maker Bid
-	require.NoError(t, ab.Replay(&OrderBookLog{
-		SeqID: 5,
-		Type:  protocol.LogTypeMatch,
-		Side:  Sell, // taker side
-		Price: udecimal.MustParse("100"),
-		Size:  udecimal.MustParse("15"),
-	}))
-
-	bidDepth, err := ab.Depth(Buy, udecimal.MustParse("100"))
-	require.NoError(t, err)
-	require.Equal(t, udecimal.MustParse("5"), bidDepth)
-
-	depth = ab.GetDepth(10)
-	require.Len(t, depth.Bids, 1)
-	require.Equal(t, "100", depth.Bids[0].Price)
-	require.Equal(t, "5", depth.Bids[0].Size)
-}
-
-func TestAggregatedBook_Replay_Cancel(t *testing.T) {
-	ab := NewAggregatedBook()
-
-	// Initial book: Buy 15 @ 100, Sell 10 @ 105
-	require.NoError(t, ab.Replay(&OrderBookLog{
-		SeqID: 1,
-		Type:  protocol.LogTypeOpen,
-		Side:  Buy,
-		Price: udecimal.MustParse("100"),
-		Size:  udecimal.MustParse("15"),
-	}))
-	require.NoError(t, ab.Replay(&OrderBookLog{
-		SeqID: 2,
-		Type:  protocol.LogTypeOpen,
-		Side:  Sell,
-		Price: udecimal.MustParse("105"),
-		Size:  udecimal.MustParse("10"),
-	}))
-
-	// 1. Cancel partial size on Buy side (cancel 5 out of 15). A plain order is all
-	// visible, so the visible removal equals the canceled size.
-	require.NoError(t, ab.Replay(&OrderBookLog{
-		SeqID:          3,
-		Type:           protocol.LogTypeCancel,
-		Side:           Buy,
-		Price:          udecimal.MustParse("100"),
-		Size:           udecimal.MustParse("5"),
-		VisibleRemoved: udecimal.MustParse("5"),
-	}))
-
-	bidDepth, err := ab.Depth(Buy, udecimal.MustParse("100"))
-	require.NoError(t, err)
-	require.Equal(t, udecimal.MustParse("10"), bidDepth)
-
-	// 2. Cancel full size on Sell side (cancel 10 out of 10)
-	require.NoError(t, ab.Replay(&OrderBookLog{
-		SeqID:          4,
-		Type:           protocol.LogTypeCancel,
-		Side:           Sell,
-		Price:          udecimal.MustParse("105"),
-		Size:           udecimal.MustParse("10"),
-		VisibleRemoved: udecimal.MustParse("10"),
-	}))
-
-	askDepth, err := ab.Depth(Sell, udecimal.MustParse("105"))
-	require.NoError(t, err)
-	require.Equal(t, udecimal.Zero, askDepth)
-
-	depth := ab.GetDepth(10)
-	require.Empty(t, depth.Asks)
-}
-
-func TestAggregatedBook_Replay_Amend(t *testing.T) {
-	t.Run("amend size at same price", func(t *testing.T) {
-		ab := NewAggregatedBook()
-
-		require.NoError(t, ab.Replay(&OrderBookLog{
-			SeqID: 1,
-			Type:  protocol.LogTypeOpen,
-			Side:  Buy,
-			Price: udecimal.MustParse("100"),
-			Size:  udecimal.MustParse("10"),
-		}))
-
-		// Amend increase size from 10 to 15. Losing priority removes the whole
-		// visible part (10) at the old price; the re-entry at 15 is the Open log
-		// that the book emits next.
-		require.NoError(t, ab.Replay(&OrderBookLog{
-			SeqID:          2,
-			Type:           protocol.LogTypeAmend,
-			Side:           Buy,
-			Price:          udecimal.MustParse("100"),
-			Size:           udecimal.MustParse("15"),
-			OldPrice:       udecimal.MustParse("100"),
-			OldSize:        udecimal.MustParse("10"),
-			VisibleRemoved: udecimal.MustParse("10"),
-		}))
-		require.NoError(t, ab.Replay(&OrderBookLog{
-			SeqID: 3,
-			Type:  protocol.LogTypeOpen,
-			Side:  Buy,
-			Price: udecimal.MustParse("100"),
-			Size:  udecimal.MustParse("15"),
-		}))
-
-		depth, err := ab.Depth(Buy, udecimal.MustParse("100"))
-		require.NoError(t, err)
-		require.Equal(t, udecimal.MustParse("15"), depth)
-
-		// Amend decrease size from 15 to 6 in place: 9 of visible size leaves.
-		require.NoError(t, ab.Replay(&OrderBookLog{
-			SeqID:          4,
-			Type:           protocol.LogTypeAmend,
-			Side:           Buy,
-			Price:          udecimal.MustParse("100"),
-			Size:           udecimal.MustParse("6"),
-			OldPrice:       udecimal.MustParse("100"),
-			OldSize:        udecimal.MustParse("15"),
-			VisibleRemoved: udecimal.MustParse("9"),
-		}))
-
-		depth, err = ab.Depth(Buy, udecimal.MustParse("100"))
-		require.NoError(t, err)
-		require.Equal(t, udecimal.MustParse("6"), depth)
-	})
-
-	t.Run("amend price moves order to new price level", func(t *testing.T) {
-		ab := NewAggregatedBook()
-
-		require.NoError(t, ab.Replay(&OrderBookLog{
-			SeqID: 1,
-			Type:  protocol.LogTypeOpen,
-			Side:  Buy,
-			Price: udecimal.MustParse("90"),
-			Size:  udecimal.MustParse("5"),
-		}))
-
-		// Amend price from 90 (size 5) to 95 (size 8). The amend removes the old
-		// visible part at 90; the order's place at 95 is the Open log that follows.
-		require.NoError(t, ab.Replay(&OrderBookLog{
-			SeqID:          2,
-			Type:           protocol.LogTypeAmend,
-			Side:           Buy,
-			Price:          udecimal.MustParse("95"),
-			Size:           udecimal.MustParse("8"),
-			OldPrice:       udecimal.MustParse("90"),
-			OldSize:        udecimal.MustParse("5"),
-			VisibleRemoved: udecimal.MustParse("5"),
-		}))
-		require.NoError(t, ab.Replay(&OrderBookLog{
-			SeqID: 3,
-			Type:  protocol.LogTypeOpen,
-			Side:  Buy,
-			Price: udecimal.MustParse("95"),
-			Size:  udecimal.MustParse("8"),
-		}))
-
-		oldDepth, err := ab.Depth(Buy, udecimal.MustParse("90"))
-		require.NoError(t, err)
-		require.Equal(t, udecimal.Zero, oldDepth)
-
-		newDepth, err := ab.Depth(Buy, udecimal.MustParse("95"))
-		require.NoError(t, err)
-		require.Equal(t, udecimal.MustParse("8"), newDepth)
-	})
-}
-
-func TestAggregatedBook_Replay_DeduplicationAndGaps(t *testing.T) {
-	t.Run("deduplication skips already processed sequence IDs", func(t *testing.T) {
-		ab := NewAggregatedBook()
-		snap := &Snapshot{
-			SequenceID: 10,
-			Bids: []*protocol.DepthItem{
-				{Price: "100", Size: "20"},
-			},
-		}
-		require.NoError(t, ab.ApplySnapshot(snap))
-
-		// Older log (SeqID <= 10) should be ignored
-		err := ab.Replay(&OrderBookLog{
-			SeqID: 5,
-			Type:  protocol.LogTypeOpen,
-			Side:  Buy,
-			Price: udecimal.MustParse("100"),
-			Size:  udecimal.MustParse("10"),
-		})
-		require.NoError(t, err)
-		require.Equal(t, uint64(10), ab.SequenceID())
-		depth, _ := ab.Depth(Buy, udecimal.MustParse("100"))
-		require.Equal(t, udecimal.MustParse("20"), depth)
-
-		// Next log (SeqID == 11) should be applied
-		err = ab.Replay(&OrderBookLog{
-			SeqID: 11,
-			Type:  protocol.LogTypeOpen,
-			Side:  Buy,
-			Price: udecimal.MustParse("100"),
-			Size:  udecimal.MustParse("10"),
-		})
-		require.NoError(t, err)
-		require.Equal(t, uint64(11), ab.SequenceID())
-		depth, _ = ab.Depth(Buy, udecimal.MustParse("100"))
-		require.Equal(t, udecimal.MustParse("30"), depth)
-
-		// Duplicate log (SeqID == 11) should be ignored
-		err = ab.Replay(&OrderBookLog{
-			SeqID: 11,
-			Type:  protocol.LogTypeOpen,
-			Side:  Buy,
-			Price: udecimal.MustParse("100"),
-			Size:  udecimal.MustParse("10"),
-		})
-		require.NoError(t, err)
-		require.Equal(t, uint64(11), ab.SequenceID())
-		depth, _ = ab.Depth(Buy, udecimal.MustParse("100"))
-		require.Equal(t, udecimal.MustParse("30"), depth)
-	})
-
-	t.Run("sequence gap without OnRebuild returns ErrSequenceGap", func(t *testing.T) {
-		ab := NewAggregatedBook()
-		snap := &Snapshot{
-			SequenceID: 10,
-		}
-		require.NoError(t, ab.ApplySnapshot(snap))
-
-		// Log with SeqID 15 when current is 10 (gap: expected 11)
-		err := ab.Replay(&OrderBookLog{
-			SeqID: 15,
-			Type:  protocol.LogTypeOpen,
-			Side:  Buy,
-			Price: udecimal.MustParse("100"),
-			Size:  udecimal.MustParse("10"),
-		})
-		require.ErrorIs(t, err, ErrSequenceGap)
-		require.Equal(t, uint64(10), ab.SequenceID())
-	})
-
-	t.Run("sequence gap triggers OnRebuild and covers gap", func(t *testing.T) {
-		ab := NewAggregatedBook()
-		snap := &Snapshot{
-			SequenceID: 10,
-		}
-		require.NoError(t, ab.ApplySnapshot(snap))
-
-		rebuildCalled := false
-		ab.OnRebuild = func() (*Snapshot, error) {
-			rebuildCalled = true
-			return &Snapshot{
-				SequenceID: 20,
-				Bids: []*protocol.DepthItem{
-					{Price: "100", Size: "50"},
-				},
-			}, nil
-		}
-
-		// Incoming log SeqID 15 triggers rebuild, new snapshot SeqID is 20 (>= 15)
-		err := ab.Replay(&OrderBookLog{
-			SeqID: 15,
-			Type:  protocol.LogTypeOpen,
-			Side:  Buy,
-			Price: udecimal.MustParse("100"),
-			Size:  udecimal.MustParse("10"),
-		})
-		require.NoError(t, err)
-		require.True(t, rebuildCalled)
-		require.Equal(t, uint64(20), ab.SequenceID())
-		depth, _ := ab.Depth(Buy, udecimal.MustParse("100"))
-		require.Equal(t, udecimal.MustParse("50"), depth)
-	})
-
-	t.Run("sequence gap triggers OnRebuild and applies immediate next log", func(t *testing.T) {
-		ab := NewAggregatedBook()
-		snap := &Snapshot{
-			SequenceID: 10,
-		}
-		require.NoError(t, ab.ApplySnapshot(snap))
-
-		ab.OnRebuild = func() (*Snapshot, error) {
-			return &Snapshot{
-				SequenceID: 14,
-				Bids: []*protocol.DepthItem{
-					{Price: "100", Size: "40"},
-				},
-			}, nil
-		}
-
-		// Incoming log SeqID 15 triggers rebuild, snapshot is at 14, log 15 is then applied
-		err := ab.Replay(&OrderBookLog{
-			SeqID: 15,
-			Type:  protocol.LogTypeOpen,
-			Side:  Buy,
-			Price: udecimal.MustParse("100"),
-			Size:  udecimal.MustParse("10"),
-		})
-		require.NoError(t, err)
-		require.Equal(t, uint64(15), ab.SequenceID())
-		depth, _ := ab.Depth(Buy, udecimal.MustParse("100"))
-		require.Equal(t, udecimal.MustParse("50"), depth)
-	})
-
-	t.Run("sequence gap triggers OnRebuild but gap remains returns ErrSequenceGap", func(t *testing.T) {
-		ab := NewAggregatedBook()
-		snap := &Snapshot{
-			SequenceID: 10,
-		}
-		require.NoError(t, ab.ApplySnapshot(snap))
-
-		ab.OnRebuild = func() (*Snapshot, error) {
-			return &Snapshot{
-				SequenceID: 12, // snapshot only caught up to 12
-			}, nil
-		}
-
-		// Incoming log SeqID 25 triggers rebuild, but 25 > 12 + 1
-		err := ab.Replay(&OrderBookLog{
-			SeqID: 25,
-			Type:  protocol.LogTypeOpen,
-			Side:  Buy,
-			Price: udecimal.MustParse("100"),
-			Size:  udecimal.MustParse("10"),
-		})
-		require.ErrorIs(t, err, ErrSequenceGap)
-	})
-}
-
 func TestAggregatedBook_EdgeCases(t *testing.T) {
 	t.Run("nil snapshot returns ErrNilSnapshot", func(t *testing.T) {
 		ab := NewAggregatedBook()
@@ -495,44 +71,19 @@ func TestAggregatedBook_EdgeCases(t *testing.T) {
 		require.ErrorIs(t, err, ErrNilSnapshot)
 	})
 
-	t.Run("nil log in Replay returns error", func(t *testing.T) {
-		ab := NewAggregatedBook()
-		err := ab.Replay(nil)
-		require.Error(t, err)
-	})
-
 	t.Run("Rebuild without callback returns ErrOnRebuildNotSet", func(t *testing.T) {
 		ab := NewAggregatedBook()
 		err := ab.Rebuild()
 		require.ErrorIs(t, err, ErrOnRebuildNotSet)
 	})
-
-	t.Run("a refusal carries no version and leaves the book alone", func(t *testing.T) {
-		// The engine emits refusals and admin logs with SeqID 0, because they
-		// move no depth. Replaying one must not advance the version.
-		ab := NewAggregatedBook()
-		require.NoError(t, ab.Replay(&OrderBookLog{
-			SeqID: 1,
-			Type:  protocol.LogTypeOpen,
-			Side:  Buy,
-			Price: udecimal.MustParse("100"),
-			Size:  udecimal.MustParse("10"),
-		}))
-
-		require.NoError(t, ab.Replay(&OrderBookLog{
-			SeqID: 0,
-			Type:  protocol.LogTypeReject,
-		}))
-
-		require.Equal(t, uint64(1), ab.SequenceID(),
-			"a refusal moves no depth, so the version must not advance")
-		depth, err := ab.Depth(Buy, udecimal.MustParse("100"))
-		require.NoError(t, err)
-		require.Equal(t, udecimal.MustParse("10"), depth)
-	})
 }
 
+// TestAggregatedBook_Concurrency_Race runs one writer applying deltas against
+// several readers. The writer ends the readers when it is done, so the test waits
+// on the event, not on a timer.
 func TestAggregatedBook_Concurrency_Race(t *testing.T) {
+	t.Parallel()
+
 	ab := NewAggregatedBook()
 	require.NoError(t, ab.ApplySnapshot(&Snapshot{
 		SequenceID: 0,
@@ -545,11 +96,9 @@ func TestAggregatedBook_Concurrency_Race(t *testing.T) {
 	}))
 
 	done := make(chan struct{})
-	numWriters := 2
-	numReaders := 4
-
-	for range numReaders {
-		go func() {
+	var readers sync.WaitGroup
+	for range 4 {
+		readers.Go(func() {
 			for {
 				select {
 				case <-done:
@@ -560,43 +109,37 @@ func TestAggregatedBook_Concurrency_Race(t *testing.T) {
 					_, _ = ab.Depth(Sell, udecimal.MustParse("105"))
 				}
 			}
-		}()
+		})
 	}
 
-	for range numWriters {
-		go func() {
-			for seq := uint64(1); seq <= 200; seq++ {
-				// Replay matching or open
-				_ = ab.Replay(&OrderBookLog{
-					SeqID: seq,
-					Type:  protocol.LogTypeOpen,
-					Side:  Buy,
-					Price: udecimal.MustParse("100"),
-					Size:  udecimal.MustParse("1"),
-				})
-			}
-		}()
-	}
-
-	time.Sleep(50 * time.Millisecond)
+	// One writer: a feed is applied in order by one goroutine.
+	var writer sync.WaitGroup
+	writer.Go(func() {
+		for seq := uint64(1); seq <= 200; seq++ {
+			assert.NoError(t, ab.ApplyDelta(&protocol.DepthDelta{
+				Seq:  seq,
+				Bids: []protocol.DepthLevel{lvl("100", udecimal.MustFromInt64(int64(seq), 0).String())},
+			}))
+		}
+	})
+	writer.Wait()
 	close(done)
+	readers.Wait()
+
+	require.Equal(t, uint64(200), ab.SequenceID())
 }
 
-func BenchmarkAggregatedBook_Replay_Open(b *testing.B) {
+func BenchmarkAggregatedBook_ApplyDelta(b *testing.B) {
 	ab := NewAggregatedBook()
 	price := udecimal.MustParse("100")
 	size := udecimal.MustParse("1")
+	d := protocol.DepthDelta{Bids: []protocol.DepthLevel{{Price: price, Size: size}}}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := range b.N {
-		_ = ab.Replay(&OrderBookLog{
-			SeqID: uint64(i + 1),
-			Type:  protocol.LogTypeOpen,
-			Side:  Buy,
-			Price: price,
-			Size:  size,
-		})
+		d.Seq = uint64(i + 1)
+		_ = ab.ApplyDelta(&d)
 	}
 }
 
@@ -604,12 +147,9 @@ func BenchmarkAggregatedBook_GetDepth(b *testing.B) {
 	ab := NewAggregatedBook()
 	for i := range 50 {
 		p := udecimal.MustFromInt64(int64(100+i), 0)
-		_ = ab.Replay(&OrderBookLog{
-			SeqID: uint64(i + 1),
-			Type:  protocol.LogTypeOpen,
-			Side:  Sell,
-			Price: p,
-			Size:  udecimal.MustFromInt64(10, 0),
+		_ = ab.ApplyDelta(&protocol.DepthDelta{
+			Seq:  uint64(i + 1),
+			Asks: []protocol.DepthLevel{{Price: p, Size: udecimal.MustFromInt64(10, 0)}},
 		})
 	}
 

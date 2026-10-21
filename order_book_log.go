@@ -51,23 +51,21 @@ func releaseLogBatchContainer(b *LogBatch) {
 // OrderBookLog is one thing the order book did. Only depth-changing events
 // carry a SeqID; see the field's own note.
 type OrderBookLog struct {
-	// SeqID is the book depth version at the moment this log was produced.
+	// SeqID is the book depth version this log belongs to.
 	//
-	// It advances only when visible resting size was added or removed: an open,
-	// a match, a cancel or an amend. Hidden iceberg size is not depth. Refusals and admin commands leave it alone,
-	// because they move no depth - a rejected order produces a new version with
-	// identical levels, which tells a reader nothing.
+	// One SDK call that moves visible depth advances the version by exactly one,
+	// and every depth log of that call carries the new value: an open, a match, a
+	// cancel or an amend, including the replenish open and the re-match of a
+	// priority-losing amend. Hidden iceberg size is not depth, so a call that moves
+	// only hidden size does not advance it. Refusals and admin commands carry 0.
 	//
-	// The consequence worth knowing: a consumer may forward only the
-	// depth-changing logs and still see a contiguous version. That is what makes
-	// AggregatedBook usable downstream, since it treats a version jump as a lost
-	// update. Counting refusals here would make every rejected order look like a
-	// gap.
+	// A no-op amend, and a shrink that stays inside the hidden size, move no visible
+	// depth; they carry the current version, which the call did not advance.
 	//
-	// Two encodings mean "no depth change", and a consumer filtering on SeqID
-	// drops both correctly: 0 for a refusal or admin log, and a repeat of the
-	// current version for an amend that moves no visible size (a no-op amend, or
-	// a shrink that stays inside the hidden size).
+	// The consequence worth knowing: a consumer that follows depth through
+	// DepthDeltaBuilder and AggregatedBook.ApplyDelta sees one version per call, with
+	// no version used up by a refusal, so a version jump is a lost update and not
+	// the side effect of a rejected order.
 	//
 	// It is not a timestamp and not comparable across markets - the counter
 	// belongs to one order book.
@@ -75,8 +73,8 @@ type OrderBookLog struct {
 	// One exception shares this field's name but not its meaning:
 	// MatchingEngine.handleUserEvent builds a user event with the upstream
 	// message queue's command sequence, so for LogTypeUser this is that
-	// sequence rather than a depth version. AggregatedBook must not be fed user
-	// events; see its Replay doc.
+	// sequence rather than a depth version. A user event moves no depth, so
+	// DepthDeltaBuilder ignores it.
 	SeqID     uint64           `json:"seq_id"`
 	CommandID string           `json:"command_id"`
 	EngineID  string           `json:"engine_id"`

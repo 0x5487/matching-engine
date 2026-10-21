@@ -6,8 +6,8 @@ import (
 
 // CalculateDepthChange is the only rule for how a book log moves depth. It returns
 // the side, the price level and the signed visible size change that the log causes.
-// AggregatedBook.Replay applies this and nothing else, so a consumer and the
-// matching book cannot disagree about the same log.
+// DepthDeltaBuilder applies this and nothing else, so a consumer and the matching
+// book cannot disagree about the same log.
 //
 // Size and OldSize are order totals (the visible part plus the hidden part) and
 // are not read here. Depth counts only visible size, so the removal side uses

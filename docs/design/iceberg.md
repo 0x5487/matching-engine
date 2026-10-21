@@ -111,6 +111,10 @@ Current behavior:
 - size increase loses priority
 - cancel removes both visible and hidden remainder from engine state
 
+## 5.1 Fill-or-Kill Feasibility
+
+A fill-or-kill order is feasible when the resting visible plus hidden size on its side, within its price bound, covers its size. The hidden size counts because a taker that eats a visible part reloads the hidden part at the same price during the same call. Each price unit keeps its visible total and its hidden total, and both are maintained on insert, removal, replenish and in-place amend. A fill-or-kill that is short even counting hidden size is refused `insufficient_size`.
+
 ## 6. Snapshot and Restore
 
 Iceberg state is part of snapshot persistence.

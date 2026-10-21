@@ -1,6 +1,8 @@
 package match
 
 import (
+	"sync"
+
 	"github.com/quagmt/udecimal"
 
 	"github.com/0x5487/matching-engine/protocol"
@@ -13,11 +15,47 @@ type UpdateEvent struct {
 	Size  string `json:"size"`
 }
 
+// priceUnit is the set of orders resting at one price, in time priority.
 type priceUnit struct {
+	// totalSize is the visible size of the level: what depth reports and what a
+	// taker sees before any iceberg reloads.
 	totalSize udecimal.Decimal
-	head      *Order
-	tail      *Order
-	count     int64
+	// hiddenSize is the iceberg size behind the visible part. It is not depth, but
+	// it is size a taker can reach, since a replenish brings it forward.
+	hiddenSize udecimal.Decimal
+	head       *Order
+	tail       *Order
+	count      int64
+}
+
+// priceUnitPool recycles the price units of levels that empty. A recycled unit is
+// reset in acquirePriceUnit, so nothing of the level it held survives.
+var priceUnitPool = sync.Pool{
+	New: func() any {
+		return &priceUnit{}
+	},
+}
+
+// acquirePriceUnit returns an empty price unit holding order as its only order.
+func acquirePriceUnit(order *Order) *priceUnit {
+	unit, ok := priceUnitPool.Get().(*priceUnit)
+	if !ok {
+		unit = &priceUnit{}
+	}
+	*unit = priceUnit{
+		totalSize:  order.Size,
+		hiddenSize: order.HiddenSize,
+		head:       order,
+		tail:       order,
+		count:      1,
+	}
+	return unit
+}
+
+// releasePriceUnit returns a unit whose level has emptied to the pool.
+func releasePriceUnit(unit *priceUnit) {
+	*unit = priceUnit{}
+	priceUnitPool.Put(unit)
 }
 
 type queue struct {
@@ -115,16 +153,12 @@ func (q *queue) doInsert(order *Order, isFront bool) {
 		}
 
 		unit.totalSize = unit.totalSize.Add(order.Size)
+		unit.hiddenSize = unit.hiddenSize.Add(order.HiddenSize)
 		unit.count++
 		q.orders[order.ID] = order
 		q.totalOrders++
 	} else {
-		unit := &priceUnit{
-			head:      order,
-			tail:      order,
-			totalSize: order.Size,
-			count:     1,
-		}
+		unit := acquirePriceUnit(order)
 		order.next = nil
 		order.prev = nil
 
@@ -168,6 +202,7 @@ func (q *queue) removeOrder(price udecimal.Decimal, id string) {
 	order.prev = nil
 
 	unit.totalSize = unit.totalSize.Sub(order.Size)
+	unit.hiddenSize = unit.hiddenSize.Sub(order.HiddenSize)
 	unit.count--
 	delete(q.orders, id)
 	q.totalOrders--
@@ -175,14 +210,16 @@ func (q *queue) removeOrder(price udecimal.Decimal, id string) {
 	if unit.count == 0 {
 		q.orderedPrices.Delete(price)
 		delete(q.priceList, price)
+		releasePriceUnit(unit)
 		q.depths--
 	}
 }
 
-// updateOrderSize updates the size of an order in-place.
-// This is used when the size is decreased, preserving the order's priority.
-// The caller should NOT update order.Size before calling this, or this method will not update unit.totalSize correctly.
-func (q *queue) updateOrderSize(id string, newSize udecimal.Decimal) {
+// resizeOrder sets the visible and hidden size of an order in place, keeping its
+// place in the queue, and moves the level totals by the same amount. This is used
+// when an amend shrinks an order without moving it. The caller must not have
+// changed order.Size or order.HiddenSize before calling this.
+func (q *queue) resizeOrder(id string, newSize, newHidden udecimal.Decimal) {
 	order, ok := q.orders[id]
 	if !ok {
 		return
@@ -190,10 +227,25 @@ func (q *queue) updateOrderSize(id string, newSize udecimal.Decimal) {
 
 	unit, ok := q.priceList[order.Price]
 	if ok {
-		diff := order.Size.Sub(newSize)
-		unit.totalSize = unit.totalSize.Sub(diff)
-		order.Size = newSize
+		unit.totalSize = unit.totalSize.Sub(order.Size).Add(newSize)
+		unit.hiddenSize = unit.hiddenSize.Sub(order.HiddenSize).Add(newHidden)
 	}
+	order.Size = newSize
+	order.HiddenSize = newHidden
+}
+
+// levelSize returns the visible size at price, zero when no order rests there.
+func (q *queue) levelSize(price udecimal.Decimal) udecimal.Decimal {
+	unit, ok := q.priceList[price]
+	if !ok {
+		return udecimal.Zero
+	}
+	return unit.totalSize
+}
+
+// bestPrice returns the price at the front of the queue, false when it is empty.
+func (q *queue) bestPrice() (udecimal.Decimal, bool) {
+	return q.orderedPrices.Min()
 }
 
 // peekHeadOrder returns the order at the front of the queue (best price) without removing it.

@@ -30,6 +30,7 @@ var dlDiffRequiredKinds = []string{
 	"amend_down_hidden_only", "amend_down_into_visible", "amend_stale", "amend_match",
 	"reject_duplicate", "reject_invalid",
 	"snapshot_restore",
+	"fok_hidden_fill", "fok_insufficient",
 }
 
 var dlDiffRequiredLogTypes = []protocol.LogType{
@@ -145,26 +146,33 @@ type dlDiffRun struct {
 	control *OrderBook
 	ab      *AggregatedBook
 	ref     *dlRef
-	ids     []string
-	nextID  int
-	ts      int64
-	kinds   map[string]int
-	logs    map[protocol.LogType]int
+	// builder turns the active book's logs into deltas. Even seeds hand it one
+	// LogBatch per command, odd seeds one log at a time, so both forms are checked.
+	builder  *DepthDeltaBuilder
+	perBatch bool
+	delta    protocol.DepthDelta
+	ids      []string
+	nextID   int
+	ts       int64
+	kinds    map[string]int
+	logs     map[protocol.LogType]int
 }
 
 func newDLDiffRun(t *testing.T, seed uint64) *dlDiffRun {
 	t.Helper()
 	return &dlDiffRun{
-		t:       t,
-		seed:    seed,
-		rng:     rand.New(rand.NewPCG(seed, seed*2+1)), //nolint:gosec // fixed seed: every run replays the same stream
-		active:  NewOrderBook(dlMarket, WithPublisher(NewDiscardPublishLog())),
-		control: NewOrderBook(dlMarket, WithPublisher(NewDiscardPublishLog())),
-		ab:      NewAggregatedBook(),
-		ref:     &dlRef{levels: map[dlRefKey]dlRefLevel{}},
-		ts:      1000,
-		kinds:   map[string]int{},
-		logs:    map[protocol.LogType]int{},
+		t:        t,
+		seed:     seed,
+		rng:      rand.New(rand.NewPCG(seed, seed*2+1)), //nolint:gosec // fixed seed: every run replays the same stream
+		active:   NewOrderBook(dlMarket, WithPublisher(NewDiscardPublishLog())),
+		control:  NewOrderBook(dlMarket, WithPublisher(NewDiscardPublishLog())),
+		ab:       NewAggregatedBook(),
+		ref:      &dlRef{levels: map[dlRefKey]dlRefLevel{}},
+		builder:  NewDepthDeltaBuilder(),
+		perBatch: seed%2 == 0,
+		ts:       1000,
+		kinds:    map[string]int{},
+		logs:     map[protocol.LogType]int{},
 	}
 }
 
@@ -443,13 +451,73 @@ func (r *dlDiffRun) snapshotAndRestore() {
 	r.kinds["snapshot_restore"]++
 }
 
+// fokFeasibility reads the resting book before a FOK runs. It returns the size the
+// FOK can take counting hidden iceberg size, and the size visible size alone
+// covers. Both are brute-force sums over the resting orders, not the book's own
+// level totals, so the book's accounting is what gets checked.
+func (r *dlDiffRun) fokFeasibility(req *protocol.PlaceOrderRequest) (total, visible udecimal.Decimal) {
+	target := r.active.askQueue
+	if req.Side == Sell {
+		target = r.active.bidQueue
+	}
+	total, visible = udecimal.Zero, udecimal.Zero
+	for _, o := range target.orders {
+		if req.Side == Buy && req.Price.LessThan(o.Price) {
+			continue
+		}
+		if req.Side == Sell && req.Price.GreaterThan(o.Price) {
+			continue
+		}
+		total = total.Add(o.Size).Add(o.HiddenSize)
+		visible = visible.Add(o.Size)
+	}
+	return total, visible
+}
+
+// checkFOK holds a FOK to the brute-force sum: it fills in full when the resting
+// visible plus hidden size covers it, and is refused, with no fill, when it does
+// not.
+func (r *dlDiffRun) checkFOK(
+	desc string,
+	req *protocol.PlaceOrderRequest,
+	total, visible, filled udecimal.Decimal,
+	reject bool,
+) {
+	size := req.Size
+	if total.GreaterThanOrEqual(size) {
+		require.False(r.t, reject, "FOK covered by visible+hidden size was refused, %s", desc)
+		require.True(
+			r.t,
+			filled.Equal(size),
+			"FOK covered by visible+hidden size filled %s of %s, %s",
+			filled,
+			size,
+			desc,
+		)
+		if visible.LessThan(size) {
+			r.kinds["fok_hidden_fill"]++
+		}
+		return
+	}
+	require.True(r.t, reject, "FOK short of visible+hidden size was not refused, %s", desc)
+	require.True(r.t, filled.IsZero(), "refused FOK filled %s, %s", filled, desc)
+	r.kinds["fok_insufficient"]++
+}
+
 // execute sends one command to both books and checks, after it, that the
-// snapshot path logged exactly what the control logged, and that the
-// AggregatedBook, the reference and the OrderBook agree on every level and on
-// the version.
+// snapshot path logged exactly what the control logged, that the delta the
+// builder settles applies to the AggregatedBook, and that the AggregatedBook, the
+// reference and the OrderBook agree on every level and on the version.
 func (r *dlDiffRun) execute(step int, cmd dlDiffCmd) {
 	t := r.t
 	desc := fmt.Sprintf("seed=%d step=%d kind=%s order=%s", r.seed, step, cmd.kind, cmd.orderID)
+
+	var fok *protocol.PlaceOrderRequest
+	var fokTotal, fokVisible udecimal.Decimal
+	if cmd.place != nil && cmd.place.OrderType == FOK {
+		fok = cmd.place
+		fokTotal, fokVisible = r.fokFeasibility(fok)
+	}
 
 	versionBefore := r.active.SeqID()
 	batch, err := cmd.run(r.active)
@@ -465,27 +533,56 @@ func (r *dlDiffRun) execute(step int, cmd dlDiffCmd) {
 
 	sawMatch := false
 	movesDepth := false
+	filled := udecimal.Zero
+	reject := false
 	for _, l := range batch.Logs {
 		r.logs[l.Type]++
 		if !CalculateDepthChange(l).SizeDiff.IsZero() {
 			movesDepth = true
 		}
-		if l.Type == protocol.LogTypeMatch {
+		switch l.Type {
+		case protocol.LogTypeMatch:
 			sawMatch = true
+			if fok != nil {
+				filled = filled.Add(l.Size)
+			}
+		case protocol.LogTypeReject:
+			reject = true
+		case protocol.LogTypeOpen:
+			if l.OrderID != cmd.orderID {
+				r.kinds["replenish_open"]++
+			}
+		default:
+			// Cancels, amends and refusals need no tally here.
 		}
-		if l.Type == protocol.LogTypeOpen && l.OrderID != cmd.orderID {
-			r.kinds["replenish_open"]++
-		}
-		require.NoError(t, r.ab.Replay(l), "replay, %s, log %s seq %d", desc, dlLogKey(l), l.SeqID)
 		r.ref.apply(t, l)
+	}
+	if !r.perBatch {
+		for _, l := range batch.Logs {
+			r.builder.Add(l)
+		}
+	} else {
+		r.builder.AddBatch(batch.Logs)
 	}
 	if sawMatch && cmd.amend != nil {
 		r.kinds["amend_match"]++
 	}
+	if fok != nil {
+		r.checkFOK(desc, fok, fokTotal, fokVisible, filled, reject)
+	}
+
 	// The version moves exactly when the command moves visible depth. A shrink
-	// inside the hidden size, a refusal and a no-op amend all leave it alone.
+	// inside the hidden size, a refusal and a no-op amend all leave it alone, and
+	// only a command that moves it produces a delta.
+	changed := r.builder.Flush(r.active, &r.delta)
+	r.builder.Reset()
+	require.Equal(t, movesDepth, changed, "a delta exists iff visible depth moves, %s", desc)
 	require.Equal(t, movesDepth, r.active.SeqID() != versionBefore,
 		"depth version must move iff visible depth moves, %s", desc)
+	if changed {
+		require.NoError(t, r.ab.ApplyDelta(&r.delta), "apply delta, %s", desc)
+		require.Equal(t, r.active.SeqID(), r.delta.Seq, "delta ends at the book version, %s", desc)
+	}
 
 	batch.Release()
 	ctrl.Release()

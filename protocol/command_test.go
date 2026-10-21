@@ -451,3 +451,29 @@ func TestPlaceOrderRequest_MarketProtectionPriceRoundTrip(t *testing.T) {
 		require.Equal(t, "100", decoded.Price.String())
 	})
 }
+
+// TestAmendOrderStepSizeRoundTrip pins the binary encoding of the amend step: the
+// StepSize that goes in comes back out, zero included.
+func TestAmendOrderStepSizeRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	for _, step := range []string{"0", "0.0001", "1"} {
+		in := &AmendOrderRequest{
+			BaseCommand: BaseCommand{SeqID: 7, CommandID: "cmd-amend", UserID: 3, MarketID: "BTC-USDT", Timestamp: 99},
+			OrderID:     "order-9",
+			NewPrice:    udecimal.MustParse("101.5"),
+			NewSize:     udecimal.MustParse("2.5"),
+			StepSize:    udecimal.MustParse(step),
+		}
+		raw, err := MarshalRequest(in)
+		require.NoError(t, err)
+		out, err := UnmarshalRequest(raw)
+		require.NoError(t, err)
+		got, ok := out.(*AmendOrderRequest)
+		require.True(t, ok)
+		require.Equal(t, in.OrderID, got.OrderID)
+		require.Equal(t, in.NewPrice.String(), got.NewPrice.String())
+		require.Equal(t, in.NewSize.String(), got.NewSize.String())
+		require.Equal(t, in.StepSize.String(), got.StepSize.String(), "step %s", step)
+	}
+}

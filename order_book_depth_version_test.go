@@ -404,17 +404,19 @@ func TestSnapshotCarriesDepthVersion(t *testing.T) {
 // TestAggregatedBookSurvivesFilteredDepthLogs is why the redefinition matters
 // beyond this repository.
 //
-// AggregatedBook reports a gap when a log's version jumps past the one it
+// AggregatedBook reports a gap when a delta's version jumps past the one it
 // expects. Had refusals and admin commands kept consuming the sequence, any
-// consumer forwarding only depth changes - which is what a market data
-// projection does - would see a jump on every refused order, rebuild the whole
-// book each time, and never catch up.
+// consumer following only depth changes - which is what a market data projection
+// does - would see a jump on every refused order, rebuild the whole book each
+// time, and never catch up.
 //
-// With the redefinition, dropping non-depth logs leaves the version contiguous,
-// so the projection stays live and is never rebuilt.
+// With the redefinition, a projection fed by DepthDeltaBuilder never sees a
+// refusal as a version, so its version stays contiguous and it is never rebuilt.
 func TestAggregatedBookSurvivesFilteredDepthLogs(t *testing.T) {
 	book := depthVersionBook(depthVersionMarket)
 	ab := NewAggregatedBook()
+	builder := NewDepthDeltaBuilder()
+	var delta protocol.DepthDelta
 
 	rebuilds := 0
 	ab.OnRebuild = func() (*Snapshot, error) {
@@ -423,8 +425,8 @@ func TestAggregatedBookSurvivesFilteredDepthLogs(t *testing.T) {
 	}
 
 	forwarded := 0
-	// step runs one command and forwards only the logs that moved depth, which
-	// is all a depth projection is allowed to send.
+	// step runs one command, feeds its depth logs to the builder and applies the
+	// delta it settles. A refusal or an admin log is not forwarded at all.
 	step := func(run func() (*LogBatch, error)) {
 		t.Helper()
 		batch, err := run()
@@ -433,13 +435,17 @@ func TestAggregatedBookSurvivesFilteredDepthLogs(t *testing.T) {
 			switch log.Type {
 			case protocol.LogTypeOpen, protocol.LogTypeMatch,
 				protocol.LogTypeCancel, protocol.LogTypeAmend:
-				require.NoError(t, ab.Replay(log))
+				builder.Add(log)
 				forwarded++
 			default:
 				// Refused or administrative: dropped on the floor.
 			}
 		}
 		batch.Release()
+		if builder.Flush(book, &delta) {
+			require.NoError(t, ab.ApplyDelta(&delta))
+		}
+		builder.Reset()
 	}
 
 	step(func() (*LogBatch, error) {
@@ -512,14 +518,11 @@ func TestEnginePathKeepsDepthVersionContiguous(t *testing.T) {
 	logs := pub.recorded()
 	require.NotEmpty(t, logs, "the engine must have published something")
 
-	ab := NewAggregatedBook()
-	rebuilds := 0
-	ab.OnRebuild = func() (*Snapshot, error) {
-		rebuilds++
-		return nil, errors.New("the projection must not need to rebuild")
-	}
-
+	// The published stream carries no call boundaries, so the check is on the
+	// versions it shows: the distinct depth versions must be 1, 2, 3, ... with
+	// no jump, which is what a projection that follows the stream needs.
 	forwarded, unversioned := 0, 0
+	var versions []uint64
 	for i, log := range logs {
 		if log.SeqID == 0 {
 			unversioned++
@@ -528,8 +531,10 @@ func TestEnginePathKeepsDepthVersionContiguous(t *testing.T) {
 		switch log.Type {
 		case protocol.LogTypeOpen, protocol.LogTypeMatch,
 			protocol.LogTypeCancel, protocol.LogTypeAmend:
-			require.NoErrorf(t, ab.Replay(log), "forwarded log %d of type %v", i, log.Type)
 			forwarded++
+			if n := len(versions); n == 0 || versions[n-1] != log.SeqID {
+				versions = append(versions, log.SeqID)
+			}
 		default:
 			t.Errorf("log %d has type %v but carries depth version %d",
 				i, log.Type, log.SeqID)
@@ -538,8 +543,10 @@ func TestEnginePathKeepsDepthVersionContiguous(t *testing.T) {
 
 	assert.Positive(t, forwarded, "the resting order must have produced a versioned log")
 	assert.Positive(t, unversioned, "market_created and the refusal must carry no version")
-	assert.Zero(t, rebuilds,
-		"the first depth log of an engine-created market must not look like a lost update")
+	for i, v := range versions {
+		assert.Equal(t, uint64(i+1), v,
+			"the first depth log of an engine-created market must not look like a lost update")
+	}
 }
 
 func countRefusals(logs []*OrderBookLog) int {

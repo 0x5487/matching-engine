@@ -1,7 +1,7 @@
 package match
 
 import (
-	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -26,8 +26,8 @@ type RebuildFunc func() (*Snapshot, error)
 
 // AggregatedBook maintains a simplified view of the order book,
 // tracking only price levels and their aggregated sizes (depth).
-// It is designed for downstream services that need to rebuild
-// order book state from BookLog events received via message queue.
+// It is designed for downstream services that follow an OrderBook through the
+// DepthDelta feed produced by DepthDeltaBuilder and applied with ApplyDelta.
 type AggregatedBook struct {
 	mu    sync.RWMutex
 	seqID atomic.Uint64 // Last processed SequenceID for gap detection and deduplication
@@ -36,7 +36,7 @@ type AggregatedBook struct {
 
 	// OnRebuild is called when a rebuild is needed (e.g., sequence gap detected).
 	// The callback should return a snapshot from which the book will be rebuilt.
-	// This must be set before calling Rebuild() or Replay() with gap detection.
+	// This must be set before calling Rebuild(), or before ApplyDelta meets a gap.
 	OnRebuild RebuildFunc
 }
 
@@ -56,8 +56,8 @@ func NewAggregatedBook() *AggregatedBook {
 	}
 }
 
-// SequenceID returns the last processed sequence ID.
-// Used for synchronization and gap detection during rebuild.
+// SequenceID returns the depth version the book has reached.
+// Used for synchronization and gap detection when a delta is applied.
 func (ab *AggregatedBook) SequenceID() uint64 {
 	return ab.seqID.Load()
 }
@@ -109,108 +109,6 @@ func (ab *AggregatedBook) ApplySnapshot(snapshot *Snapshot) error {
 	ab.seqID.Store(snapshot.SequenceID)
 
 	return nil
-}
-
-// Replay applies a BookLog event to update the aggregated book state.
-// Returns an error if a sequence gap is detected and rebuild fails.
-//
-// Only depth-changing logs (open, match, cancel, amend) carry a depth version,
-// and only those move the book. A consumer may therefore forward just those and
-// still hand Replay a contiguous version, which is what keeps a version jump
-// meaningful as a lost-update signal.
-//
-// Two log kinds must not be replayed here. A refusal or admin log carries no
-// depth version (0), so Replay drops it as already-seen. A LogTypeUser log
-// carries the upstream message queue's command sequence in the same field, and
-// unless that sequence happens to be zero it reads as a gap and triggers a
-// rebuild. A consumer projecting depth should filter both out.
-func (ab *AggregatedBook) Replay(log *OrderBookLog) error {
-	if log == nil {
-		return errors.New("order book log is nil")
-	}
-
-	currentSeq := ab.seqID.Load()
-
-	// 1. Deduplication: skip if log has already been applied or included in snapshot
-	if currentSeq > 0 && log.SeqID <= currentSeq {
-		return nil
-	}
-
-	// 2. Gap detection: if log.SeqID is ahead of expected sequence
-	expectedSeq := currentSeq + 1
-	if currentSeq == 0 && log.SeqID == 0 {
-		expectedSeq = 0
-	}
-	if log.SeqID > expectedSeq {
-		if ab.OnRebuild == nil {
-			return ErrSequenceGap
-		}
-		if err := ab.Rebuild(); err != nil {
-			return err
-		}
-		currentSeq = ab.seqID.Load()
-		if log.SeqID <= currentSeq {
-			return nil
-		}
-		if log.SeqID > currentSeq+1 {
-			return ErrSequenceGap
-		}
-	}
-
-	ab.mu.Lock()
-	defer ab.mu.Unlock()
-
-	// Double-check deduplication under lock
-	if current := ab.seqID.Load(); current > 0 && log.SeqID <= current {
-		return nil
-	}
-
-	ab.seqID.Store(log.SeqID)
-
-	// The depth rule lives in CalculateDepthChange and is shared with every other
-	// reader of the log. Replay only applies its result to the right side.
-	change := CalculateDepthChange(log)
-	tree := ab.ask
-	if change.Side == Buy {
-		tree = ab.bid
-	}
-	switch change.SizeDiff.Sign() {
-	case 1:
-		addDepth(tree, change.Price, change.SizeDiff)
-	case -1:
-		deductDepth(tree, change.Price, change.SizeDiff.Neg())
-	default:
-		// Zero change: the log does not move visible depth.
-	}
-
-	return nil
-}
-
-func addDepth(tree *treemap.TreeMap[udecimal.Decimal, udecimal.Decimal], price, size udecimal.Decimal) {
-	if size.IsZero() {
-		return
-	}
-	currentSize, found := tree.Get(price)
-	if found {
-		tree.Set(price, currentSize.Add(size))
-	} else {
-		tree.Set(price, size)
-	}
-}
-
-func deductDepth(tree *treemap.TreeMap[udecimal.Decimal, udecimal.Decimal], price, size udecimal.Decimal) {
-	if size.IsZero() {
-		return
-	}
-	currentSize, found := tree.Get(price)
-	if !found {
-		return
-	}
-	if currentSize.LessThanOrEqual(size) {
-		tree.Del(price)
-	} else {
-		tree.Set(price, currentSize.Sub(size))
-	}
 }
 
 // Depth returns the aggregated size at a specific price level for the given side.
@@ -267,4 +165,114 @@ func (ab *AggregatedBook) GetDepth(limit int) *protocol.GetDepthResponse {
 		Asks:     asks,
 		Bids:     bids,
 	}
+}
+
+// ApplyDelta applies a DepthDelta produced by an OrderBook. The delta's Seq is
+// compared with the version the book has reached, cur:
+//
+//   - Seq == cur+1: each level is set to its size, zero removes the level, and the
+//     version becomes Seq.
+//   - Seq <= cur: the delta was applied already. Nothing changes and nil is returned.
+//   - Seq > cur+1: a version was missed. Without OnRebuild, ErrSequenceGap is
+//     returned. With it, the snapshot is fetched and applied only if it reaches
+//     Seq-1 or further, and the delta is then applied or skipped as above. A
+//     snapshot that still leaves a gap is not applied, and ErrSequenceGap is
+//     returned with the book unchanged.
+//
+// A malformed delta (nil, Seq zero, a negative size, a side whose levels are not
+// strictly ordered, which also rules out a repeated price) returns
+// ErrInvalidDepthDelta before anything is read or changed. Every error leaves the
+// book unchanged.
+//
+// ApplyDelta is for one writer at a time, as the feed it follows is ordered.
+func (ab *AggregatedBook) ApplyDelta(d *protocol.DepthDelta) error {
+	if err := checkDepthDelta(d); err != nil {
+		return err
+	}
+
+	ab.mu.Lock()
+	cur := ab.seqID.Load()
+	switch {
+	case d.Seq <= cur:
+		ab.mu.Unlock()
+		return nil
+	case d.Seq == cur+1:
+		applyDeltaLevels(ab, d)
+		ab.mu.Unlock()
+		return nil
+	}
+	ab.mu.Unlock()
+
+	return ab.applyAcrossGap(d)
+}
+
+// applyAcrossGap handles a delta that starts past the version after the book's.
+// The snapshot is taken first and applied only if it connects the delta, so a
+// snapshot that does not is never half-applied.
+func (ab *AggregatedBook) applyAcrossGap(d *protocol.DepthDelta) error {
+	if ab.OnRebuild == nil {
+		return ErrSequenceGap
+	}
+	snap, err := ab.OnRebuild()
+	if err != nil {
+		return err
+	}
+	if snap == nil {
+		return ErrNilSnapshot
+	}
+	if d.Seq > snap.SequenceID+1 {
+		return ErrSequenceGap
+	}
+	if err := ab.ApplySnapshot(snap); err != nil {
+		return err
+	}
+	// The snapshot now reaches d.Seq-1 or further, so this is a resend or the
+	// next version and cannot gap again.
+	return ab.ApplyDelta(d)
+}
+
+// applyDeltaLevels sets the levels of d and the version. The caller holds the lock
+// and has checked that d.Seq is the version after the book's.
+func applyDeltaLevels(ab *AggregatedBook, d *protocol.DepthDelta) {
+	setDeltaLevels(ab.ask, d.Asks)
+	setDeltaLevels(ab.bid, d.Bids)
+	ab.seqID.Store(d.Seq)
+}
+
+func setDeltaLevels(tree *treemap.TreeMap[udecimal.Decimal, udecimal.Decimal], levels []protocol.DepthLevel) {
+	for _, l := range levels {
+		if l.Size.IsZero() {
+			tree.Del(l.Price)
+		} else {
+			tree.Set(l.Price, l.Size)
+		}
+	}
+}
+
+// checkDepthDelta reports whether d is well formed. It changes nothing.
+func checkDepthDelta(d *protocol.DepthDelta) error {
+	if d == nil {
+		return fmt.Errorf("%w: nil delta", ErrInvalidDepthDelta)
+	}
+	if d.Seq == 0 {
+		return fmt.Errorf("%w: seq is zero", ErrInvalidDepthDelta)
+	}
+	if err := checkDeltaSide(d.Asks, "asks", func(a, b udecimal.Decimal) bool { return a.LessThan(b) }); err != nil {
+		return err
+	}
+	return checkDeltaSide(d.Bids, "bids", func(a, b udecimal.Decimal) bool { return a.GreaterThan(b) })
+}
+
+// checkDeltaSide requires every size to be non-negative and the prices to be in
+// strict order: before reports whether a comes before b, so equal prices fail too.
+func checkDeltaSide(levels []protocol.DepthLevel, name string, before func(a, b udecimal.Decimal) bool) error {
+	for i, l := range levels {
+		if l.Size.LessThan(udecimal.Zero) {
+			return fmt.Errorf("%w: %s level %s has negative size %s", ErrInvalidDepthDelta, name, l.Price, l.Size)
+		}
+		if i > 0 && !before(levels[i-1].Price, l.Price) {
+			return fmt.Errorf("%w: %s not strictly ordered at %s", ErrInvalidDepthDelta, name, l.Price)
+		}
+	}
+	return nil
 }
