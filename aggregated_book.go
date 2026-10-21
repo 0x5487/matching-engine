@@ -3,7 +3,6 @@ package match
 import (
 	"fmt"
 	"sync"
-	"sync/atomic"
 
 	"github.com/igrmk/treemap/v2"
 	"github.com/quagmt/udecimal"
@@ -11,28 +10,28 @@ import (
 	"github.com/0x5487/matching-engine/protocol"
 )
 
-// Snapshot represents a point-in-time state of the order book.
-// Used to initialize or reset the AggregatedBook during rebuild.
-type Snapshot struct {
-	SequenceID uint64                // The sequence ID at which this snapshot was taken
-	Asks       []*protocol.DepthItem // Ask side depth levels, sorted by price ascending
-	Bids       []*protocol.DepthItem // Bid side depth levels, sorted by price descending
-}
-
 // RebuildFunc is the callback type for fetching a snapshot during rebuild.
 // Implementations should fetch the current order book snapshot from external sources
 // (e.g., Redis, Database, API) and return it for the AggregatedBook to apply.
-type RebuildFunc func() (*Snapshot, error)
+//
+// A snapshot is a protocol.DepthDelta that lists every level of the book: Seq is
+// the version the snapshot was taken at, and the levels are the same type ApplyDelta
+// takes.
+type RebuildFunc func() (*protocol.DepthDelta, error)
 
 // AggregatedBook maintains a simplified view of the order book,
 // tracking only price levels and their aggregated sizes (depth).
 // It is designed for downstream services that follow an OrderBook through the
 // DepthDelta feed produced by DepthDeltaBuilder and applied with ApplyDelta.
+//
+// One lock guards the version and the levels together, so a reader never sees a
+// version that the levels do not have. The levels are treemaps compared by value,
+// so 100 and 100.00 are one level.
 type AggregatedBook struct {
-	mu    sync.RWMutex
-	seqID atomic.Uint64 // Last processed SequenceID for gap detection and deduplication
-	ask   *treemap.TreeMap[udecimal.Decimal, udecimal.Decimal]
-	bid   *treemap.TreeMap[udecimal.Decimal, udecimal.Decimal]
+	mu  sync.RWMutex
+	seq uint64 // Depth version the book has reached; guarded by mu
+	ask *treemap.TreeMap[udecimal.Decimal, udecimal.Decimal]
+	bid *treemap.TreeMap[udecimal.Decimal, udecimal.Decimal]
 
 	// OnRebuild is called when a rebuild is needed (e.g., sequence gap detected).
 	// The callback should return a snapshot from which the book will be rebuilt.
@@ -59,7 +58,9 @@ func NewAggregatedBook() *AggregatedBook {
 // SequenceID returns the depth version the book has reached.
 // Used for synchronization and gap detection when a delta is applied.
 func (ab *AggregatedBook) SequenceID() uint64 {
-	return ab.seqID.Load()
+	ab.mu.RLock()
+	defer ab.mu.RUnlock()
+	return ab.seq
 }
 
 // Rebuild triggers a manual rebuild by calling the OnRebuild callback.
@@ -77,36 +78,26 @@ func (ab *AggregatedBook) Rebuild() error {
 	return ab.ApplySnapshot(snapshot)
 }
 
-// ApplySnapshot resets the aggregated book state from a snapshot.
-// This clears all existing data and applies the snapshot's depth levels.
-func (ab *AggregatedBook) ApplySnapshot(snapshot *Snapshot) error {
+// ApplySnapshot resets the aggregated book state from a snapshot: the levels it
+// lists and the version it carries. A snapshot is checked as a whole before anything
+// changes. A negative size, or a price that appears twice on one side, returns
+// ErrInvalidDepthDelta and leaves the book as it was. A zero size lists no level.
+func (ab *AggregatedBook) ApplySnapshot(snapshot *protocol.DepthDelta) error {
 	if snapshot == nil {
 		return ErrNilSnapshot
+	}
+	if err := checkDeltaSides(snapshot); err != nil {
+		return err
 	}
 
 	ab.mu.Lock()
 	defer ab.mu.Unlock()
 
-	// Clear existing data
 	ab.ask.Clear()
 	ab.bid.Clear()
-
-	// Apply ask levels
-	for _, level := range snapshot.Asks {
-		p, _ := udecimal.Parse(level.Price)
-		s, _ := udecimal.Parse(level.Size)
-		ab.ask.Set(p, s)
-	}
-
-	// Apply bid levels
-	for _, level := range snapshot.Bids {
-		p, _ := udecimal.Parse(level.Price)
-		s, _ := udecimal.Parse(level.Size)
-		ab.bid.Set(p, s)
-	}
-
-	// Update sequence ID
-	ab.seqID.Store(snapshot.SequenceID)
+	setDeltaLevels(ab.ask, snapshot.Asks)
+	setDeltaLevels(ab.bid, snapshot.Bids)
+	ab.seq = snapshot.Seq
 
 	return nil
 }
@@ -138,7 +129,7 @@ func (ab *AggregatedBook) GetDepth(limit int) *protocol.GetDepthResponse {
 
 	if limit <= 0 {
 		return &protocol.GetDepthResponse{
-			UpdateID: ab.seqID.Load(),
+			UpdateID: ab.seq,
 			Asks:     []*protocol.DepthItem{},
 			Bids:     []*protocol.DepthItem{},
 		}
@@ -161,7 +152,7 @@ func (ab *AggregatedBook) GetDepth(limit int) *protocol.GetDepthResponse {
 	}
 
 	return &protocol.GetDepthResponse{
-		UpdateID: ab.seqID.Load(),
+		UpdateID: ab.seq,
 		Asks:     asks,
 		Bids:     bids,
 	}
@@ -191,7 +182,7 @@ func (ab *AggregatedBook) ApplyDelta(d *protocol.DepthDelta) error {
 	}
 
 	ab.mu.Lock()
-	cur := ab.seqID.Load()
+	cur := ab.seq
 	switch {
 	case d.Seq <= cur:
 		ab.mu.Unlock()
@@ -220,7 +211,7 @@ func (ab *AggregatedBook) applyAcrossGap(d *protocol.DepthDelta) error {
 	if snap == nil {
 		return ErrNilSnapshot
 	}
-	if d.Seq > snap.SequenceID+1 {
+	if d.Seq > snap.Seq+1 {
 		return ErrSequenceGap
 	}
 	if err := ab.ApplySnapshot(snap); err != nil {
@@ -236,7 +227,7 @@ func (ab *AggregatedBook) applyAcrossGap(d *protocol.DepthDelta) error {
 func applyDeltaLevels(ab *AggregatedBook, d *protocol.DepthDelta) {
 	setDeltaLevels(ab.ask, d.Asks)
 	setDeltaLevels(ab.bid, d.Bids)
-	ab.seqID.Store(d.Seq)
+	ab.seq = d.Seq
 }
 
 func setDeltaLevels(tree *treemap.TreeMap[udecimal.Decimal, udecimal.Decimal], levels []protocol.DepthLevel) {
@@ -257,6 +248,13 @@ func checkDepthDelta(d *protocol.DepthDelta) error {
 	if d.Seq == 0 {
 		return fmt.Errorf("%w: seq is zero", ErrInvalidDepthDelta)
 	}
+	return checkDeltaSides(d)
+}
+
+// checkDeltaSides reports whether the levels of d are well formed: sizes are not
+// negative, and each side is strictly ordered, which also rules out a price written
+// two ways. It does not look at Seq, which a snapshot may carry as zero.
+func checkDeltaSides(d *protocol.DepthDelta) error {
 	if err := checkDeltaSide(d.Asks, "asks", func(a, b udecimal.Decimal) bool { return a.LessThan(b) }); err != nil {
 		return err
 	}

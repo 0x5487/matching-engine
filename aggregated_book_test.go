@@ -14,17 +14,17 @@ import (
 func TestAggregatedBook_GetDepth(t *testing.T) {
 	ab := NewAggregatedBook()
 
-	snap := &Snapshot{
-		SequenceID: 42,
-		Asks: []*protocol.DepthItem{
-			{Price: "101.5", Size: "10.0"},
-			{Price: "102.0", Size: "20.0"},
-			{Price: "103.0", Size: "30.0"},
+	snap := &protocol.DepthDelta{
+		Seq: 42,
+		Asks: []protocol.DepthLevel{
+			lvl("101.5", "10.0"),
+			lvl("102.0", "20.0"),
+			lvl("103.0", "30.0"),
 		},
-		Bids: []*protocol.DepthItem{
-			{Price: "100.0", Size: "15.0"},
-			{Price: "99.0", Size: "25.0"},
-			{Price: "98.5", Size: "35.0"},
+		Bids: []protocol.DepthLevel{
+			lvl("100.0", "15.0"),
+			lvl("99.0", "25.0"),
+			lvl("98.5", "35.0"),
 		},
 	}
 
@@ -85,14 +85,10 @@ func TestAggregatedBook_Concurrency_Race(t *testing.T) {
 	t.Parallel()
 
 	ab := NewAggregatedBook()
-	require.NoError(t, ab.ApplySnapshot(&Snapshot{
-		SequenceID: 0,
-		Asks: []*protocol.DepthItem{
-			{Price: "105", Size: "100"},
-		},
-		Bids: []*protocol.DepthItem{
-			{Price: "100", Size: "100"},
-		},
+	require.NoError(t, ab.ApplySnapshot(&protocol.DepthDelta{
+		Seq:  0,
+		Asks: []protocol.DepthLevel{lvl("105", "100")},
+		Bids: []protocol.DepthLevel{lvl("100", "100")},
 	}))
 
 	done := make(chan struct{})
@@ -105,6 +101,7 @@ func TestAggregatedBook_Concurrency_Race(t *testing.T) {
 					return
 				default:
 					_ = ab.GetDepth(10)
+					_ = ab.SequenceID()
 					_, _ = ab.Depth(Buy, udecimal.MustParse("100"))
 					_, _ = ab.Depth(Sell, udecimal.MustParse("105"))
 				}

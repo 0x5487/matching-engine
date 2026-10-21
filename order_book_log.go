@@ -70,12 +70,12 @@ type OrderBookLog struct {
 	// It is not a timestamp and not comparable across markets - the counter
 	// belongs to one order book.
 	//
-	// One exception shares this field's name but not its meaning:
-	// MatchingEngine.handleUserEvent builds a user event with the upstream
-	// message queue's command sequence, so for LogTypeUser this is that
-	// sequence rather than a depth version. A user event moves no depth, so
-	// DepthDeltaBuilder ignores it.
-	SeqID     uint64           `json:"seq_id"`
+	// SeqID is 0 for LogTypeUser: a user event moves no depth and has no depth
+	// version. Its upstream command sequence is in CmdSeqID.
+	SeqID uint64 `json:"seq_id"`
+	// CmdSeqID is the upstream message queue's command sequence. Only a user event
+	// carries it, from MatchingEngine.handleUserEvent; every other log carries 0.
+	CmdSeqID  uint64           `json:"cmd_seq_id,omitempty"`
 	CommandID string           `json:"command_id"`
 	EngineID  string           `json:"engine_id"`
 	TradeID   uint64           `json:"trade_id,omitempty"`
@@ -351,11 +351,12 @@ func NewRejectLog(
 	return log
 }
 
-// NewUserEventLog creates a new OrderBookLog for a generic user event.
+// NewUserEventLog creates a new OrderBookLog for a generic user event. cmdSeqID is
+// the upstream command sequence; the event's SeqID stays 0.
 //
 //nolint:revive // argument-limit
 func NewUserEventLog(
-	seqID uint64,
+	cmdSeqID uint64,
 	commandID, engineID string,
 	userID uint64,
 	eventType string,
@@ -364,7 +365,7 @@ func NewUserEventLog(
 	timestamp int64,
 ) *OrderBookLog {
 	log := acquireBookLog()
-	log.SeqID = seqID
+	log.CmdSeqID = cmdSeqID
 	log.CommandID = commandID
 	log.EngineID = engineID
 	log.Type = protocol.LogTypeUser

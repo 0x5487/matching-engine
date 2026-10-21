@@ -62,8 +62,8 @@ type queue struct {
 	side          Side
 	totalOrders   int64
 	depths        int64
-	orderedPrices *structure.PooledSkiplist       // Ordered price levels
-	priceList     map[udecimal.Decimal]*priceUnit // Quick lookup by price
+	orderedPrices *structure.PooledSkiplist // Ordered price levels
+	priceList     map[priceKey]*priceUnit   // Quick lookup by canonical price; see priceKeyOf
 	orders        map[string]*Order
 }
 
@@ -86,7 +86,7 @@ func newBuyerQueue(seeds ...int64) *queue {
 			seed,
 			structure.SkiplistOptions{Descending: true}, // Highest first
 		),
-		priceList: make(map[udecimal.Decimal]*priceUnit),
+		priceList: make(map[priceKey]*priceUnit),
 		orders:    make(map[string]*Order),
 	}
 }
@@ -104,7 +104,7 @@ func newSellerQueue(seeds ...int64) *queue {
 			defaultPriceCapacity,
 			seed,
 		), // Default: Lowest first
-		priceList: make(map[udecimal.Decimal]*priceUnit),
+		priceList: make(map[priceKey]*priceUnit),
 		orders:    make(map[string]*Order),
 	}
 }
@@ -126,7 +126,8 @@ func (q *queue) pushFront(order *Order) {
 
 //nolint:revive // flag-parameter: internal method used by insertOrder and pushFront
 func (q *queue) doInsert(order *Order, isFront bool) {
-	unit, ok := q.priceList[order.Price]
+	key := priceKeyOf(order.Price)
+	unit, ok := q.priceList[key]
 	if ok {
 		if isFront {
 			// Push Front
@@ -163,7 +164,7 @@ func (q *queue) doInsert(order *Order, isFront bool) {
 		order.prev = nil
 
 		q.orders[order.ID] = order
-		q.priceList[order.Price] = unit
+		q.priceList[key] = unit
 		q.orderedPrices.MustInsert(order.Price)
 
 		q.totalOrders++
@@ -174,7 +175,8 @@ func (q *queue) doInsert(order *Order, isFront bool) {
 // removeOrder removes an order from the queue by price and ID.
 // It also cleans up the price unit if it becomes empty.
 func (q *queue) removeOrder(price udecimal.Decimal, id string) {
-	unit, ok := q.priceList[price]
+	key := priceKeyOf(price)
+	unit, ok := q.priceList[key]
 	if !ok {
 		return
 	}
@@ -209,7 +211,7 @@ func (q *queue) removeOrder(price udecimal.Decimal, id string) {
 
 	if unit.count == 0 {
 		q.orderedPrices.Delete(price)
-		delete(q.priceList, price)
+		delete(q.priceList, key)
 		releasePriceUnit(unit)
 		q.depths--
 	}
@@ -225,7 +227,7 @@ func (q *queue) resizeOrder(id string, newSize, newHidden udecimal.Decimal) {
 		return
 	}
 
-	unit, ok := q.priceList[order.Price]
+	unit, ok := q.priceList[priceKeyOf(order.Price)]
 	if ok {
 		unit.totalSize = unit.totalSize.Sub(order.Size).Add(newSize)
 		unit.hiddenSize = unit.hiddenSize.Sub(order.HiddenSize).Add(newHidden)
@@ -236,7 +238,7 @@ func (q *queue) resizeOrder(id string, newSize, newHidden udecimal.Decimal) {
 
 // levelSize returns the visible size at price, zero when no order rests there.
 func (q *queue) levelSize(price udecimal.Decimal) udecimal.Decimal {
-	unit, ok := q.priceList[price]
+	unit, ok := q.priceList[priceKeyOf(price)]
 	if !ok {
 		return udecimal.Zero
 	}
@@ -255,7 +257,7 @@ func (q *queue) peekHeadOrder() *Order {
 		return nil
 	}
 
-	unit, ok := q.priceList[bestPrice]
+	unit, ok := q.priceList[priceKeyOf(bestPrice)]
 	if !ok {
 		return nil
 	}
@@ -291,7 +293,7 @@ func (q *queue) toSnapshot() []*Order {
 	iter := q.orderedPrices.Iterator()
 	for iter.Valid() {
 		price := iter.Price()
-		unit, ok := q.priceList[price]
+		unit, ok := q.priceList[priceKeyOf(price)]
 		if !ok {
 			iter.Next()
 			continue
@@ -353,7 +355,7 @@ func (q *queue) priceIterator() *queuePriceIterator {
 // queuePriceIterator iterates over price levels in the queue.
 type queuePriceIterator struct {
 	skipIter  *structure.SkiplistIterator
-	priceList map[udecimal.Decimal]*priceUnit
+	priceList map[priceKey]*priceUnit
 }
 
 // Valid returns true if the iterator points to a valid price level.
@@ -372,5 +374,5 @@ func (it *queuePriceIterator) PriceUnit() (udecimal.Decimal, *priceUnit) {
 		return udecimal.Zero, nil
 	}
 	price := it.skipIter.Price()
-	return price, it.priceList[price]
+	return price, it.priceList[priceKeyOf(price)]
 }

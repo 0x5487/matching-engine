@@ -41,24 +41,14 @@ func CalculateDepthChange(log *OrderBookLog) DepthChange {
 			SizeDiff: log.Size.Neg(),
 		}
 	case protocol.LogTypeAmend:
-		// Scenario 1: Priority Lost (Price changed OR Size increased)
-		// Logic: The visible part is removed from OldPrice. The new order is then
-		// handled by a subsequent protocol.LogTypeOpen or protocol.LogTypeMatch,
-		// which adds whatever is visible at the new place.
-		if !log.OldPrice.Equal(log.Price) || log.Size.GreaterThan(log.OldSize) {
-			return DepthChange{
-				Side:     log.Side,
-				Price:    log.OldPrice,
-				SizeDiff: log.VisibleRemoved.Neg(),
-			}
-		}
-
-		// Scenario 2: Priority Kept (Price same AND Size not increased)
-		// Logic: Update in-place. Only the visible size the decrease reached is removed;
-		// a decrease that stays inside the hidden size removes nothing.
+		// One rule for every amend. The visible part the amend takes off the book is
+		// removed from OldPrice: an amend that keeps its price and shrinks in place
+		// has OldPrice equal to Price, and a priority-losing amend (a new price or a
+		// growth) leaves the old level, while its re-match is logged separately as an
+		// open or a match at the new price.
 		return DepthChange{
 			Side:     log.Side,
-			Price:    log.Price,
+			Price:    log.OldPrice,
 			SizeDiff: log.VisibleRemoved.Neg(),
 		}
 	case protocol.LogTypeReject, protocol.LogTypeUser, protocol.LogTypeAdmin:

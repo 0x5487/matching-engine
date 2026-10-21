@@ -129,6 +129,23 @@ func (h *dlHarness) cancel(id string) []OrderBookLog {
 	return h.apply(func(b *OrderBook) (*LogBatch, error) { return b.CancelOrder(req) })
 }
 
+// snapshotFromDepth turns a book's depth into the snapshot ApplySnapshot takes. The
+// levels are parsed here, in the test, because the depth read is in strings.
+func snapshotFromDepth(tb testing.TB, seq uint64, asks, bids []*protocol.DepthItem) *protocol.DepthDelta {
+	tb.Helper()
+	levels := func(items []*protocol.DepthItem) []protocol.DepthLevel {
+		out := make([]protocol.DepthLevel, 0, len(items))
+		for _, it := range items {
+			out = append(out, protocol.DepthLevel{
+				Price: udecimal.MustParse(it.Price),
+				Size:  udecimal.MustParse(it.Size),
+			})
+		}
+		return out
+	}
+	return &protocol.DepthDelta{Seq: seq, Asks: levels(asks), Bids: levels(bids)}
+}
+
 // dlLevels renders depth items as "price@size", best level first.
 func dlLevels(items []*protocol.DepthItem) []string {
 	if len(items) == 0 {
@@ -442,11 +459,7 @@ func TestDepthLogSnapshotWithRestingIceberg(t *testing.T) {
 	restored := NewOrderBook(dlMarket, WithPublisher(NewDiscardPublishLog()))
 	restored.Restore(snap)
 	ab := NewAggregatedBook()
-	require.NoError(t, ab.ApplySnapshot(&Snapshot{
-		SequenceID: h.book.SeqID(),
-		Asks:       depth.Asks,
-		Bids:       depth.Bids,
-	}))
+	require.NoError(t, ab.ApplySnapshot(snapshotFromDepth(t, h.book.SeqID(), depth.Asks, depth.Bids)))
 	h.book, h.ab = restored, ab
 	h.requireAggregatedMatchesBook()
 

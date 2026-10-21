@@ -206,7 +206,8 @@ Downstream read services (Market Data Services, WebSocket gateways, Redis snapsh
 Key capabilities:
 - **One version per call**: `OrderBook.SeqID()` is the depth version. One SDK call (`PlaceOrder`, `CancelOrder`, `AmendOrder`) that moves visible depth advances it by exactly one, and every depth log of that call carries the new value. A refusal, an admin command, a no-op amend or a shrink inside the hidden size does not advance it.
 - **Producer (`DepthDeltaBuilder`)**: `Add` or `AddBatch` the logs of a call, then `Flush(book, &delta)` reads the touched levels from the book and fills a `protocol.DepthDelta` (`Seq`, `Asks` ascending, `Bids` descending; a size of zero means the level is gone), then `Reset`. Which levels a log moves comes from `CalculateDepthChange`, the single depth rule. Flush must run before the next call changes the book, because it reads sizes as they are then. Several calls may be added before one Flush; the delta then holds each level once at its final size and carries the last version.
-- **Follower (`AggregatedBook.ApplyDelta`)**: a delta with `Seq` one past the follower's version sets each level and advances the version. A resend (`Seq` at or below the version) is skipped. A gap calls `OnRebuild` for a snapshot; the snapshot is applied only if it reaches the delta, and otherwise `ErrSequenceGap` is returned with the book unchanged. A malformed delta is refused with `ErrInvalidDepthDelta` before anything changes.
+- **Follower (`AggregatedBook.ApplyDelta`)**: a delta with `Seq` one past the follower's version sets each level and advances the version. A resend (`Seq` at or below the version) is skipped. A gap calls `OnRebuild` for a snapshot; the snapshot is applied only if it reaches the delta, and otherwise `ErrSequenceGap` is returned with the book unchanged. A malformed delta is refused with `ErrInvalidDepthDelta` before anything changes. A snapshot is a `protocol.DepthDelta` that lists every level, with `Seq` the version it was taken at; `ApplySnapshot` checks it as a whole, so a negative size or a price written twice on one side leaves the book as it was.
+- **Prices are compared by value**: `100` and `100.00` are one level, on the book and in the delta. The book keys its price maps by a canonical form, so the second order written at the same price joins the first instead of resting on a level of its own.
 - **Queries on the book**: `LevelSize(side, price)` is the visible size at one price, and `BestPrice(side)` the best price of a side. Both are read from the book, so a caller holds no second copy of depth.
 - **Thread-Safe Queries**: `AggregatedBook` is protected by an internal `sync.RWMutex`; `GetDepth` and `Depth` may run beside `ApplyDelta`, which has one writer.
 
@@ -215,6 +216,8 @@ package main
 
 import (
 	"fmt"
+
+	"github.com/quagmt/udecimal"
 
 	match "github.com/0x5487/matching-engine"
 	"github.com/0x5487/matching-engine/protocol"
@@ -226,11 +229,11 @@ func main() {
 	view := match.NewAggregatedBook()
 
 	// 1. Configure OnRebuild for a gap: a snapshot at the version the follower missed.
-	view.OnRebuild = func() (*match.Snapshot, error) {
-		return &match.Snapshot{
-			SequenceID: 100,
-			Asks:       []*protocol.DepthItem{{Price: "50100", Size: "2.5"}},
-			Bids:       []*protocol.DepthItem{{Price: "50000", Size: "1.2"}},
+	view.OnRebuild = func() (*protocol.DepthDelta, error) {
+		return &protocol.DepthDelta{
+			Seq:  100,
+			Asks: []protocol.DepthLevel{{Price: udecimal.MustParse("50100"), Size: udecimal.MustParse("2.5")}},
+			Bids: []protocol.DepthLevel{{Price: udecimal.MustParse("50000"), Size: udecimal.MustParse("1.2")}},
 		}, nil
 	}
 
@@ -415,6 +418,8 @@ func (h *MyHandler) Publish(logs []*match.OrderBookLog) {
 	}
 }
 ```
+
+A user event keeps the upstream message queue's command sequence in `log.CmdSeqID`; its `SeqID` is 0, since a user event has no depth version.
 
 A publisher that only inspects the logs in place, as below, is also correct:
 

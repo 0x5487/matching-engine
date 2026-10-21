@@ -226,12 +226,23 @@ func (r *dlDiffRun) placeCmd(typ OrderType, kind string) dlDiffCmd {
 			OrderID:     id,
 			OrderType:   typ,
 			Side:        r.side(),
-			Price:       udecimal.MustFromInt64(r.rangeInt(95, 105), 0),
+			Price:       r.writtenPrice(),
 			Size:        udecimal.MustFromInt64(size, 0),
 			VisibleSize: udecimal.MustFromInt64(visible, 0),
 			StepSize:    udecimal.MustFromInt64(1, 0),
 		},
 	}
+}
+
+// writtenPrice returns a price in [lo, hi] written with 0 to 3 trailing zeros, so
+// one level arrives under different spellings: 100, 100.0 and 100.000 are one price.
+func (r *dlDiffRun) writtenPrice() udecimal.Decimal {
+	zeros := r.rng.IntN(4)
+	scale := int64(1)
+	for range zeros {
+		scale *= 10
+	}
+	return udecimal.MustFromInt64(r.rangeInt(95, 105)*scale, uint8(zeros)) //nolint:gosec // zeros is 0..3
 }
 
 // protectionPrice is zero (no bound) half the time, otherwise a level in range.
@@ -240,7 +251,7 @@ func (r *dlDiffRun) protectionPrice() udecimal.Decimal {
 		return udecimal.Zero
 	}
 	r.kinds["market_protect"]++
-	return udecimal.MustFromInt64(r.rangeInt(95, 105), 0)
+	return r.writtenPrice()
 }
 
 func (r *dlDiffRun) marketSizeCmd() dlDiffCmd {
@@ -336,10 +347,10 @@ func (r *dlDiffRun) amendCmd() dlDiffCmd {
 	switch roll := r.rng.IntN(100); {
 	case roll < 20:
 		kind = "amend_price"
-		req.NewPrice = udecimal.MustFromInt64(r.rangeInt(95, 105), 0)
+		req.NewPrice = r.writtenPrice()
 	case roll < 35:
 		kind = "amend_price"
-		req.NewPrice = udecimal.MustFromInt64(r.rangeInt(95, 105), 0)
+		req.NewPrice = r.writtenPrice()
 		req.NewSize = udecimal.MustFromInt64(r.rangeInt(1, 12), 0)
 	case roll < 50:
 		kind = "amend_up"
@@ -442,11 +453,7 @@ func (r *dlDiffRun) snapshotAndRestore() {
 
 	depth := r.active.GetDepth(dlDepthLimit)
 	ab := NewAggregatedBook()
-	require.NoError(r.t, ab.ApplySnapshot(&Snapshot{
-		SequenceID: r.active.SeqID(),
-		Asks:       depth.Asks,
-		Bids:       depth.Bids,
-	}))
+	require.NoError(r.t, ab.ApplySnapshot(snapshotFromDepth(r.t, r.active.SeqID(), depth.Asks, depth.Bids)))
 	r.active, r.ab = restored, ab
 	r.kinds["snapshot_restore"]++
 }

@@ -19,10 +19,10 @@ func lvl(price, size string) protocol.DepthLevel {
 func deltaBook(t *testing.T) *AggregatedBook {
 	t.Helper()
 	ab := NewAggregatedBook()
-	require.NoError(t, ab.ApplySnapshot(&Snapshot{
-		SequenceID: 10,
-		Asks:       []*protocol.DepthItem{{Price: "101", Size: "5"}},
-		Bids:       []*protocol.DepthItem{{Price: "100", Size: "20"}},
+	require.NoError(t, ab.ApplySnapshot(&protocol.DepthDelta{
+		Seq:  10,
+		Asks: []protocol.DepthLevel{lvl("101", "5")},
+		Bids: []protocol.DepthLevel{lvl("100", "20")},
 	}))
 	return ab
 }
@@ -86,11 +86,11 @@ func TestAggregatedBookApplyDeltaRules(t *testing.T) {
 	t.Run("gap with OnRebuild that connects applies the delta after the snapshot", func(t *testing.T) {
 		ab := deltaBook(t)
 		rebuilds := 0
-		ab.OnRebuild = func() (*Snapshot, error) {
+		ab.OnRebuild = func() (*protocol.DepthDelta, error) {
 			rebuilds++
-			return &Snapshot{
-				SequenceID: 12,
-				Asks:       []*protocol.DepthItem{{Price: "102", Size: "1"}},
+			return &protocol.DepthDelta{
+				Seq:  12,
+				Asks: []protocol.DepthLevel{lvl("102", "1")},
 			}, nil
 		}
 		require.NoError(t, ab.ApplyDelta(&protocol.DepthDelta{
@@ -104,8 +104,8 @@ func TestAggregatedBookApplyDeltaRules(t *testing.T) {
 		"gap whose OnRebuild snapshot does not connect returns ErrSequenceGap and does not apply it",
 		func(t *testing.T) {
 			ab := deltaBook(t)
-			ab.OnRebuild = func() (*Snapshot, error) {
-				return &Snapshot{SequenceID: 9}, nil
+			ab.OnRebuild = func() (*protocol.DepthDelta, error) {
+				return &protocol.DepthDelta{Seq: 9}, nil
 			}
 			err := ab.ApplyDelta(&protocol.DepthDelta{
 				Seq: 13, Bids: []protocol.DepthLevel{lvl("100", "30")},
@@ -117,10 +117,10 @@ func TestAggregatedBookApplyDeltaRules(t *testing.T) {
 
 	t.Run("gap whose OnRebuild snapshot already covers the delta skips it", func(t *testing.T) {
 		ab := deltaBook(t)
-		ab.OnRebuild = func() (*Snapshot, error) {
-			return &Snapshot{
-				SequenceID: 20,
-				Bids:       []*protocol.DepthItem{{Price: "100", Size: "77"}},
+		ab.OnRebuild = func() (*protocol.DepthDelta, error) {
+			return &protocol.DepthDelta{
+				Seq:  20,
+				Bids: []protocol.DepthLevel{lvl("100", "77")},
 			}, nil
 		}
 		require.NoError(t, ab.ApplyDelta(&protocol.DepthDelta{
@@ -132,7 +132,7 @@ func TestAggregatedBookApplyDeltaRules(t *testing.T) {
 	t.Run("OnRebuild error is returned and the book is untouched", func(t *testing.T) {
 		ab := deltaBook(t)
 		boom := errors.New("snapshot unavailable")
-		ab.OnRebuild = func() (*Snapshot, error) { return nil, boom }
+		ab.OnRebuild = func() (*protocol.DepthDelta, error) { return nil, boom }
 		err := ab.ApplyDelta(&protocol.DepthDelta{
 			Seq: 13, Bids: []protocol.DepthLevel{lvl("100", "30")},
 		})
@@ -194,7 +194,7 @@ func TestAggregatedBookApplyDeltaRules(t *testing.T) {
 
 	t.Run("malformed delta is refused before any rebuild", func(t *testing.T) {
 		ab := deltaBook(t)
-		ab.OnRebuild = func() (*Snapshot, error) {
+		ab.OnRebuild = func() (*protocol.DepthDelta, error) {
 			t.Fatal("OnRebuild must not run for a malformed delta")
 			return nil, errors.New("unreachable")
 		}
@@ -212,4 +212,41 @@ func TestAggregatedBookApplyDeltaRules(t *testing.T) {
 		}))
 		requireDeltaBookState(t, ab, 1, nil, []string{"100@3"})
 	})
+}
+
+// TestApplySnapshotMalformedLeavesBookUntouched: a snapshot with a level that is
+// malformed (negative size, or a price repeated on one side) is refused as a whole,
+// and the book keeps the levels and version it had.
+func TestApplySnapshotMalformedLeavesBookUntouched(t *testing.T) {
+	t.Parallel()
+
+	baseAsks := []string{"101@5"}
+	baseBids := []string{"100@20"}
+	cases := map[string]*protocol.DepthDelta{
+		"negative size after a valid level": {
+			Seq:  20,
+			Asks: []protocol.DepthLevel{lvl("102", "3"), lvl("103", "-1")},
+			Bids: []protocol.DepthLevel{lvl("99", "7")},
+		},
+		"negative size on the bid side": {
+			Seq:  20,
+			Bids: []protocol.DepthLevel{lvl("99", "-7")},
+		},
+		"duplicate price on one side": {
+			Seq:  20,
+			Bids: []protocol.DepthLevel{lvl("99", "1"), lvl("99.0", "2")},
+		},
+		"bids not descending": {
+			Seq:  20,
+			Bids: []protocol.DepthLevel{lvl("98", "1"), lvl("99", "2")},
+		},
+	}
+	for name, snap := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ab := deltaBook(t)
+			require.ErrorIs(t, ab.ApplySnapshot(snap), ErrInvalidDepthDelta)
+			requireDeltaBookState(t, ab, 10, baseAsks, baseBids)
+		})
+	}
 }

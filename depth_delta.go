@@ -26,16 +26,18 @@ import (
 // A builder is not safe for concurrent use. Steady-state Add, Flush and Reset with
 // a reused DepthDelta do not allocate.
 type DepthDeltaBuilder struct {
-	seq  uint64 // version of the last depth-moving log added
-	asks map[udecimal.Decimal]struct{}
-	bids map[udecimal.Decimal]struct{}
+	seq uint64 // version of the last depth-moving log added
+	// Each level is keyed by its canonical price, so 100 and 100.00 are one level.
+	// The value is the price as first written, which is what Flush reports.
+	asks map[priceKey]udecimal.Decimal
+	bids map[priceKey]udecimal.Decimal
 }
 
 // NewDepthDeltaBuilder returns a builder with no logs.
 func NewDepthDeltaBuilder() *DepthDeltaBuilder {
 	return &DepthDeltaBuilder{
-		asks: make(map[udecimal.Decimal]struct{}),
-		bids: make(map[udecimal.Decimal]struct{}),
+		asks: make(map[priceKey]udecimal.Decimal),
+		bids: make(map[priceKey]udecimal.Decimal),
 	}
 }
 
@@ -47,10 +49,11 @@ func (b *DepthDeltaBuilder) Add(log *OrderBookLog) {
 		return
 	}
 	b.seq = log.SeqID
+	key := priceKeyOf(change.Price)
 	if change.Side == Buy {
-		b.bids[change.Price] = struct{}{}
+		b.bids[key] = change.Price
 	} else {
-		b.asks[change.Price] = struct{}{}
+		b.asks[key] = change.Price
 	}
 }
 
@@ -92,11 +95,11 @@ func (b *DepthDeltaBuilder) Reset() {
 // ascending for asks, descending for bids.
 func levelsOf(
 	dst []protocol.DepthLevel,
-	set map[udecimal.Decimal]struct{},
+	set map[priceKey]udecimal.Decimal,
 	book *OrderBook,
 	side Side,
 ) []protocol.DepthLevel {
-	for price := range set {
+	for _, price := range set {
 		dst = append(dst, protocol.DepthLevel{Price: price, Size: book.LevelSize(side, price)})
 	}
 	if side == Sell {

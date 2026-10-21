@@ -419,7 +419,7 @@ func TestAggregatedBookSurvivesFilteredDepthLogs(t *testing.T) {
 	var delta protocol.DepthDelta
 
 	rebuilds := 0
-	ab.OnRebuild = func() (*Snapshot, error) {
+	ab.OnRebuild = func() (*protocol.DepthDelta, error) {
 		rebuilds++
 		return nil, errors.New("the projection must not need to rebuild")
 	}
@@ -693,13 +693,10 @@ func TestUserEventRefusalCarriesNoDepthVersion(t *testing.T) {
 	}
 }
 
-// TestUserEventSeqIDIsTheUpstreamCommandSequence pins the one documented
-// exception to the depth-version rule, so the exception cannot rot.
-//
-// MatchingEngine.handleUserEvent builds a user event from the message queue's
-// command sequence, not from a book. OrderBookLog.SeqID is therefore not a depth
-// version for LogTypeUser, which is why a depth projection must filter user
-// events out rather than replay them.
+// TestUserEventSeqIDIsTheUpstreamCommandSequence pins where a user event keeps the
+// upstream command sequence. MatchingEngine.handleUserEvent builds the event from
+// the message queue's sequence, which is not a depth version, so it goes in
+// CmdSeqID. SeqID stays 0 for a user event, and the depth projection ignores it.
 func TestUserEventSeqIDIsTheUpstreamCommandSequence(t *testing.T) {
 	pub := &versionRecordingPublisher{}
 	engine := setupEngine(t, pub)
@@ -724,6 +721,8 @@ func TestUserEventSeqIDIsTheUpstreamCommandSequence(t *testing.T) {
 		return len(userLogs) > 0
 	}, time.Second, time.Millisecond, "the engine must have published the user event")
 
-	assert.Equal(t, uint64(77), userLogs[0].SeqID,
-		"a user event carries the upstream command sequence, not a depth version")
+	assert.Equal(t, uint64(77), userLogs[0].CmdSeqID,
+		"a user event carries the upstream command sequence in CmdSeqID")
+	assert.Zero(t, userLogs[0].SeqID,
+		"a user event carries no depth version")
 }

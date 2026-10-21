@@ -645,7 +645,8 @@ func (engine *MatchingEngine) handleUserEvent(req *protocol.UserEventRequest) {
 		return
 	}
 
-	// Create and Publish Log
+	// Create and Publish Log. req.SeqID is the upstream command sequence, not a
+	// depth version: NewUserEventLog puts it in CmdSeqID and leaves SeqID at 0.
 	log := NewUserEventLog(
 		req.SeqID,
 		req.CommandID,

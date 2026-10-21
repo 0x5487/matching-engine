@@ -12,7 +12,7 @@ import (
 )
 
 // This file measures *OrderBook the way trading-poc calls it: one goroutine, with PlaceOrder, CancelOrder,
-// GetDepth, Snapshot, Restore and AggregatedBook.Replay called directly. There is no MatchingEngine, no
+// GetDepth, Snapshot, Restore and AggregatedBook.ApplyDelta called directly. There is no MatchingEngine, no
 // disruptor and no channel; those are the paths BenchmarkCrossing_* and BenchmarkProductionWarmBook_* measure.
 //
 // Steady state. An op that leaves the book as it found it (a 1:1 cross, a rest followed by its cancel) needs no
@@ -473,7 +473,7 @@ func syncBenchFollower(tb testing.TB, book *OrderBook) *AggregatedBook {
 	tb.Helper()
 	depth := book.GetDepth(syncBenchWarmLevels * 2)
 	ab := NewAggregatedBook()
-	require.NoError(tb, ab.ApplySnapshot(&Snapshot{SequenceID: book.SeqID(), Asks: depth.Asks, Bids: depth.Bids}))
+	require.NoError(tb, ab.ApplySnapshot(snapshotFromDepth(tb, book.SeqID(), depth.Asks, depth.Bids)))
 	return ab
 }
 
