@@ -545,7 +545,10 @@ func TestZeroPriceMarketIsUnboundedAndZeroPriceIOCIsRefused(t *testing.T) {
 		order := acquireOrder()
 		order.ID, order.Side, order.Type, order.UserID = "taker", Buy, IOC, 2
 		order.Price, order.Size, order.Timestamp = udecimal.Zero, udecimal.MustParse("1"), walkTakerTS
-		batch := book.handleIOCOrder("taker-cmd", order, walkTakerTS)
+		// The public calls reclaim the batch when they start; this direct handler call does the same.
+		book.batch.reclaim()
+		book.handleIOCOrder("taker-cmd", order, walkTakerTS)
+		batch := &book.batch
 		require.Len(t, batch.Logs, 1)
 		assert.Equal(t, protocol.LogTypeReject, batch.Logs[0].Type)
 		assert.Equal(t, protocol.RejectReasonPriceMismatch, batch.Logs[0].RejectReason)

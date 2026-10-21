@@ -70,9 +70,8 @@ func depthVersionCancel(orderID string, ts int64) *protocol.CancelOrderRequest {
 // advanceTo runs a command, releases its batch, and returns the version after.
 func advanceTo(t *testing.T, book *OrderBook, run func() (*LogBatch, error)) uint64 {
 	t.Helper()
-	batch, err := run()
+	_, err := run()
 	require.NoError(t, err)
-	batch.Release()
 	return book.SeqID()
 }
 
@@ -128,7 +127,7 @@ func TestDepthVersionAdvancesOnDepthChange(t *testing.T) {
 		})
 		before := book.SeqID()
 
-		batch, err := book.AmendOrder(&protocol.AmendOrderRequest{
+		_, err := book.AmendOrder(&protocol.AmendOrderRequest{
 			BaseCommand: protocol.BaseCommand{
 				MarketID: depthVersionMarket, CommandID: "cmd-amend", UserID: 1, Timestamp: 11,
 			},
@@ -137,7 +136,6 @@ func TestDepthVersionAdvancesOnDepthChange(t *testing.T) {
 			NewSize:  udecimal.MustFromInt64(1, 0),
 		})
 		require.NoError(t, err)
-		batch.Release()
 
 		assert.Greater(t, book.SeqID(), before,
 			"moving a resting order changes two price levels, so the book changed")
@@ -145,7 +143,7 @@ func TestDepthVersionAdvancesOnDepthChange(t *testing.T) {
 }
 
 // TestDepthVersionIsNotAdvancedByRefusedCommands covers every refusal path that
-// reaches createRejectBatch, plus each handler-local refusal site, because the
+// reaches rejectCall, plus each handler-local refusal site, because the
 // redefinition is only as good as its coverage: one refusal path left advancing
 // the sequence reinstates the problem for whichever consumer routes through it.
 //
@@ -264,9 +262,8 @@ func TestDepthVersionIsNotAdvancedByRefusedCommands(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			book := depthVersionBook(depthVersionMarket)
 			for _, o := range tc.resting {
-				batch, err := book.PlaceOrder(o)
+				_, err := book.PlaceOrder(o)
 				require.NoError(t, err)
-				batch.Release()
 			}
 			if tc.prepare != nil {
 				tc.prepare(t, book)
@@ -278,7 +275,6 @@ func TestDepthVersionIsNotAdvancedByRefusedCommands(t *testing.T) {
 			require.NotEmpty(t, batch.Logs, "the command must actually have been refused")
 			assert.Equal(t, protocol.LogTypeReject, batch.Logs[0].Type,
 				"and it must have been refused, not filled")
-			batch.Release()
 
 			assert.Equal(t, before, book.SeqID(),
 				"a refused command must leave the depth version alone")
@@ -323,7 +319,6 @@ func TestNoOpAmendDoesNotAdvanceDepthVersion(t *testing.T) {
 				NewSize:  udecimal.MustFromInt64(tc.newSize, 0),
 			})
 			require.NoError(t, err)
-			defer batch.Release()
 
 			require.NotEmpty(t, batch.Logs, "the amend must still be logged")
 			assert.Equal(t, protocol.LogTypeAmend, batch.Logs[0].Type)
@@ -441,7 +436,6 @@ func TestAggregatedBookSurvivesFilteredDepthLogs(t *testing.T) {
 				// Refused or administrative: dropped on the floor.
 			}
 		}
-		batch.Release()
 		if builder.Flush(book, &delta) {
 			require.NoError(t, ab.ApplyDelta(&delta))
 		}

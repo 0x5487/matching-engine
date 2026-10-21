@@ -44,7 +44,6 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 		batch, err := book.PlaceOrder(sellReq)
 		require.NoError(t, err)
 		require.NotNil(t, batch)
-		defer batch.Release()
 
 		require.Len(t, batch.Logs, 1)
 		assert.Equal(t, protocol.LogTypeOpen, batch.Logs[0].Type)
@@ -77,7 +76,6 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 		buyBatch, err := book.PlaceOrder(buyReq)
 		require.NoError(t, err)
 		require.NotNil(t, buyBatch)
-		defer buyBatch.Release()
 
 		require.Len(t, buyBatch.Logs, 1)
 		trade := buyBatch.Logs[0]
@@ -113,9 +111,8 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 			Size:      udecimal.MustFromInt64(1, 0),
 		}
 
-		pBatch, err := book.PlaceOrder(placeReq)
+		_, err := book.PlaceOrder(placeReq)
 		require.NoError(t, err)
-		pBatch.Release()
 
 		// Cancel order
 		cancelReq := &protocol.CancelOrderRequest{
@@ -131,7 +128,6 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 		cBatch, err := book.CancelOrder(cancelReq)
 		require.NoError(t, err)
 		require.NotNil(t, cBatch)
-		defer cBatch.Release()
 
 		require.Len(t, cBatch.Logs, 1)
 		assert.Equal(t, protocol.LogTypeCancel, cBatch.Logs[0].Type)
@@ -145,7 +141,6 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 		cBatch2, err := book.CancelOrder(cancelReq)
 		require.NoError(t, err)
 		require.NotNil(t, cBatch2)
-		defer cBatch2.Release()
 
 		require.Len(t, cBatch2.Logs, 1)
 		assert.Equal(t, protocol.LogTypeReject, cBatch2.Logs[0].Type)
@@ -169,9 +164,8 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 			Size:      udecimal.MustFromInt64(2, 0),
 		}
 
-		pBatch, err := book.PlaceOrder(placeReq)
+		_, err := book.PlaceOrder(placeReq)
 		require.NoError(t, err)
-		pBatch.Release()
 
 		// Amend size decrease: in-place priority retention
 		amendReq := &protocol.AmendOrderRequest{
@@ -189,7 +183,6 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 		aBatch, err := book.AmendOrder(amendReq)
 		require.NoError(t, err)
 		require.NotNil(t, aBatch)
-		defer aBatch.Release()
 
 		require.Len(t, aBatch.Logs, 1)
 		assert.Equal(t, protocol.LogTypeAmend, aBatch.Logs[0].Type)
@@ -204,7 +197,7 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 		book := match.NewOrderBook("BTC-USDT")
 
 		// Place bid and ask
-		bBatch, _ := book.PlaceOrder(&protocol.PlaceOrderRequest{
+		_, _ = book.PlaceOrder(&protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
 				MarketID:  "BTC-USDT",
 				CommandID: "cmd-b1",
@@ -217,9 +210,8 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 			Price:     udecimal.MustFromInt64(48000, 0),
 			Size:      udecimal.MustFromInt64(5, 0),
 		})
-		bBatch.Release()
 
-		aBatch, _ := book.PlaceOrder(&protocol.PlaceOrderRequest{
+		_, _ = book.PlaceOrder(&protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
 				MarketID:  "BTC-USDT",
 				CommandID: "cmd-a1",
@@ -232,7 +224,6 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 			Price:     udecimal.MustFromInt64(52000, 0),
 			Size:      udecimal.MustFromInt64(3, 0),
 		})
-		aBatch.Release()
 
 		// Create snapshot
 		snap := book.Snapshot()
@@ -278,10 +269,9 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 		require.Len(t, batch.Logs, 1)
 		assert.Equal(t, protocol.LogTypeReject, batch.Logs[0].Type)
 		assert.Equal(t, protocol.RejectReasonInvalidPayload, batch.Logs[0].RejectReason)
-		batch.Release()
 
 		// 2. Normal order
-		batch1, err := book.PlaceOrder(&protocol.PlaceOrderRequest{
+		_, err = book.PlaceOrder(&protocol.PlaceOrderRequest{
 			BaseCommand: protocol.BaseCommand{
 				MarketID:  "BTC-USDT",
 				CommandID: "cmd-valid",
@@ -295,7 +285,6 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 			Size:      udecimal.MustFromInt64(1, 0),
 		})
 		require.NoError(t, err)
-		batch1.Release()
 
 		// Duplicate order ID
 		batch2, err := book.PlaceOrder(&protocol.PlaceOrderRequest{
@@ -316,6 +305,5 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 		require.Len(t, batch2.Logs, 1)
 		assert.Equal(t, protocol.LogTypeReject, batch2.Logs[0].Type)
 		assert.Equal(t, protocol.RejectReasonDuplicateID, batch2.Logs[0].RejectReason)
-		batch2.Release()
 	})
 }

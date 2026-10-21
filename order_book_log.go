@@ -8,43 +8,26 @@ import (
 	"github.com/0x5487/matching-engine/protocol"
 )
 
-// LogBatch is a reusable container for a batch of order book logs.
+// LogBatch is the logs one call produced, in the order the book produced them.
+//
+// A book returns its own batch from PlaceOrder, CancelOrder and AmendOrder. The
+// batch and the logs in it are valid until the next call on the same book, which
+// reclaims them when it starts: those logs go back to the pool and the batch is
+// emptied. A caller that keeps a log, or the Logs slice, past that next call reads
+// logs that now belong to another call. The same rule covers a Publisher (see
+// Publisher): copy inside Publish.
 type LogBatch struct {
 	Logs []*OrderBookLog
 }
 
-var logBatchPool = sync.Pool{
-	New: func() any {
-		return &LogBatch{
-			Logs: make([]*OrderBookLog, 0, 16), //nolint:mnd
-		}
-	},
-}
-
-// Release returns the batch and every log it holds to their pools.
-//
-// A LogBatch owns its logs. Once Release returns, those logs have been zeroed
-// and recycled, so any pointer into b.Logs kept across the call is dangling.
-// That makes Release the single point where a caller hands logs back, which is
-// the whole reason the log pool is reachable at all: a caller that only ever
-// uses batch.Release() can pool its logs without knowing the pool exists.
-//
-// A Publisher that needs the logs after Release must copy them first.
-func (b *LogBatch) Release() {
+// reclaim returns the logs the batch holds to the log pool and empties the batch,
+// keeping its slice for the next call. Each book calls it when a call starts, and
+// the engine calls it before it reuses its own batch.
+func (b *LogBatch) reclaim() {
 	for _, log := range b.Logs {
 		releaseBookLog(log)
 	}
 	b.Logs = b.Logs[:0]
-	logBatchPool.Put(b)
-}
-
-// releaseLogBatchContainer returns only the batch to the pool and leaves its
-// logs untouched. It exists for the one case where ownership of the logs has
-// already moved to another batch: Release would recycle logs the new owner is
-// still holding pointers to.
-func releaseLogBatchContainer(b *LogBatch) {
-	b.Logs = b.Logs[:0]
-	logBatchPool.Put(b)
 }
 
 // OrderBookLog represents a single event in the order book's history.
@@ -117,15 +100,15 @@ func releaseBookLog(log *OrderBookLog) {
 
 // Publisher is the interface for receiving order book logs.
 //
-// Ownership: the logs passed to Publish belong to the engine, and the engine
-// calls LogBatch.Release as soon as Publish returns. Release zeroes them and
-// returns them to a sync.Pool, so a log read afterwards reads recycled memory.
-// An implementation that needs the logs beyond the call - to hand them to a
-// channel, a goroutine, or a queue - must copy them before returning.
+// Ownership: the logs passed to Publish belong to the book or engine that produced
+// them. They stay valid until that book's next call (or the engine's next event),
+// which reclaims them, so an implementation that needs the logs beyond the call -
+// to hand them to a channel, a goroutine, or a queue - must copy them before
+// returning.
 //
-// An implementation cannot release the logs itself: Publish receives the slice,
-// not the *LogBatch that Release is a method on. A publisher that retains the
-// slice without copying is a silent-corruption bug, not a slow path.
+// An implementation cannot reclaim the logs itself: Publish receives the slice,
+// not the *LogBatch it belongs to. A publisher that retains the slice without
+// copying is a silent-corruption bug, not a slow path.
 type Publisher interface {
 	Publish(logs []*OrderBookLog)
 }
@@ -148,8 +131,8 @@ func (p *MemoryPublishLog) Publish(logs []*OrderBookLog) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, log := range logs {
-		// The caller may Release the batch right after Publish returns, which
-		// recycles the logs. Copy so what we keep stays valid.
+		// The book reclaims these logs at its next call, which recycles them. Copy
+		// so what we keep stays valid.
 		copyLog := *log
 		p.logs = append(p.logs, &copyLog)
 	}
@@ -192,11 +175,6 @@ func (p *DiscardPublishLog) Publish(_ []*OrderBookLog) {
 }
 
 // --- Log Creation Helpers ---
-
-// acquireLogBatch gets a LogBatch from the pool.
-func acquireLogBatch() *LogBatch {
-	return logBatchPool.Get().(*LogBatch) //nolint:revive,forcetypeassert
-}
 
 // NewOpenLog creates a new OrderBookLog for an open order event.
 //

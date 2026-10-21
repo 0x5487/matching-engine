@@ -591,9 +591,6 @@ func (r *dlDiffRun) execute(step int, cmd dlDiffCmd) {
 		require.Equal(t, r.active.SeqID(), r.delta.Seq, "delta ends at the book version, %s", desc)
 	}
 
-	batch.Release()
-	ctrl.Release()
-
 	want := r.active.GetDepth(dlDepthLimit)
 	got := r.ab.GetDepth(dlDepthLimit)
 	require.Equal(t, want.UpdateID, got.UpdateID, "depth version, %s", desc)

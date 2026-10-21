@@ -76,7 +76,6 @@ func (h *dlHarness) collect(run func(*OrderBook) (*LogBatch, error)) []OrderBook
 		h.builder.Add(l)
 		copies = append(copies, *l)
 	}
-	batch.Release()
 	return copies
 }
 

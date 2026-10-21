@@ -2,14 +2,10 @@ package match
 
 // The Publisher ownership boundary, asserted rather than described.
 //
-// Release recycles the logs it holds, so anything a Publisher keeps past the
-// call reads recycled memory. That failure is silent - no error, no panic, just
-// a log full of zeros - which is why it needs a test to keep it from being
-// "simplified" back into a bug.
-//
-// The zeroing assertions below are not asserting on undefined behavior:
-// releaseBookLog does `*log = OrderBookLog{}` explicitly, and these tests are
-// single-goroutine, so the object cannot have been handed to anyone else.
+// A book reclaims the logs of a call when its next call starts, so anything a
+// Publisher keeps past Publish reads recycled memory. That failure is silent -
+// no error, no panic, just a log that now belongs to another call. Only a copy
+// made inside Publish survives, which is what these tests pin.
 
 import (
 	"testing"
@@ -55,32 +51,8 @@ func (p *copyingPublisher) Publish(logs []*OrderBookLog) {
 	}
 }
 
-type retainingPublisher struct{ kept []*OrderBookLog }
-
-func (p *retainingPublisher) Publish(logs []*OrderBookLog) { p.kept = logs }
-
-// TestReleaseZeroesHeldLogs locks in the behavior that makes retention unsafe.
-// If this ever starts failing because Release stopped zeroing, then a Publisher
-// that retains logs has become correct again - but only by accident, and the
-// pooling contract has changed with it.
-func TestReleaseZeroesHeldLogs(t *testing.T) {
-	book := NewOrderBook(ownMarket)
-
-	batch, err := book.PlaceOrder(ownershipTestOrder(t, 1))
-	require.NoError(t, err)
-	require.Len(t, batch.Logs, 1)
-
-	held := batch.Logs[0]
-	require.Equal(t, ownOrder, held.OrderID, "precondition: log is populated before Release")
-	require.Equal(t, protocol.LogTypeOpen, held.Type)
-
-	batch.Release()
-
-	assert.Equal(t, OrderBookLog{}, *held, "Release must zero every log it returns to the pool")
-}
-
 // TestCopyingPublisherKeepsIntactValues is the correct pattern: copy inside
-// Publish, then the copy outlives Release.
+// Publish, then the copy outlives the call.
 func TestCopyingPublisherKeepsIntactValues(t *testing.T) {
 	pub := &copyingPublisher{}
 	book := NewOrderBook(ownMarket, WithPublisher(pub))
@@ -88,32 +60,13 @@ func TestCopyingPublisherKeepsIntactValues(t *testing.T) {
 	batch, err := book.PlaceOrder(ownershipTestOrder(t, 2))
 	require.NoError(t, err)
 
-	// Exactly what the engine does: publish, then release, in that order.
+	// Exactly what the engine does: publish the batch of this call.
 	pub.Publish(batch.Logs)
-	batch.Release()
 
 	require.Len(t, pub.kept, 1)
 	assert.Equal(t, ownOrder, pub.kept[0].OrderID)
 	assert.Equal(t, protocol.LogTypeOpen, pub.kept[0].Type)
 	assert.True(t, pub.kept[0].Price.Equal(udecimal.MustFromInt64(ownPrice, 0)))
-}
-
-// TestRetainingPublisherReadsRecycledMemory is the wrong pattern, pinned so
-// the failure mode is visible rather than discovered in someone's market data
-// feed. It reads zeros.
-func TestRetainingPublisherReadsRecycledMemory(t *testing.T) {
-	pub := &retainingPublisher{}
-	book := NewOrderBook(ownMarket, WithPublisher(pub))
-
-	batch, err := book.PlaceOrder(ownershipTestOrder(t, 3))
-	require.NoError(t, err)
-
-	pub.Publish(batch.Logs)
-	batch.Release()
-
-	require.Len(t, pub.kept, 1)
-	assert.Equal(t, OrderBookLog{}, *pub.kept[0],
-		"a Publisher that retains the slice must be documented as reading recycled memory")
 }
 
 // TestPublisherCannotRelease documents why a Publisher has no Release to
@@ -122,6 +75,9 @@ func TestPublisherCannotRelease(t *testing.T) {
 	var pub Publisher = &copyingPublisher{}
 
 	_, hasRelease := any(pub).(interface{ Release() })
-	assert.False(t, hasRelease,
-		"Publisher has no access to LogBatch.Release; if this ever becomes true the ownership story changed")
+	assert.False(
+		t,
+		hasRelease,
+		"Publisher has no access to the LogBatch its call returned; if this ever becomes true the ownership story changed",
+	)
 }

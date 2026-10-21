@@ -71,6 +71,9 @@ type OrderBook struct {
 	// runs. callMoved records whether a log of the call has taken it.
 	callSeq   uint64
 	callMoved bool
+	// batch holds the logs of the call in progress and of the last one. The book
+	// reclaims them when its next call starts; see LogBatch.
+	batch     LogBatch
 	bidQueue  *queue
 	askQueue  *queue
 	publisher Publisher
@@ -165,22 +168,23 @@ func (book *OrderBook) GetDepth(limit uint32) *protocol.GetDepthResponse {
 }
 
 // PlaceOrder processes an order synchronously and returns the resulting LogBatch.
-// The caller must process batch.Logs before calling batch.Release(), which
-// recycles the logs.
+// The batch belongs to the book: it and its logs are valid until the next call on
+// this book, which reclaims them.
 func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, error) {
 	if req == nil {
 		return nil, ErrInvalidParam
 	}
 	book.beginCall()
 	defer book.endCall()
+	book.batch.reclaim()
 	if req.Timestamp <= 0 {
-		return book.createRejectBatch(
+		return book.rejectCall(
 			req.CommandID,
 			req.OrderID,
 			req.UserID,
 			protocol.RejectReasonInvalidPayload,
 			req.Timestamp,
-		), nil
+		)
 	}
 
 	// Basic validation
@@ -235,24 +239,24 @@ func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, e
 	}
 
 	if !isValid {
-		return book.createRejectBatch(
+		return book.rejectCall(
 			req.CommandID,
 			req.OrderID,
 			req.UserID,
 			protocol.RejectReasonInvalidPayload,
 			req.Timestamp,
-		), nil
+		)
 	}
 
 	// Check for duplicate ID
 	if book.bidQueue.order(req.OrderID) != nil || book.askQueue.order(req.OrderID) != nil {
-		return book.createRejectBatch(
+		return book.rejectCall(
 			req.CommandID,
 			req.OrderID,
 			req.UserID,
 			protocol.RejectReasonDuplicateID,
 			req.Timestamp,
-		), nil
+		)
 	}
 
 	order := acquireOrder()
@@ -268,24 +272,23 @@ func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, e
 		order.VisibleLimit = req.VisibleSize
 	}
 
-	var batch *LogBatch
 	switch order.Type {
 	case Limit:
-		batch = book.handleLimitOrder(req.CommandID, order, req.Timestamp)
+		book.handleLimitOrder(req.CommandID, order, req.Timestamp)
 	case FOK:
-		batch = book.handleFOKOrder(req.CommandID, order, req.Timestamp)
+		book.handleFOKOrder(req.CommandID, order, req.Timestamp)
 	case IOC:
-		batch = book.handleIOCOrder(req.CommandID, order, req.Timestamp)
+		book.handleIOCOrder(req.CommandID, order, req.Timestamp)
 	case PostOnly:
-		batch = book.handlePostOnlyOrder(req.CommandID, order, req.Timestamp)
+		book.handlePostOnlyOrder(req.CommandID, order, req.Timestamp)
 	case Market:
-		batch = book.handleMarketOrder(req.CommandID, order, req.QuoteSize, req.StepSize, req.Timestamp)
+		book.handleMarketOrder(req.CommandID, order, req.QuoteSize, req.StepSize, req.Timestamp)
 	default:
 		releaseOrder(order)
 		return nil, ErrInvalidParam
 	}
 
-	return batch, nil
+	return &book.batch, nil
 }
 
 // isWholeSteps reports whether size is a whole number of step.
@@ -303,33 +306,34 @@ func isWholeSteps(size, step udecimal.Decimal) bool {
 }
 
 // CancelOrder processes an order cancellation synchronously and returns the resulting LogBatch.
-// The caller must process batch.Logs before calling batch.Release(), which
-// recycles the logs.
+// The batch belongs to the book: it and its logs are valid until the next call on
+// this book, which reclaims them.
 func (book *OrderBook) CancelOrder(req *protocol.CancelOrderRequest) (*LogBatch, error) {
 	if req == nil {
 		return nil, ErrInvalidParam
 	}
 	book.beginCall()
 	defer book.endCall()
+	book.batch.reclaim()
 	if req.Timestamp <= 0 || req.OrderID == "" {
-		return book.createRejectBatch(
+		return book.rejectCall(
 			req.CommandID,
 			req.OrderID,
 			req.UserID,
 			protocol.RejectReasonInvalidPayload,
 			req.Timestamp,
-		), nil
+		)
 	}
 
 	order, ok := book.findOrder(req.OrderID)
 	if !ok || order.UserID != req.UserID {
-		return book.createRejectBatch(
+		return book.rejectCall(
 			req.CommandID,
 			req.OrderID,
 			req.UserID,
 			protocol.RejectReasonOrderNotFound,
 			req.Timestamp,
-		), nil
+		)
 	}
 
 	myQueue := book.bidQueue
@@ -338,7 +342,6 @@ func (book *OrderBook) CancelOrder(req *protocol.CancelOrderRequest) (*LogBatch,
 	}
 
 	myQueue.removeOrder(order.Price, order.ID)
-	batch := acquireLogBatch()
 	totalSize := order.Size.Add(order.HiddenSize)
 	log := NewCancelLog(
 		book.depthSeq(),
@@ -356,10 +359,10 @@ func (book *OrderBook) CancelOrder(req *protocol.CancelOrderRequest) (*LogBatch,
 	// The whole visible part leaves the book at its price. The hidden part was
 	// never depth, so it does not appear here even though Size carries it.
 	log.VisibleRemoved = order.Size
-	batch.Logs = append(batch.Logs, log)
+	book.batch.Logs = append(book.batch.Logs, log)
 	releaseOrder(order)
 
-	return batch, nil
+	return &book.batch, nil
 }
 
 // amendChangesDepth reports whether an amend alters the book's visible depth.
@@ -378,36 +381,37 @@ func amendChangesDepth(isPriceChange, isSizeIncrease bool, visibleRemoved udecim
 }
 
 // AmendOrder processes an order amendment synchronously and returns the resulting LogBatch.
-// The caller must process batch.Logs before calling batch.Release(), which
-// recycles the logs.
+// The batch belongs to the book: it and its logs are valid until the next call on
+// this book, which reclaims them.
 func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, error) {
 	if req == nil {
 		return nil, ErrInvalidParam
 	}
 	book.beginCall()
 	defer book.endCall()
+	book.batch.reclaim()
 	// A new size must be a whole number of steps when the amend names a step. Zero
 	// on either side means no size or no unit is given, and nothing is checked.
 	offStep := !req.NewSize.IsZero() && !req.StepSize.IsZero() && !isWholeSteps(req.NewSize, req.StepSize)
 	if req.Timestamp <= 0 || req.OrderID == "" || offStep {
-		return book.createRejectBatch(
+		return book.rejectCall(
 			req.CommandID,
 			req.OrderID,
 			req.UserID,
 			protocol.RejectReasonInvalidPayload,
 			req.Timestamp,
-		), nil
+		)
 	}
 
 	order, ok := book.findOrder(req.OrderID)
 	if !ok || order.UserID != req.UserID {
-		return book.createRejectBatch(
+		return book.rejectCall(
 			req.CommandID,
 			req.OrderID,
 			req.UserID,
 			protocol.RejectReasonOrderNotFound,
 			req.Timestamp,
-		), nil
+		)
 	}
 
 	newPrice := req.NewPrice
@@ -448,7 +452,6 @@ func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, e
 		visibleRemoved = udecimal.Zero
 	}
 
-	amendBatch := acquireLogBatch()
 	// Computed once and reused for both the version and the branch below, so the
 	// two cannot disagree about whether the book changed.
 	depthChanged := amendChangesDepth(isPriceChange, isSizeIncrease, visibleRemoved)
@@ -476,7 +479,7 @@ func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, e
 		req.Timestamp,
 	)
 	log.VisibleRemoved = visibleRemoved
-	amendBatch.Logs = append(amendBatch.Logs, log)
+	book.batch.Logs = append(book.batch.Logs, log)
 
 	if isPriceChange || isSizeIncrease {
 		// Path 1: Priority Loss (Re-match)
@@ -498,14 +501,7 @@ func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, e
 			}
 		}
 
-		batch := book.handleLimitOrder(req.CommandID, order, req.Timestamp)
-		if batch != nil {
-			// Ownership of these logs moves to amendBatch, so the inner batch
-			// must give back only its container. Calling Release here would
-			// recycle logs amendBatch is now holding pointers to.
-			amendBatch.Logs = append(amendBatch.Logs, batch.Logs...)
-			releaseLogBatchContainer(batch)
-		}
+		book.handleLimitOrder(req.CommandID, order, req.Timestamp)
 	} else if newSize.LessThan(oldTotalSize) {
 		// Path 2: Priority Retention (In-place update)
 		delta := oldTotalSize.Sub(newSize)
@@ -517,7 +513,7 @@ func (book *OrderBook) AmendOrder(req *protocol.AmendOrderRequest) (*LogBatch, e
 		}
 	}
 
-	return amendBatch, nil
+	return &book.batch, nil
 }
 
 // LevelSize returns the visible size resting at price on side: the depth of that
@@ -589,14 +585,14 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 	}
 }
 
-func (book *OrderBook) createRejectBatch(
+// rejectCall ends a call with one reject log and returns the book's batch.
+func (book *OrderBook) rejectCall(
 	commandID string,
 	orderID string,
 	userID uint64,
 	reason protocol.RejectReason,
 	timestamp int64,
-) *LogBatch {
-	batch := acquireLogBatch()
+) (*LogBatch, error) {
 	log := NewRejectLog(
 		0,
 		commandID,
@@ -607,8 +603,8 @@ func (book *OrderBook) createRejectBatch(
 		reason,
 		timestamp,
 	)
-	batch.Logs = append(batch.Logs, log)
-	return batch
+	book.batch.Logs = append(book.batch.Logs, log)
+	return &book.batch, nil
 }
 
 func (book *OrderBook) handlePlaceOrder(ev *InputEvent, req *protocol.PlaceOrderRequest) {
@@ -625,12 +621,10 @@ func (book *OrderBook) handlePlaceOrder(ev *InputEvent, req *protocol.PlaceOrder
 			for _, log := range batch.Logs {
 				if log.Type == protocol.LogTypeReject {
 					book.sendResponse(ev.Resp, errors.New(string(log.RejectReason)))
-					batch.Release()
 					return
 				}
 			}
 		}
-		batch.Release()
 	}
 	book.sendResponse(ev.Resp, true)
 }
@@ -649,12 +643,10 @@ func (book *OrderBook) handleCancelOrder(ev *InputEvent, req *protocol.CancelOrd
 			for _, log := range batch.Logs {
 				if log.Type == protocol.LogTypeReject {
 					book.sendResponse(ev.Resp, errors.New(string(log.RejectReason)))
-					batch.Release()
 					return
 				}
 			}
 		}
-		batch.Release()
 	}
 	book.sendResponse(ev.Resp, true)
 }
@@ -673,12 +665,10 @@ func (book *OrderBook) handleAmendOrder(ev *InputEvent, req *protocol.AmendOrder
 			for _, log := range batch.Logs {
 				if log.Type == protocol.LogTypeReject {
 					book.sendResponse(ev.Resp, errors.New(string(log.RejectReason)))
-					batch.Release()
 					return
 				}
 			}
 		}
-		batch.Release()
 	}
 	book.sendResponse(ev.Resp, true)
 }
@@ -723,7 +713,7 @@ func (book *OrderBook) rejectInvalidPayload(
 	reason protocol.RejectReason,
 	timestamp int64,
 ) {
-	batch := acquireLogBatch()
+	book.batch.reclaim()
 	log := NewRejectLog(
 		0,
 		commandID,
@@ -734,9 +724,8 @@ func (book *OrderBook) rejectInvalidPayload(
 		reason,
 		timestamp,
 	)
-	batch.Logs = append(batch.Logs, log)
-	book.publisher.Publish(batch.Logs)
-	batch.Release()
+	book.batch.Logs = append(book.batch.Logs, log)
+	book.publisher.Publish(book.batch.Logs)
 }
 
 func (book *OrderBook) findOrder(orderID string) (*Order, bool) {
@@ -773,7 +762,7 @@ func (book *OrderBook) createSnapshot() *OrderBookSnapshot {
 }
 
 // handleLimitOrder handles Limit orders.
-func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestamp int64) *LogBatch {
+func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestamp int64) {
 	var myQueue, targetQueue *queue
 	if order.Side == Buy {
 		myQueue = book.bidQueue
@@ -782,8 +771,6 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 		myQueue = book.askQueue
 		targetQueue = book.bidQueue
 	}
-
-	batch := acquireLogBatch()
 
 	for {
 		tOrd := targetQueue.peekHeadOrder()
@@ -803,8 +790,8 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 				order.Type,
 				timestamp,
 			)
-			batch.Logs = append(batch.Logs, log)
-			return batch
+			book.batch.Logs = append(book.batch.Logs, log)
+			return
 		}
 
 		if (order.Side == Buy && order.Price.LessThan(tOrd.Price)) ||
@@ -824,8 +811,8 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 				order.Type,
 				timestamp,
 			)
-			batch.Logs = append(batch.Logs, log)
-			return batch
+			book.batch.Logs = append(book.batch.Logs, log)
+			return
 		}
 
 		tOrd = targetQueue.popHeadOrder()
@@ -846,7 +833,7 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 				order.Size,
 				timestamp,
 			)
-			batch.Logs = append(batch.Logs, log)
+			book.batch.Logs = append(book.batch.Logs, log)
 			tOrd.Size = tOrd.Size.Sub(order.Size)
 			targetQueue.pushFront(tOrd)
 			releaseOrder(order)
@@ -869,10 +856,10 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 			tOrd.Size,
 			timestamp,
 		)
-		batch.Logs = append(batch.Logs, log)
+		book.batch.Logs = append(book.batch.Logs, log)
 		order.Size = order.Size.Sub(tOrd.Size)
 
-		if !book.checkReplenish(commandID, tOrd, targetQueue, batch, timestamp) {
+		if !book.checkReplenish(commandID, tOrd, targetQueue, timestamp) {
 			releaseOrder(tOrd)
 		}
 
@@ -881,7 +868,6 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 			break
 		}
 	}
-	return batch
 }
 
 // prepareIcebergForResting splits an Iceberg order's size into visible and hidden parts
@@ -900,15 +886,15 @@ func (book *OrderBook) prepareIcebergForResting(order *Order) {
 // order will pay or accept, and a Price of zero is a bound of zero, not "no
 // bound". The remainder blocked by that bound is a price mismatch. An IOC is
 // always sized in base.
-func (book *OrderBook) handleIOCOrder(commandID string, order *Order, timestamp int64) *LogBatch {
-	return book.takeLiquidity(commandID, order, takerWalk{
+func (book *OrderBook) handleIOCOrder(commandID string, order *Order, timestamp int64) {
+	book.takeLiquidity(commandID, order, takerWalk{
 		priceRequired: true,
 		blockedReason: protocol.RejectReasonPriceMismatch,
 	}, timestamp)
 }
 
 // handleFOKOrder handles Fill Or Kill orders.
-func (book *OrderBook) handleFOKOrder(commandID string, order *Order, timestamp int64) *LogBatch {
+func (book *OrderBook) handleFOKOrder(commandID string, order *Order, timestamp int64) {
 	var targetQueue *queue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -940,7 +926,6 @@ func (book *OrderBook) handleFOKOrder(commandID string, order *Order, timestamp 
 	}
 
 	if !canFill {
-		batch := acquireLogBatch()
 		reason := protocol.RejectReasonInsufficientSize
 		if !hasLiquidityAtPrice {
 			// If we didn't find ANY order matching the price, it might be PriceMismatch or NoLiquidity
@@ -961,13 +946,13 @@ func (book *OrderBook) handleFOKOrder(commandID string, order *Order, timestamp 
 			timestamp,
 		)
 		log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
-		batch.Logs = append(batch.Logs, log)
+		book.batch.Logs = append(book.batch.Logs, log)
 		releaseOrder(order)
-		return batch
+		return
 	}
 
 	// Phase 2: Execute match (same as IOC/Limit logic but guaranteed to finish)
-	return book.handleIOCOrder(commandID, order, timestamp)
+	book.handleIOCOrder(commandID, order, timestamp)
 }
 
 // handlePostOnlyOrder handles Post-Only orders.
@@ -975,7 +960,7 @@ func (book *OrderBook) handlePostOnlyOrder(
 	commandID string,
 	order *Order,
 	timestamp int64,
-) *LogBatch {
+) {
 	var targetQueue *queue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -987,7 +972,6 @@ func (book *OrderBook) handlePostOnlyOrder(
 	if tOrd != nil {
 		if (order.Side == Buy && order.Price.GreaterThanOrEqual(tOrd.Price)) ||
 			(order.Side == Sell && order.Price.LessThanOrEqual(tOrd.Price)) {
-			batch := acquireLogBatch()
 			log := NewRejectLog(
 				0,
 				commandID,
@@ -999,13 +983,13 @@ func (book *OrderBook) handlePostOnlyOrder(
 				timestamp,
 			)
 			log.Side, log.Price, log.Size, log.OrderType = order.Side, order.Price, order.Size, order.Type
-			batch.Logs = append(batch.Logs, log)
+			book.batch.Logs = append(book.batch.Logs, log)
 			releaseOrder(order)
-			return batch
+			return
 		}
 	}
 
-	return book.handleLimitOrder(commandID, order, timestamp)
+	book.handleLimitOrder(commandID, order, timestamp)
 }
 
 // handleMarketOrder handles Market orders.
@@ -1020,8 +1004,8 @@ func (book *OrderBook) handleMarketOrder(
 	quoteSize udecimal.Decimal,
 	stepSize udecimal.Decimal,
 	timestamp int64,
-) *LogBatch {
-	return book.takeLiquidity(commandID, order, takerWalk{
+) {
+	book.takeLiquidity(commandID, order, takerWalk{
 		blockedReason: protocol.RejectReasonPriceProtection,
 		quoteSize:     quoteSize,
 		stepSize:      stepSize,
@@ -1052,7 +1036,7 @@ func (book *OrderBook) takeLiquidity(
 	order *Order,
 	walk takerWalk,
 	timestamp int64,
-) *LogBatch {
+) {
 	quoteSize := walk.quoteSize
 	var targetQueue *queue
 	if order.Side == Buy {
@@ -1061,7 +1045,6 @@ func (book *OrderBook) takeLiquidity(
 		targetQueue = book.bidQueue
 	}
 
-	batch := acquireLogBatch()
 	for {
 		tOrd := targetQueue.peekHeadOrder()
 		if tOrd == nil {
@@ -1081,7 +1064,7 @@ func (book *OrderBook) takeLiquidity(
 			} else {
 				log.Size = order.Size
 			}
-			batch.Logs = append(batch.Logs, log)
+			book.batch.Logs = append(book.batch.Logs, log)
 			releaseOrder(order)
 			break
 		}
@@ -1107,7 +1090,7 @@ func (book *OrderBook) takeLiquidity(
 			} else {
 				log.Size = order.Size
 			}
-			batch.Logs = append(batch.Logs, log)
+			book.batch.Logs = append(book.batch.Logs, log)
 			releaseOrder(order)
 			break
 		}
@@ -1155,7 +1138,7 @@ func (book *OrderBook) takeLiquidity(
 			} else {
 				log.Size = order.Size
 			}
-			batch.Logs = append(batch.Logs, log)
+			book.batch.Logs = append(book.batch.Logs, log)
 			releaseOrder(order)
 			break
 		}
@@ -1176,7 +1159,7 @@ func (book *OrderBook) takeLiquidity(
 			matchSize,
 			timestamp,
 		)
-		batch.Logs = append(batch.Logs, log)
+		book.batch.Logs = append(book.batch.Logs, log)
 
 		if useQuote {
 			quoteSize = quoteSize.Sub(matchSize.Mul(tOrd.Price))
@@ -1186,7 +1169,7 @@ func (book *OrderBook) takeLiquidity(
 
 		tOrd = targetQueue.popHeadOrder()
 		if matchSize.Equal(tOrd.Size) {
-			if !book.checkReplenish(commandID, tOrd, targetQueue, batch, timestamp) {
+			if !book.checkReplenish(commandID, tOrd, targetQueue, timestamp) {
 				releaseOrder(tOrd)
 			}
 		} else {
@@ -1200,7 +1183,6 @@ func (book *OrderBook) takeLiquidity(
 			break
 		}
 	}
-	return batch
 }
 
 // beyondProtectionPrice reports whether a resting level at makerPrice lies outside
@@ -1217,7 +1199,6 @@ func (book *OrderBook) checkReplenish(
 	commandID string,
 	order *Order,
 	q *queue,
-	batch *LogBatch,
 	timestamp int64,
 ) bool {
 	if order.HiddenSize.GreaterThan(udecimal.Zero) {
@@ -1243,7 +1224,7 @@ func (book *OrderBook) checkReplenish(
 			order.Type,
 			timestamp,
 		)
-		batch.Logs = append(batch.Logs, log)
+		book.batch.Logs = append(book.batch.Logs, log)
 		return true
 	}
 	return false

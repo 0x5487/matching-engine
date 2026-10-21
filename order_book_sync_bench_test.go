@@ -145,7 +145,6 @@ func syncBenchOK(batch *LogBatch, err error, want protocol.LogType) bool {
 	if batch == nil {
 		return false
 	}
-	defer batch.Release()
 	return err == nil && len(batch.Logs) == 1 && batch.Logs[0].Type == want
 }
 
@@ -154,7 +153,6 @@ func syncBenchFills(batch *LogBatch, err error, makerID string, size udecimal.De
 	if batch == nil {
 		return false
 	}
-	defer batch.Release()
 	if err != nil || len(batch.Logs) != 1 {
 		return false
 	}
@@ -167,7 +165,6 @@ func syncBenchSweepOK(batch *LogBatch, err error, k int) bool {
 	if batch == nil {
 		return false
 	}
-	defer batch.Release()
 	if err != nil || len(batch.Logs) != k {
 		return false
 	}
@@ -185,7 +182,6 @@ func syncBenchTakenMaker(batch *LogBatch, err error) (string, bool) {
 	if batch == nil {
 		return "", false
 	}
-	defer batch.Release()
 	if err != nil || len(batch.Logs) != 1 || batch.Logs[0].Type != protocol.LogTypeMatch {
 		return "", false
 	}
@@ -506,7 +502,6 @@ func BenchmarkSyncS7_DepthDelta(b *testing.B) {
 				continue
 			}
 			builder.AddBatch(batch.Logs)
-			batch.Release()
 			if !builder.Flush(book, &delta) || delta.Seq != book.SeqID() {
 				bad++
 			}

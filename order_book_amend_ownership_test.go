@@ -72,7 +72,6 @@ func TestAmendBatchOwnsEveryLogItReturns(t *testing.T) {
 			protocol.SideSell, price, int64(10+i)))
 		require.NoError(t, err)
 		require.Len(t, batch.Logs, 1)
-		batch.Release()
 	}
 
 	// A bid resting below the whole ladder.
@@ -80,7 +79,6 @@ func TestAmendBatchOwnsEveryLogItReturns(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, bid.Logs, 1)
 	require.Equal(t, protocol.LogTypeOpen, bid.Logs[0].Type)
-	bid.Release()
 
 	// Amend it up through all three asks in one command.
 	batch, err := book.AmendOrder(amendOrder(t, "bid", 103, 3, 21))
@@ -112,8 +110,6 @@ func TestAmendBatchOwnsEveryLogItReturns(t *testing.T) {
 				"amend log must still hold the old price at the time the caller sees it")
 		}
 	}
-
-	batch.Release()
 }
 
 // TestBookStaysCorrectAfterAmend is the pool-integrity check. Amend recycles a
@@ -134,13 +130,11 @@ func TestBookStaysCorrectAfterAmend(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, batch.Logs, 1, "round %d ask %d", round, lv)
 			require.Equal(t, protocol.LogTypeOpen, batch.Logs[0].Type, "round %d ask %d", round, lv)
-			batch.Release()
 		}
 
 		id := "bid-" + string(rune('a'+round))
-		bid, err := book.PlaceOrder(amendPlace(t, id, protocol.SideBuy, base-1, base+5))
+		_, err := book.PlaceOrder(amendPlace(t, id, protocol.SideBuy, base-1, base+5))
 		require.NoError(t, err)
-		bid.Release()
 
 		batch, err := book.AmendOrder(amendOrder(t, id, base+3, 3, base+6))
 		require.NoError(t, err)
@@ -154,6 +148,5 @@ func TestBookStaysCorrectAfterAmend(t *testing.T) {
 			}
 		}
 		assert.Equal(t, 3, matches, "round %d", round)
-		batch.Release()
 	}
 }

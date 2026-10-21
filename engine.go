@@ -26,6 +26,9 @@ type MatchingEngine struct {
 	ring          *RingBuffer[InputEvent]
 	publishTrader Publisher
 	responsePool  *sync.Pool
+	// batch holds the engine-level logs (rejects and user events) of the last event
+	// it published. Only the event loop touches it, and it is reclaimed before reuse.
+	batch LogBatch
 }
 
 const (
@@ -659,10 +662,9 @@ func (engine *MatchingEngine) handleUserEvent(req *protocol.UserEventRequest) {
 	)
 
 	// Publish via the shared publishTrader
-	batch := acquireLogBatch()
-	batch.Logs = append(batch.Logs, log)
-	engine.publishTrader.Publish(batch.Logs)
-	batch.Release()
+	engine.batch.reclaim()
+	engine.batch.Logs = append(engine.batch.Logs, log)
+	engine.publishTrader.Publish(engine.batch.Logs)
 }
 
 // respondQueryError returns a query-side error without waiting for timeout.
@@ -692,10 +694,9 @@ func (engine *MatchingEngine) rejectRequest(req any, reason protocol.RejectReaso
 		reason,
 		base.Timestamp,
 	)
-	batch := acquireLogBatch()
-	batch.Logs = append(batch.Logs, log)
-	engine.publishTrader.Publish(batch.Logs)
-	batch.Release()
+	engine.batch.reclaim()
+	engine.batch.Logs = append(engine.batch.Logs, log)
+	engine.publishTrader.Publish(engine.batch.Logs)
 }
 
 // requestOrderID extracts the business identifier used for reject logs.

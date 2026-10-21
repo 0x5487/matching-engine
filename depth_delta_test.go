@@ -131,7 +131,6 @@ func TestDepthDeltaBatchFormSpansCalls(t *testing.T) {
 		batch, err := h.book.CancelOrder(&protocol.CancelOrderRequest{BaseCommand: h.base(), OrderID: id})
 		require.NoError(t, err)
 		builder.AddBatch(batch.Logs)
-		batch.Release()
 	}
 	var out protocol.DepthDelta
 	require.True(t, builder.Flush(h.book, &out))

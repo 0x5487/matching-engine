@@ -13,7 +13,7 @@ import (
 func amendStepBook(t *testing.T) *OrderBook {
 	t.Helper()
 	book := NewOrderBook("BTC-USDT", WithPublisher(NewDiscardPublishLog()))
-	batch, err := book.PlaceOrder(&protocol.PlaceOrderRequest{
+	_, err := book.PlaceOrder(&protocol.PlaceOrderRequest{
 		BaseCommand: protocol.BaseCommand{UserID: 1, CommandID: "cmd-rest", MarketID: "BTC-USDT", Timestamp: 1},
 		OrderID:     "rest",
 		OrderType:   Limit,
@@ -22,7 +22,6 @@ func amendStepBook(t *testing.T) *OrderBook {
 		Size:        udecimal.MustParse("10"),
 	})
 	require.NoError(t, err)
-	batch.Release()
 	return book
 }
 
@@ -62,7 +61,6 @@ func TestAmendStepSize(t *testing.T) {
 				StepSize: udecimal.MustParse(tc.stepSize),
 			})
 			require.NoError(t, err)
-			defer batch.Release()
 			if tc.refused {
 				requireInvalidPayload(t, batch, "rest")
 				// The helper only inspects the batch. The batch is owned here and

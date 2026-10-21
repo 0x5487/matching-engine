@@ -216,7 +216,6 @@ func TestQuantityStepRejectsDustTakers(t *testing.T) {
 				t, book, "dust", tc.orderType, tc.side,
 				tc.price, "0.0003", "0.001",
 			)
-			defer batch.Release()
 			requireInvalidPayload(t, batch, "dust")
 		})
 	}
@@ -240,7 +239,6 @@ func TestQuantityStepSkipsZeroStep(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, batch)
-	defer batch.Release()
 	matches := matchLogs(t, batch)
 	require.Len(t, matches, 1, "without a step there is nothing to refuse")
 	assert.Equal(t, "0.0003", matches[0].Size.String())
@@ -251,7 +249,6 @@ func TestQuantityStepSkipsZeroStep(t *testing.T) {
 func TestQuantityStepAcceptsWholeMultiples(t *testing.T) {
 	book := stepValidationBook(t)
 	batch := stepValidationPlace(t, book, "clean", Limit, Buy, "85000", "0.002", "0.001")
-	defer batch.Release()
 	matches := matchLogs(t, batch)
 	require.Len(t, matches, 1, "a clean taker matches exactly as before")
 	assert.Equal(t, "0.002", matches[0].Size.String())
@@ -276,7 +273,6 @@ func TestQuantityStepRejectsDustVisibleSize(t *testing.T) {
 	})
 	require.NoError(t, err, "PlaceOrder returns rejects as logs, not errors")
 	require.NotNil(t, batch)
-	defer batch.Release()
 	requireInvalidPayload(t, batch, "iceberg")
 }
 
@@ -334,7 +330,6 @@ func TestNonStepQuantitiesStillTerminate(t *testing.T) {
 	select {
 	case batch := <-done:
 		require.NotNil(t, batch)
-		defer batch.Release()
 		matches := matchLogs(t, batch)
 		require.Len(t, matches, 3, "every offer is reachable, including the sub-step ones")
 		assert.Equal(t, "0.0003", matches[0].Size.String(), "the whole offer is taken, not floored to zero")

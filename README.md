@@ -67,7 +67,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer sellBatch.Release() // Always release pooled LogBatch back to sync.Pool
+	// sellBatch is the book's own batch: valid until the next call on this book.
 
 	// 3. Place a Matching Buy Order synchronously (matches immediately)
 	buyBatch, err := book.PlaceOrder(&protocol.PlaceOrderRequest{
@@ -86,7 +86,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer buyBatch.Release()
 
 	// 4. Immediately inspect match results (e.g. for atomic balance settlement)
 	for _, log := range buyBatch.Logs {
@@ -243,7 +242,6 @@ func main() {
 		panic(err)
 	}
 	feed.AddBatch(batch.Logs)
-	batch.Release()
 
 	var delta protocol.DepthDelta
 	if feed.Flush(book, &delta) {
@@ -299,7 +297,7 @@ decoded, err := protocol.UnmarshalRequest(data)
 
 - **Strict Authoritative Timestamp**: Every state-changing request (`PlaceOrderRequest`, `CancelOrderRequest`, `AmendOrderRequest`, management commands) must carry an upstream-assigned non-zero logical `Timestamp` (Unix nanoseconds, e.g. from sequencer metadata). Requests with `Timestamp <= 0` are strictly rejected with `protocol.RejectReasonInvalidPayload`. The engine never calls `time.Now()` internally.
 - **Synchronous vs. Asynchronous**:
-  - **Synchronous Mode (`book.PlaceOrder`, `book.CancelOrder`, `book.AmendOrder`)**: Immediately performs in-memory matching on the caller's goroutine and returns `(*LogBatch, error)`. Callers **MUST** call `batch.Release()` when finished. `Release()` returns both the batch and the logs it holds to their `sync.Pool`s, and it zeroes those logs, so they must be fully consumed before the call and no `*OrderBookLog` or `Logs` slice may be retained across it. This is what lets synchronous callers pool their logs without knowing the pool exists.
+  - **Synchronous Mode (`book.PlaceOrder`, `book.CancelOrder`, `book.AmendOrder`)**: Immediately performs in-memory matching on the caller's goroutine and returns `(*LogBatch, error)`. The batch belongs to the book, so there is nothing to release: the batch and its logs stay valid until the next call on the same book, which reclaims them when it starts. Consume them before that call, and do not retain any `*OrderBookLog` or the `Logs` slice across it. Different books have different batches, so calls on several books may interleave.
   - **Asynchronous Mode (`engine.PlaceOrderAsync`, etc.)**: Enqueues work into the Disruptor MPSC ring buffer. A returned `error` means enqueue failure, not business rejection.
 - Every request must carry an upstream-assigned non-empty `CommandID`. Engine helpers reject empty command IDs before enqueue.
 - Business-level failures are emitted as `OrderBookLog` entries with `Type == protocol.LogTypeReject`.
@@ -399,7 +397,7 @@ could have filled, and lets one holder's dust refuse every order behind it.
 
 Implement `Publisher` interface to handle order book events.
 
-`Publish` **must not** retain anything it is given. The engine always calls `LogBatch.Release()` immediately after `Publish` returns, and `Release` zeroes the logs and returns them to a `sync.Pool`. A log that is read after that point reads recycled memory — usually zeros. Note that `Publish` receives only `[]*OrderBookLog`, not the `*LogBatch`, so an implementation cannot call `Release` itself; doing so is not a supported option and never necessary.
+`Publish` **must not** retain anything it is given. The logs stay valid until the next call on the book that produced them (or the engine's next event), and that call reclaims them: the logs are zeroed and returned to a `sync.Pool`. A log that is read after that point reads recycled memory — usually zeros. `Publish` receives only `[]*OrderBookLog`, not the `*LogBatch`, so an implementation cannot reclaim the logs itself and never needs to.
 
 If the logs are needed beyond the call — for a channel, a goroutine, or a queue — copy them before returning:
 
