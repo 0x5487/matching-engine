@@ -157,7 +157,7 @@ func syncBenchFills(batch *LogBatch, err error, makerID string, size udecimal.De
 		return false
 	}
 	l := batch.Logs[0]
-	return l.Type == protocol.LogTypeMatch && l.MakerOrderID == makerID && l.MatchSize.Equal(size)
+	return l.Type == protocol.LogTypeMatch && l.MakerOrder.ID == makerID && l.MatchSize.Equal(size)
 }
 
 // syncBenchSweepOK reports whether a batch is exactly k matches and nothing else, and releases it.
@@ -185,7 +185,7 @@ func syncBenchTakenMaker(batch *LogBatch, err error) (string, bool) {
 	if err != nil || len(batch.Logs) != 1 || batch.Logs[0].Type != protocol.LogTypeMatch {
 		return "", false
 	}
-	return batch.Logs[0].MakerOrderID, true
+	return batch.Logs[0].MakerOrder.ID, true
 }
 
 // syncBenchSlippageLimit is the protection price matching.go derives for a market buy with a slippage limit:

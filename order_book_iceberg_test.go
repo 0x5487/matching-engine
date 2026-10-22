@@ -68,7 +68,7 @@ func TestIceberg_Replenishment(t *testing.T) {
 	matchFound := false
 	openFound := false
 	for _, l := range logs {
-		if l.Type == protocol.LogTypeMatch && l.MakerOrderID == orderIDIceberg {
+		if l.Type == protocol.LogTypeMatch && l.MakerOrder.ID == orderIDIceberg {
 			matchFound = true
 			assert.Equal(t, "10", l.MatchSize.String())
 		}
@@ -132,7 +132,7 @@ func TestIceberg_ReplenishmentPriority(t *testing.T) {
 	logs := publishTrader.Logs()
 	matchedWithNorm := false
 	for _, l := range logs {
-		if l.Type == protocol.LogTypeMatch && l.MakerOrderID == "norm-1" && l.OrderID == "taker-2" {
+		if l.Type == protocol.LogTypeMatch && l.MakerOrder.ID == "norm-1" && l.OrderID == "taker-2" {
 			matchedWithNorm = true
 		}
 	}
@@ -183,7 +183,7 @@ func TestIceberg_Amend(t *testing.T) {
 	logs := publishTrader.Logs()
 	matchedWithIce := false
 	for _, l := range logs {
-		if l.Type == protocol.LogTypeMatch && l.MakerOrderID == orderIDIceberg &&
+		if l.Type == protocol.LogTypeMatch && l.MakerOrder.ID == orderIDIceberg &&
 			l.OrderID == "taker-1" {
 			matchedWithIce = true
 		}
@@ -209,7 +209,7 @@ func TestIceberg_Amend(t *testing.T) {
 	logs = publishTrader.Logs()
 	matchedWithNorm := false
 	for _, l := range logs {
-		if l.Type == protocol.LogTypeMatch && l.MakerOrderID == "norm-1" && l.OrderID == "taker-2" {
+		if l.Type == protocol.LogTypeMatch && l.MakerOrder.ID == "norm-1" && l.OrderID == "taker-2" {
 			matchedWithNorm = true
 		}
 	}
@@ -386,7 +386,7 @@ func TestIceberg_SnapshotRestore(t *testing.T) {
 	matchFound := false
 	replenishFound := false
 	for _, l := range logs {
-		if l.Type == protocol.LogTypeMatch && l.MakerOrderID == orderIDIceberg {
+		if l.Type == protocol.LogTypeMatch && l.MakerOrder.ID == orderIDIceberg {
 			matchFound = true
 		}
 		if l.Type == protocol.LogTypeOpen && l.OrderID == orderIDIceberg {

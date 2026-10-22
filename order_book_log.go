@@ -93,10 +93,9 @@ type OrderBookLog struct {
 	// QuoteRemaining is the quote a Reject of a quote-sized market order leaves
 	// unspent. Zero on every other log, including a base-sized reject.
 	QuoteRemaining udecimal.Decimal `json:"quote_remaining,omitzero"`
-	MakerOrderID   string           `json:"maker_order_id,omitempty"`
-	MakerUserID    uint64           `json:"maker_user_id,omitempty"`
-	// MakerOrder is the maker of a Match log as the trade left it: a copy of its routing and of its size, filled and
-	// hidden after this trade and before any replenish it triggers. Zero on every other log.
+	// MakerOrder is the maker of a Match log as the trade left it: a copy of its ID, user, routing and size, filled and
+	// hidden after this trade and before any replenish it triggers. It is the one place a match names its maker: read
+	// the maker's ID and user from MakerOrder.ID and MakerOrder.UserID. Zero on every other log.
 	MakerOrder   Order                 `json:"maker_order,omitzero"`
 	RejectReason protocol.RejectReason `json:"reject_reason,omitempty"`
 	EventType    string                `json:"event_type,omitempty"` // For Admin/User events
@@ -229,7 +228,8 @@ func NewOpenLog(
 	return log
 }
 
-// NewMatchLog creates a new OrderBookLog for a trade match event.
+// NewMatchLog creates a new OrderBookLog for a trade match event. maker is the resting
+// order as the trade left it; the log keeps a copy in MakerOrder.
 //
 //nolint:revive // argument-limit
 func NewMatchLog(
@@ -241,8 +241,7 @@ func NewMatchLog(
 	takerUserID uint64,
 	takerSide Side,
 	takerType OrderType,
-	makerID string,
-	makerUserID uint64,
+	maker *Order,
 	price udecimal.Decimal,
 	matchSize udecimal.Decimal,
 	timestamp int64,
@@ -261,8 +260,7 @@ func NewMatchLog(
 	log.OrderID = takerID
 	log.UserID = takerUserID
 	log.OrderType = takerType
-	log.MakerOrderID = makerID
-	log.MakerUserID = makerUserID
+	log.MakerOrder = copyOrder(maker)
 	log.Timestamp = timestamp
 	return log
 }

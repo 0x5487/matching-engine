@@ -91,7 +91,7 @@ func main() {
 	for _, log := range buyBatch.Logs {
 		if log.Type == protocol.LogTypeMatch {
 			fmt.Printf("[MATCH] TradeID: %d, Price: %s, Size: %s, Maker: %s, Taker: %s\n",
-				log.TradeID, log.Price, log.MatchSize, log.MakerOrderID, log.OrderID)
+				log.TradeID, log.Price, log.MatchSize, log.MakerOrder.ID, log.OrderID)
 		}
 	}
 
@@ -208,7 +208,7 @@ Key capabilities:
 - **Follower (`AggregatedBook.ApplyDelta`)**: a delta with `Seq` one past the follower's version sets each level and advances the version. A resend (`Seq` at or below the version) is skipped. A gap calls `OnRebuild` for a snapshot; the snapshot is applied only if it reaches the delta, and otherwise `ErrSequenceGap` is returned with the book unchanged. A malformed delta is refused with `ErrInvalidDepthDelta` before anything changes. A snapshot is a `protocol.DepthDelta` that lists every level, with `Seq` the version it was taken at; `ApplySnapshot` checks it as a whole, so a negative size or a price written twice on one side leaves the book as it was.
 - **Prices are compared by value**: `100` and `100.00` are one level, on the book and in the delta. The book keys its price maps by a canonical form, so the second order written at the same price joins the first instead of resting on a level of its own.
 - **Queries on the book**: `LevelSize(side, price)` is the visible size at one price, `BestPrice(side)` the best price of a side, `Remaining(orderID)` the total base size an order still has on the book, visible plus hidden, `OrderCount()` how many orders rest on the book, and `Order(orderID)` a copy of the order as the book holds it: its user, side, price, sizes, its routing (`OmsShard`, `MakerFeeRate`, `TakerFeeRate`, `BaseAsset`, `QuoteAsset`) and `FilledSize`, the base it has traded over its life. The second result of each is false for an order that is gone. All are read from the book, so a caller holds no second copy of depth, of an order's remaining size or of its routing.
-- **Routing travels with the order**: the caller of `PlaceOrder` sets the routing fields of `PlaceOrderRequest`, and the book keeps them on the order and never reads them. A Match log carries its maker as the trade left it, in `MakerOrder`, so a consumer that settles a fill finds the maker's shard, fee rate and assets on the log itself, including for a maker that the same call consumes whole.
+- **Routing travels with the order**: the caller of `PlaceOrder` sets the routing fields of `PlaceOrderRequest`, and the book keeps them on the order and never reads them. A Match log names its maker once, in `MakerOrder`, as the trade left it: the maker's ID and user, its shard, fee rate and assets, so a consumer that settles a fill finds them on the log itself, including for a maker that the same call consumes whole.
 - **Thread-Safe Queries**: `AggregatedBook` is protected by an internal `sync.RWMutex`; `GetDepth` and `Depth` may run beside `ApplyDelta`, which has one writer.
 
 ```go
@@ -432,7 +432,7 @@ Each quantity field of `OrderBookLog` has one meaning. A log leaves the fields t
 | `VisibleAdded` | the visible size an open puts on the book (the visible part of `Remaining`) | `Open` |
 | `VisibleRemoved` | the visible size a cancel or an amend takes off the book, at `OldPrice` | `Cancel`, `Amend` |
 | `QuoteRemaining` | the quote a quote-sized market order did not spend | `Reject` (quote-sized) |
-| `MakerOrder` | the maker of the trade as it is after the trade and before any replenish it triggers: its routing, its `Size` (visible) and `HiddenSize` left, and its `FilledSize` | `Match` |
+| `MakerOrder` | the maker of the trade as it is after the trade and before any replenish it triggers: its `ID` and `UserID`, its routing, its `Size` (visible) and `HiddenSize` left, and its `FilledSize`. It is the only place a match names its maker | `Match` |
 
 `Price`, `OldPrice`, `Amount` and the identifiers keep their usual meaning. `Open` and `Cancel` do not use `Amount`; `Amount` is the quote of a match only.
 

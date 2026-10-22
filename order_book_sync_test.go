@@ -82,8 +82,8 @@ func TestOrderBook_SyncAPI(t *testing.T) {
 		assert.Equal(t, protocol.LogTypeMatch, trade.Type)
 		assert.Equal(t, "buy-order-1", trade.OrderID)
 		assert.Equal(t, uint64(2002), trade.UserID)
-		assert.Equal(t, "sell-order-1", trade.MakerOrderID)
-		assert.Equal(t, uint64(1001), trade.MakerUserID)
+		assert.Equal(t, "sell-order-1", trade.MakerOrder.ID)
+		assert.Equal(t, uint64(1001), trade.MakerOrder.UserID)
 		assert.Equal(t, "50000", trade.Price.String())
 		assert.Equal(t, "0.4", trade.MatchSize.String())
 		assert.Equal(t, "20000", trade.Amount.String()) // 50000 * 0.4 = 20000

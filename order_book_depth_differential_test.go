@@ -126,7 +126,7 @@ func dlLogKey(l *OrderBookLog) string {
 		l.OldRemaining,
 		l.OldRemaining,
 		l.VisibleRemoved,
-		l.MakerOrderID,
+		l.MakerOrder.ID,
 		l.TradeID,
 		l.Timestamp,
 	)

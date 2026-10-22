@@ -1,6 +1,8 @@
 package match
 
 import (
+	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/quagmt/udecimal"
@@ -140,8 +142,8 @@ func TestMatchLogCarriesTheMakerAsTheTradeLeftIt(t *testing.T) {
 			require.Len(t, matches, len(tc.matches))
 			for i, want := range tc.matches {
 				m := matches[i]
-				assert.Equal(t, "maker", m.MakerOrderID)
-				assert.Equal(t, uint64(201), m.MakerUserID)
+				assert.Equal(t, "maker", m.MakerOrder.ID, "match %d: maker id", i)
+				assert.Equal(t, uint64(201), m.MakerOrder.UserID, "match %d: maker user", i)
 				assert.Equal(t, uint32(7), m.MakerOrder.OmsShard, "match %d: maker shard", i)
 				assert.True(t, m.MakerOrder.MakerFeeRate.Equal(udecimal.MustParse("0.001")), "match %d: maker rate", i)
 				assert.Equal(t, "BTC", m.MakerOrder.BaseAsset, "match %d", i)
@@ -157,6 +159,45 @@ func TestMatchLogCarriesTheMakerAsTheTradeLeftIt(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestMatchLogNamesTheMakerOnce: a match log names its maker in one place, MakerOrder. A second field for the maker's
+// ID or user could disagree with the copy, and a reader would have to choose between them. The check reads the type and
+// the encoded bytes, so a field that is kept under another name or tag is caught too.
+func TestMatchLogNamesTheMakerOnce(t *testing.T) {
+	t.Parallel()
+	typ := reflect.TypeFor[OrderBookLog]()
+	for _, name := range []string{"MakerOrderID", "MakerUserID"} {
+		_, ok := typ.FieldByName(name)
+		assert.False(t, ok, "OrderBookLog has the field %s: the maker is named once, in MakerOrder", name)
+	}
+
+	book := NewOrderBook("BTC-USDT")
+	placeCopy(t, book, routedPlace("maker", 201, Sell, 100, 1, 7))
+	logs := placeCopy(t, book, routedPlace("taker", 101, Buy, 100, 1, 9))
+	var match *OrderBookLog
+	for i := range logs {
+		if logs[i].Type == protocol.LogTypeMatch {
+			match = &logs[i]
+		}
+	}
+	require.NotNil(t, match)
+
+	raw, err := json.Marshal(match)
+	require.NoError(t, err)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &fields))
+	for _, key := range []string{"maker_order_id", "maker_user_id"} {
+		_, ok := fields[key]
+		assert.False(t, ok, "a match log is encoded with the key %q: the maker is named once, in maker_order", key)
+	}
+	var maker struct {
+		ID     string `json:"id"`
+		UserID uint64 `json:"user_id"`
+	}
+	require.NoError(t, json.Unmarshal(fields["maker_order"], &maker))
+	assert.Equal(t, "maker", maker.ID)
+	assert.Equal(t, uint64(201), maker.UserID)
 }
 
 // TestFilledSizeFollowsEveryMatchAndAmend: the book's filled size of a resting order counts every match it takes or

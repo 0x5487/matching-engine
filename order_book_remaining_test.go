@@ -24,7 +24,7 @@ func (m remainingModel) apply(logs []*OrderBookLog) {
 			m[l.OrderID] = l.Remaining
 		case protocol.LogTypeMatch:
 			m.take(l.OrderID, l.MatchSize)
-			m.take(l.MakerOrderID, l.MatchSize)
+			m.take(l.MakerOrder.ID, l.MatchSize)
 		case protocol.LogTypeCancel:
 			delete(m, l.OrderID)
 		default:

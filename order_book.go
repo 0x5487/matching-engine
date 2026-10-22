@@ -864,13 +864,11 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 				order.UserID,
 				order.Side,
 				order.Type,
-				tOrd.ID,
-				tOrd.UserID,
+				tOrd,
 				tOrd.Price,
 				matchSize,
 				timestamp,
 			)
-			log.MakerOrder = copyOrder(tOrd)
 			book.batch.Logs = append(book.batch.Logs, log)
 			order.FilledSize = order.FilledSize.Add(matchSize)
 			targetQueue.pushFront(tOrd)
@@ -893,13 +891,11 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 			order.UserID,
 			order.Side,
 			order.Type,
-			tOrd.ID,
-			tOrd.UserID,
+			tOrd,
 			tOrd.Price,
 			matchSize,
 			timestamp,
 		)
-		log.MakerOrder = copyOrder(tOrd)
 		book.batch.Logs = append(book.batch.Logs, log)
 		order.Size = order.Size.Sub(matchSize)
 		order.FilledSize = order.FilledSize.Add(matchSize)
@@ -1206,13 +1202,11 @@ func (book *OrderBook) takeLiquidity(
 			order.UserID,
 			order.Side,
 			order.Type,
-			tOrd.ID,
-			tOrd.UserID,
+			tOrd,
 			tOrd.Price,
 			matchSize,
 			timestamp,
 		)
-		log.MakerOrder = copyOrder(tOrd)
 		book.batch.Logs = append(book.batch.Logs, log)
 
 		if useQuote {

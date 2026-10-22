@@ -55,8 +55,8 @@ func renderLog(l *OrderBookLog) string {
 	str("ot", string(l.OrderType))
 	str("opx", l.OldPrice.String())
 	str("orem", l.OldRemaining.String())
-	str("mk", l.MakerOrderID)
-	str("mku", strconv.FormatUint(l.MakerUserID, 10))
+	str("mk", l.MakerOrder.ID)
+	str("mku", strconv.FormatUint(l.MakerOrder.UserID, 10))
 	str("why", string(l.RejectReason))
 	str("ts", strconv.FormatInt(l.Timestamp, 10))
 	return out

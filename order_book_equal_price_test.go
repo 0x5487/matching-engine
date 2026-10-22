@@ -271,7 +271,7 @@ func requireMakerFills(t *testing.T, batch *LogBatch, makers, sizes []string) {
 	require.Len(t, batch.Logs, len(makers), "one match per maker, no open or reject")
 	for i, log := range batch.Logs {
 		require.Equal(t, protocol.LogTypeMatch, log.Type, "log %d", i)
-		require.Equal(t, makers[i], log.MakerOrderID, "log %d maker", i)
+		require.Equal(t, makers[i], log.MakerOrder.ID, "log %d maker", i)
 		require.Equal(t, sizes[i], log.MatchSize.String(), "log %d size", i)
 	}
 }

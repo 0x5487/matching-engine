@@ -82,7 +82,7 @@ func TestBookBatch_EachCallHoldsOnlyItsOwnLogs(t *testing.T) {
 	require.NoError(t, err)
 	requireOnlyCommand(t, second.Logs, "cmd-b1")
 	require.Equal(t, protocol.LogTypeMatch, second.Logs[0].Type)
-	require.Equal(t, "s1", second.Logs[0].MakerOrderID, "the match names the resting order it took")
+	require.Equal(t, "s1", second.Logs[0].MakerOrder.ID, "the match names the resting order it took")
 
 	third, err := book.PlaceOrder(batchPlace(batchMarket, "r1", protocol.SideBuy, 99, 3))
 	require.NoError(t, err)
@@ -158,7 +158,7 @@ func TestBookBatch_AmendLogsStayInTheBooksBatch(t *testing.T) {
 		l := batch.Logs[i]
 		assert.Equal(t, w.typ, l.Type, "log %d type", i)
 		assert.Equal(t, w.orderID, l.OrderID, "log %d order", i)
-		assert.Equal(t, w.makerOrderID, l.MakerOrderID, "log %d maker", i)
+		assert.Equal(t, w.makerOrderID, l.MakerOrder.ID, "log %d maker", i)
 		assert.Equal(t, w.price, l.Price.String(), "log %d price", i)
 		assert.Equal(t, w.size, quantityOf(l).String(), "log %d size", i)
 		assert.Equal(t, w.tradeID, l.TradeID, "log %d trade", i)
@@ -288,7 +288,7 @@ func TestBookPublisher_KeptLogsSurviveLaterCalls(t *testing.T) {
 	assert.Equal(t, "100", logs[0].Price.String())
 	assert.Equal(t, protocol.LogTypeMatch, logs[1].Type)
 	assert.Equal(t, "b1", logs[1].OrderID)
-	assert.Equal(t, "s1", logs[1].MakerOrderID)
+	assert.Equal(t, "s1", logs[1].MakerOrder.ID)
 	assert.Equal(t, uint64(1), logs[1].TradeID)
 	assert.Equal(t, protocol.LogTypeOpen, logs[2].Type)
 	assert.Equal(t, "r1", logs[2].OrderID)
