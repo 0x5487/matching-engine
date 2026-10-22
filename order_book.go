@@ -183,7 +183,10 @@ func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, e
 	// Basic validation
 	isValid := true
 	if req.OrderType == Market {
-		if req.Size.IsZero() && req.QuoteSize.IsZero() {
+		// A market order is sized by exactly one measure: a base quantity (Size) or a
+		// quote amount (QuoteSize). Neither leaves nothing to walk; both would leave
+		// the reject to say which of the two the order was sized in. Either is refused.
+		if req.Size.IsZero() == req.QuoteSize.IsZero() {
 			isValid = false
 		}
 		// A quote-sized order converts by dividing by each level's price, and the
@@ -1066,7 +1069,11 @@ func (book *OrderBook) takeLiquidity(
 	walk takerWalk,
 	timestamp int64,
 ) {
-	quoteSize := walk.quoteSize
+	// quoteLeft is the quote the walk has not spent yet. A quote-sized order is the one
+	// with no base Size and a quote amount; that is decided here, once, and every reject
+	// below reports its unfilled amount through setUnfilled.
+	quoteLeft := walk.quoteSize
+	quoteSized := quoteSizedOrder(order, quoteLeft)
 	var targetQueue *queue
 	if order.Side == Buy {
 		targetQueue = book.askQueue
@@ -1088,17 +1095,12 @@ func (book *OrderBook) takeLiquidity(
 				timestamp,
 			)
 			log.Side, log.Price, log.OrderType = order.Side, order.Price, order.Type
-			if !quoteSize.IsZero() {
-				log.QuoteRemaining = quoteSize
-			} else {
-				log.Remaining = order.Size
-			}
+			setUnfilled(log, order, quoteLeft)
 			book.batch.Logs = append(book.batch.Logs, log)
 			releaseOrder(order)
 			break
 		}
 
-		useQuote := order.Size.IsZero() && !quoteSize.IsZero()
 		// The price bound stops the walk at the first level beyond it, and the
 		// remainder goes back unfrozen. The bound is inclusive.
 		if (walk.priceRequired || order.Price.GreaterThan(udecimal.Zero)) &&
@@ -1114,18 +1116,14 @@ func (book *OrderBook) takeLiquidity(
 				timestamp,
 			)
 			log.Side, log.Price, log.OrderType = order.Side, order.Price, order.Type
-			if useQuote {
-				log.QuoteRemaining = quoteSize // Remaining quote size the price bound left unmatched
-			} else {
-				log.Remaining = order.Size
-			}
+			setUnfilled(log, order, quoteLeft)
 			book.batch.Logs = append(book.batch.Logs, log)
 			releaseOrder(order)
 			break
 		}
 
 		matchSize := order.Size
-		if useQuote {
+		if quoteSized {
 			// Floor first, then take the minimum with the resting order. The order
 			// of those two operations is what keeps an offer placed under an older,
 			// finer step reachable: flooring the minimum would send 0.0003 to zero at
@@ -1135,7 +1133,7 @@ func (book *OrderBook) takeLiquidity(
 			// Only the quote path needs flooring. When both sizes are whole steps the
 			// result already is, so flooring a quantity-based order would change
 			// nothing and cost a division on the hot path.
-			maxSize, _ := quoteSize.Div(tOrd.Price)
+			maxSize, _ := quoteLeft.Div(tOrd.Price)
 			steps, _ := maxSize.Div(walk.stepSize)
 			matchSize = steps.Floor().Mul(walk.stepSize)
 		}
@@ -1162,11 +1160,7 @@ func (book *OrderBook) takeLiquidity(
 				timestamp,
 			)
 			log.Side, log.Price, log.OrderType = order.Side, order.Price, order.Type
-			if useQuote {
-				log.QuoteRemaining = quoteSize // Remaining quote size that couldn't be matched
-			} else {
-				log.Remaining = order.Size
-			}
+			setUnfilled(log, order, quoteLeft)
 			book.batch.Logs = append(book.batch.Logs, log)
 			releaseOrder(order)
 			break
@@ -1197,8 +1191,8 @@ func (book *OrderBook) takeLiquidity(
 		)
 		book.batch.Logs = append(book.batch.Logs, log)
 
-		if useQuote {
-			quoteSize = quoteSize.Sub(matchSize.Mul(tOrd.Price))
+		if quoteSized {
+			quoteLeft = quoteLeft.Sub(matchSize.Mul(tOrd.Price))
 		} else {
 			order.Size = order.Size.Sub(matchSize)
 		}
@@ -1213,11 +1207,29 @@ func (book *OrderBook) takeLiquidity(
 		}
 
 		// Termination condition
-		if (useQuote && quoteSize.IsZero()) || (!useQuote && order.Size.IsZero()) {
+		if (quoteSized && quoteLeft.IsZero()) || (!quoteSized && order.Size.IsZero()) {
 			releaseOrder(order)
 			break
 		}
 	}
+}
+
+// quoteSizedOrder reports whether the walk spends a quote amount rather than a quantity:
+// the order has no base Size and a quote is left to spend. The entry check lets a market
+// order through with exactly one measure, so this is the order's placement.
+func quoteSizedOrder(order *Order, quoteLeft udecimal.Decimal) bool {
+	return order.Size.IsZero() && !quoteLeft.IsZero()
+}
+
+// setUnfilled records what a reject leaves unfilled, in the unit the order was placed
+// in: the quote for a quote-sized order, the base quantity for one sized in quantity.
+// The other field stays zero. This is the only place a reject chooses its field.
+func setUnfilled(log *OrderBookLog, order *Order, quoteLeft udecimal.Decimal) {
+	if quoteSizedOrder(order, quoteLeft) {
+		log.QuoteRemaining = quoteLeft
+		return
+	}
+	log.Remaining = order.Size
 }
 
 // beyondProtectionPrice reports whether a resting level at makerPrice lies outside

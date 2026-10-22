@@ -353,10 +353,12 @@ that manage books themselves.
 | Type | Description |
 |------|-------------|
 | `Limit` | Buy/sell at a specific price or better |
-| `Market` | Execute immediately at best available price. With `Size` no `StepSize` is needed; with `QuoteSize` it is required — see [Step Size](#step-size). |
+| `Market` | Execute immediately at best available price. Sized by exactly one of `Size` (base quantity) or `QuoteSize` (quote amount); sending both, or neither, is refused as `invalid_payload`. With `Size` no `StepSize` is needed; with `QuoteSize` it is required — see [Step Size](#step-size). |
 | `IOC` | Fill immediately, cancel unfilled portion. |
 | `FOK` | Fill entirely immediately or cancel completely. |
 | `PostOnly` | Add to book as maker only, reject if would match immediately. |
+
+Only a market order reads `QuoteSize`. A `Limit`, `IOC`, `FOK` or `PostOnly` order is sized by `Size` alone, and a `QuoteSize` on it is ignored.
 
 ### Step Size
 
@@ -427,11 +429,11 @@ Each quantity field of `OrderBookLog` has one meaning. A log leaves the fields t
 | Field | Meaning | Set by |
 | :--- | :--- | :--- |
 | `MatchSize` | the base quantity traded; the visible size the maker gives up (a match never consumes an iceberg's hidden part) | `Match` |
-| `Remaining` | the order's total remaining base size, visible plus hidden: the total after an open rests, the new total of an amend, the total a cancel removes, the base quantity a reject did not get | `Open`, `Amend`, `Cancel`, `Reject` (base-sized) |
+| `Remaining` | the order's total remaining base size, visible plus hidden: the total after an open rests, the new total of an amend, the total a cancel removes, the base quantity a reject did not get | `Open`, `Amend`, `Cancel`, `Reject` (quantity-sized; never set on a quote-sized reject) |
 | `OldRemaining` | the total before the amend | `Amend` |
 | `VisibleAdded` | the visible size an open puts on the book (the visible part of `Remaining`) | `Open` |
 | `VisibleRemoved` | the visible size a cancel or an amend takes off the book, at `OldPrice` | `Cancel`, `Amend` |
-| `QuoteRemaining` | the quote a quote-sized market order did not spend | `Reject` (quote-sized) |
+| `QuoteRemaining` | the quote a quote-sized market order did not spend | `Reject` (quote-sized; never set on a quantity-sized reject) |
 | `MakerOrder` | the maker of the trade as it is after the trade and before any replenish it triggers: its `ID` and `UserID`, its routing, its `Size` (visible) and `HiddenSize` left, and its `FilledSize`. It is the only place a match names its maker | `Match` |
 
 `Price`, `OldPrice`, `Amount` and the identifiers keep their usual meaning. `Open` and `Cancel` do not use `Amount`; `Amount` is the quote of a match only.

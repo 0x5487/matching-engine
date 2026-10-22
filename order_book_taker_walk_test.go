@@ -465,43 +465,6 @@ func TestMarketByQuoteWalk(t *testing.T) {
 	}
 }
 
-// TestMarketWithBothSizesKeepsQuoteInTheEmptyBookReject documents an existing
-// quirk rather than endorsing it: a market order carrying both a Size and a
-// QuoteSize walks by Size, but the reject for an exhausted book reports QuoteSize,
-// while every other reject reports the unfilled Size.
-func TestMarketWithBothSizesKeepsQuoteInTheEmptyBookReject(t *testing.T) {
-	t.Parallel()
-
-	t.Run("exhausted book reports the quote", func(t *testing.T) {
-		t.Parallel()
-		book := newWalkBook()
-		walkRest(t, book, "ask-100", Sell, "100", "1", "0")
-		batch := walkPlace(t, book, &protocol.PlaceOrderRequest{
-			OrderID: "taker", OrderType: Market, Side: Buy,
-			Size: udecimal.MustParse("2"), QuoteSize: udecimal.MustParse("50"),
-		})
-		assert.Equal(t, []string{
-			"match seq=2 c=c-taker tr=1 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
-			"reject c=c-taker s=1 qrem=50 o=taker u=2 ot=market why=no_liquidity ts=2",
-		}, renderBatch(batch))
-	})
-
-	t.Run("protection price reports the unfilled size", func(t *testing.T) {
-		t.Parallel()
-		book := newWalkBook()
-		walkRest(t, book, "ask-100", Sell, "100", "1", "0")
-		walkRest(t, book, "ask-101", Sell, "101", "1", "0")
-		batch := walkPlace(t, book, &protocol.PlaceOrderRequest{
-			OrderID: "taker", OrderType: Market, Side: Buy, Price: udecimal.MustParse("100"),
-			Size: udecimal.MustParse("2"), QuoteSize: udecimal.MustParse("50"),
-		})
-		assert.Equal(t, []string{
-			"match seq=3 c=c-taker tr=1 s=1 px=100 msz=1 amt=100 o=taker u=2 ot=market mk=ask-100 mku=1 ts=2",
-			"reject c=c-taker s=1 px=100 rem=1 o=taker u=2 ot=market why=price_protection ts=2",
-		}, renderBatch(batch))
-	})
-}
-
 // A market order with Price 0 has no bound; an IOC with Price 0 is refused.
 func TestZeroPriceMarketIsUnboundedAndZeroPriceIOCIsRefused(t *testing.T) {
 	t.Parallel()
