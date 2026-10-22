@@ -103,7 +103,7 @@ func TestRemainingIsTheOrdersTotalAfterEveryCall(t *testing.T) {
 				seq++
 				clock++
 				return protocol.BaseCommand{
-					SeqID: seq, CommandID: fmt.Sprintf("c-%d", seq), UserID: 1,
+					CommandID: fmt.Sprintf("c-%d", seq), UserID: 1,
 					MarketID: fieldsMarket, Timestamp: clock,
 				}
 			}

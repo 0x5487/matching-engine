@@ -108,10 +108,7 @@ func TestLimitOrders(t *testing.T) {
 	t.Run("take all orders", func(t *testing.T) {
 		testOrderBook := createTestOrderBook(t)
 
-		// Verify initial LastCmdSeqID is 0
-		assert.Equal(t, uint64(0), testOrderBook.LastCmdSeqID())
-
-		// Send command with SeqID
+		// Send a command
 		params := &protocol.PlaceOrderRequest{
 			OrderID:   "buyAll",
 			OrderType: Limit,
@@ -126,7 +123,6 @@ func TestLimitOrders(t *testing.T) {
 					CommandID: "cmd-buyAll",
 					UserID:    300,
 					Timestamp: 1,
-					SeqID:     100,
 				},
 				OrderID:   params.OrderID,
 				OrderType: params.OrderType,
@@ -135,9 +131,6 @@ func TestLimitOrders(t *testing.T) {
 				Size:      params.Size,
 			},
 		})
-
-		// Verify LastCmdSeqID was updated
-		assert.Equal(t, uint64(100), testOrderBook.LastCmdSeqID())
 
 		memoryPublishTrader, ok := testOrderBook.publisher.(*MemoryPublishLog)
 		require.True(t, ok)

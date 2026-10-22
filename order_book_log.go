@@ -54,11 +54,8 @@ type OrderBookLog struct {
 	// belongs to one order book.
 	//
 	// SeqID is 0 for LogTypeUser: a user event moves no depth and has no depth
-	// version. Its upstream command sequence is in CmdSeqID.
-	SeqID uint64 `json:"seq_id"`
-	// CmdSeqID is the upstream message queue's command sequence. Only a user event
-	// carries it, from MatchingEngine.handleUserEvent; every other log carries 0.
-	CmdSeqID  uint64           `json:"cmd_seq_id,omitempty"`
+	// version.
+	SeqID     uint64           `json:"seq_id"`
 	CommandID string           `json:"command_id"`
 	EngineID  string           `json:"engine_id"`
 	TradeID   uint64           `json:"trade_id,omitempty"`
@@ -354,12 +351,9 @@ func NewRejectLog(
 	return log
 }
 
-// NewUserEventLog creates a new OrderBookLog for a generic user event. cmdSeqID is
-// the upstream command sequence; the event's SeqID stays 0.
-//
-//nolint:revive // argument-limit
+// NewUserEventLog creates a new OrderBookLog for a generic user event. Its SeqID
+// stays 0: a user event moves no depth.
 func NewUserEventLog(
-	cmdSeqID uint64,
 	commandID, engineID string,
 	userID uint64,
 	eventType string,
@@ -368,7 +362,6 @@ func NewUserEventLog(
 	timestamp int64,
 ) *OrderBookLog {
 	log := acquireBookLog()
-	log.CmdSeqID = cmdSeqID
 	log.CommandID = commandID
 	log.EngineID = engineID
 	log.Type = protocol.LogTypeUser

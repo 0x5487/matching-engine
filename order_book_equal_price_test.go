@@ -1,6 +1,7 @@
 package match
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/quagmt/udecimal"
@@ -175,15 +176,17 @@ func TestDepthDeltaOneLevelForEqualPrices(t *testing.T) {
 }
 
 // TestUserEventIsIgnoredByDepth: a user event carries the upstream sequence in
-// CmdSeqID and no depth version; the depth builder must not take it for a change.
+// no depth version; the depth builder must not take it for a change.
 func TestUserEventIsIgnoredByDepth(t *testing.T) {
 	t.Parallel()
 
 	book := newWalkBook()
 	walkRest(t, book, "ask-a", Sell, "100", "1", "0")
-	user := NewUserEventLog(77, "cmd-user", "default", 1, "account.updated", "k", nil, 3)
+	user := NewUserEventLog("cmd-user", "default", 1, "account.updated", "k", nil, 3)
 	require.Equal(t, uint64(0), user.SeqID)
-	require.Equal(t, uint64(77), user.CmdSeqID)
+	raw, err := json.Marshal(user)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "cmd_seq_id")
 
 	builder := NewDepthDeltaBuilder()
 	builder.Add(user)

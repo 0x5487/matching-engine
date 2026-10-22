@@ -64,9 +64,8 @@ type OrderBook struct {
 	// seqID is this book's depth version. One SDK call that moves visible depth
 	// advances it by exactly one; the logs of that call all carry the new value.
 	// Per book, never global.
-	seqID        atomic.Uint64
-	lastCmdSeqID atomic.Uint64 // Last sequence ID of the command
-	tradeID      atomic.Uint64 // Sequential trade ID counter
+	seqID   atomic.Uint64
+	tradeID atomic.Uint64 // Sequential trade ID counter
 	// callSeq is the version the call in progress produces: seqID+1 while the call
 	// runs. callMoved records whether a log of the call has taken it.
 	callSeq   uint64
@@ -112,15 +111,9 @@ func newOrderBookWithPublisher(
 	)
 }
 
-// LastCmdSeqID returns the sequence ID of the last processed command.
-func (book *OrderBook) LastCmdSeqID() uint64 {
-	return book.lastCmdSeqID.Load()
-}
-
 // Restore restores the order book state from a snapshot.
 func (book *OrderBook) Restore(snap *OrderBookSnapshot) {
 	book.seqID.Store(snap.SeqID)
-	book.lastCmdSeqID.Store(snap.LastCmdSeqID)
 	book.tradeID.Store(snap.TradeID)
 
 	for _, o := range snap.Bids {
@@ -611,10 +604,6 @@ func (book *OrderBook) processCommand(ev *InputEvent) {
 		)
 		book.sendResponse(ev.Resp, ErrUnknownCommand)
 	}
-
-	if base, ok := protocol.GetRequestBase(req); ok && base.SeqID > 0 {
-		book.lastCmdSeqID.Store(base.SeqID)
-	}
 }
 
 // rejectCall ends a call with one reject log and returns the book's batch.
@@ -784,12 +773,11 @@ func (book *OrderBook) depth(limit uint32) *protocol.GetDepthResponse {
 // createSnapshot internal logic to build the snapshot.
 func (book *OrderBook) createSnapshot() *OrderBookSnapshot {
 	return &OrderBookSnapshot{
-		MarketID:     book.marketID,
-		SeqID:        book.seqID.Load(),
-		LastCmdSeqID: book.lastCmdSeqID.Load(),
-		TradeID:      book.tradeID.Load(),
-		Bids:         book.bidQueue.toSnapshot(),
-		Asks:         book.askQueue.toSnapshot(),
+		MarketID: book.marketID,
+		SeqID:    book.seqID.Load(),
+		TradeID:  book.tradeID.Load(),
+		Bids:     book.bidQueue.toSnapshot(),
+		Asks:     book.askQueue.toSnapshot(),
 	}
 }
 

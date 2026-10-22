@@ -14,6 +14,7 @@ package match
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -687,11 +688,10 @@ func TestUserEventRefusalCarriesNoDepthVersion(t *testing.T) {
 	}
 }
 
-// TestUserEventSeqIDIsTheUpstreamCommandSequence pins where a user event keeps the
-// upstream command sequence. MatchingEngine.handleUserEvent builds the event from
-// the message queue's sequence, which is not a depth version, so it goes in
-// CmdSeqID. SeqID stays 0 for a user event, and the depth projection ignores it.
-func TestUserEventSeqIDIsTheUpstreamCommandSequence(t *testing.T) {
+// TestUserEventCarriesNoDepthVersion pins that a user event has no depth version
+// (SeqID stays 0) and no upstream command sequence: the book keeps none, so the
+// event's JSON has no cmd_seq_id key.
+func TestUserEventCarriesNoDepthVersion(t *testing.T) {
 	pub := &versionRecordingPublisher{}
 	engine := setupEngine(t, pub)
 	ctx := context.Background()
@@ -699,7 +699,7 @@ func TestUserEventSeqIDIsTheUpstreamCommandSequence(t *testing.T) {
 	require.NoError(t, engine.SendUserEvent(ctx, &protocol.UserEventRequest{
 		BaseCommand: protocol.BaseCommand{
 			CommandID: "cmd-user", MarketID: "SEQ-USER-USDT", UserID: 1,
-			Timestamp: time.Now().UnixNano(), SeqID: 77,
+			Timestamp: time.Now().UnixNano(),
 		},
 		EventType: "account.updated",
 	}))
@@ -715,8 +715,12 @@ func TestUserEventSeqIDIsTheUpstreamCommandSequence(t *testing.T) {
 		return len(userLogs) > 0
 	}, time.Second, time.Millisecond, "the engine must have published the user event")
 
-	assert.Equal(t, uint64(77), userLogs[0].CmdSeqID,
-		"a user event carries the upstream command sequence in CmdSeqID")
+	raw, err := json.Marshal(userLogs[0])
+	require.NoError(t, err)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &fields))
+	assert.NotContains(t, fields, "cmd_seq_id",
+		"a user event carries no upstream command sequence")
 	assert.Zero(t, userLogs[0].SeqID,
 		"a user event carries no depth version")
 }

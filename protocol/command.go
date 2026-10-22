@@ -31,13 +31,12 @@ const (
 	versionSize      = 1
 	userIDSize       = 8
 	commandTypeSize  = 1
-	seqIDSize        = 8
 	timestampLenSize = 8
 	sideFieldSize    = 1
 	orderTypeSize    = 1
 	minPayloadSize   = 2
 
-	requestHeaderSize = versionSize + userIDSize + commandTypeSize + seqIDSize + timestampLenSize
+	requestHeaderSize = versionSize + userIDSize + commandTypeSize + timestampLenSize
 	minRequestSize    = requestHeaderSize + stringLenSize + stringLenSize + payloadLenSize
 
 	maxUint16Value = 1<<16 - 1
@@ -57,7 +56,6 @@ var (
 
 // BaseCommand contains the shared metadata for all command requests.
 type BaseCommand struct {
-	SeqID     uint64 // Upstream-assigned monotonic sequence used to preserve logical command ordering.
 	CommandID string
 	UserID    uint64
 	MarketID  string
@@ -356,8 +354,6 @@ func MarshalRequest(req any) ([]byte, error) {
 	offset += 8
 	buf[offset] = uint8(wireType)
 	offset++
-	binary.BigEndian.PutUint64(buf[offset:], base.SeqID)
-	offset += 8
 	binary.BigEndian.PutUint64(buf[offset:], uint64(base.Timestamp))
 	offset += 8
 
@@ -397,8 +393,6 @@ func UnmarshalRequest(data []byte) (any, error) {
 	offset += 8
 	cmdType := CommandType(data[offset])
 	offset++
-	seqID := binary.BigEndian.Uint64(data[offset:])
-	offset += 8
 	timestampValue := binary.BigEndian.Uint64(data[offset:])
 	if timestampValue > maxInt64Value {
 		return nil, errInvalidRequest
@@ -429,7 +423,6 @@ func UnmarshalRequest(data []byte) (any, error) {
 	pData := data[offset : offset+payloadLen]
 
 	base := BaseCommand{
-		SeqID:     seqID,
 		CommandID: commandID,
 		UserID:    userID,
 		MarketID:  marketID,

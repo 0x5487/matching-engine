@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"os"
 	"path/filepath"
@@ -204,6 +205,8 @@ type snapshotQuery struct{}
 
 // TakeSnapshot captures a consistent snapshot of all order books and writes them to the specified directory.
 // It generates two files: `snapshot.bin` (binary data) and `metadata.json` (metadata).
+// The timestamp is the caller's logical time for the snapshot and is required: a call
+// without a positive one returns ErrInvalidParam before anything is taken or written.
 // Returns the metadata object or an error.
 func (engine *MatchingEngine) TakeSnapshot(
 	ctx context.Context,
@@ -212,6 +215,9 @@ func (engine *MatchingEngine) TakeSnapshot(
 ) (*SnapshotMetadata, error) {
 	if engine.isShutdown.Load() {
 		return nil, ErrShutdown
+	}
+	if len(timestamp) == 0 || timestamp[0] <= 0 {
+		return nil, fmt.Errorf("%w: a snapshot needs a logical timestamp", ErrInvalidParam)
 	}
 
 	respChan := engine.acquireResponseChannel()
@@ -235,7 +241,7 @@ func (engine *MatchingEngine) TakeSnapshot(
 		return nil, ctx.Err()
 	}
 
-	return engine.writeSnapshot(outputDir, results, timestamp...)
+	return engine.writeSnapshot(outputDir, results, timestamp[0])
 }
 
 // RestoreFromSnapshot restores the entire matching engine state from a snapshot.
@@ -368,7 +374,7 @@ func (engine *MatchingEngine) enqueueBatch(ctx context.Context, requests []any) 
 func (engine *MatchingEngine) writeSnapshot(
 	outputDir string,
 	results []snapshotResult,
-	timestamp ...int64,
+	timestamp int64,
 ) (*SnapshotMetadata, error) {
 	tmpDir := outputDir + ".tmp"
 	if err := os.RemoveAll(tmpDir); err != nil {
@@ -384,7 +390,6 @@ func (engine *MatchingEngine) writeSnapshot(
 		return nil, err
 	}
 
-	var globalSeqID uint64
 	markets := make([]MarketSegment, 0, len(results))
 	currentOffset := int64(0)
 	var snapshotErrors []error
@@ -416,10 +421,6 @@ func (engine *MatchingEngine) writeSnapshot(
 			Checksum: crc32.ChecksumIEEE(snapData),
 		})
 		currentOffset += length
-
-		if snap.LastCmdSeqID > globalSeqID {
-			globalSeqID = snap.LastCmdSeqID
-		}
 	}
 
 	if len(snapshotErrors) > 0 {
@@ -445,19 +446,11 @@ func (engine *MatchingEngine) writeSnapshot(
 		return nil, errCRC
 	}
 
-	var ts int64
-	if len(timestamp) > 0 && timestamp[0] > 0 {
-		ts = timestamp[0]
-	} else {
-		ts = int64(globalSeqID)
-	}
-
 	meta := &SnapshotMetadata{
-		SchemaVersion:      SnapshotSchemaVersion,
-		Timestamp:          ts,
-		GlobalLastCmdSeqID: globalSeqID,
-		EngineVersion:      EngineVersion,
-		SnapshotChecksum:   snapshotChecksum,
+		SchemaVersion:    SnapshotSchemaVersion,
+		Timestamp:        timestamp,
+		EngineVersion:    EngineVersion,
+		SnapshotChecksum: snapshotChecksum,
 	}
 
 	if errMeta := engine.writeMetadata(tmpDir, meta); errMeta != nil {
@@ -590,9 +583,6 @@ func (engine *MatchingEngine) processCommand(ev *InputEvent) {
 			return
 		}
 		book.processCommand(ev)
-		if base.SeqID > 0 {
-			book.lastCmdSeqID.Store(base.SeqID)
-		}
 	default:
 		engine.rejectRequest(req, protocol.RejectReasonUnknownCommand)
 		engine.respondQueryError(ev, ErrUnknownCommand)
@@ -648,10 +638,8 @@ func (engine *MatchingEngine) handleUserEvent(req *protocol.UserEventRequest) {
 		return
 	}
 
-	// Create and Publish Log. req.SeqID is the upstream command sequence, not a
-	// depth version: NewUserEventLog puts it in CmdSeqID and leaves SeqID at 0.
+	// Create and Publish Log. A user event moves no depth, so its depth version is 0.
 	log := NewUserEventLog(
-		req.SeqID,
 		req.CommandID,
 		engine.engineID,
 		req.UserID,

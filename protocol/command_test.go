@@ -20,7 +20,6 @@ var happyPathRequests = []struct {
 		name: "PlaceOrderRequest",
 		req: &PlaceOrderRequest{
 			BaseCommand: BaseCommand{
-				SeqID:     123,
 				CommandID: "cmd-place",
 				UserID:    789,
 				MarketID:  "BTC-USDT",
@@ -50,7 +49,6 @@ var happyPathRequests = []struct {
 		name: "CancelOrderRequest",
 		req: &CancelOrderRequest{
 			BaseCommand: BaseCommand{
-				SeqID:     124,
 				CommandID: "cmd-cancel",
 				UserID:    789,
 				MarketID:  "BTC-USDT",
@@ -63,7 +61,6 @@ var happyPathRequests = []struct {
 		name: "AmendOrderRequest",
 		req: &AmendOrderRequest{
 			BaseCommand: BaseCommand{
-				SeqID:     125,
 				CommandID: "cmd-amend",
 				UserID:    789,
 				MarketID:  "BTC-USDT",
@@ -78,7 +75,6 @@ var happyPathRequests = []struct {
 		name: "UserEventRequest",
 		req: &UserEventRequest{
 			BaseCommand: BaseCommand{
-				SeqID:     130,
 				CommandID: "cmd-user-event",
 				UserID:    99,
 				MarketID:  "ETH-USDT",
@@ -346,7 +342,7 @@ func TestUnmarshalRequest_TruncatedPayloads(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test every prefix truncation in the header region (first 32 bytes covers
-	// version + userID + type + seqID + timestamp, plus partial strings).
+	// version + userID + type + timestamp, plus partial strings).
 	for i := range len(full) - 1 {
 		truncated := full[:i]
 		_, err := UnmarshalRequest(truncated)
@@ -397,8 +393,8 @@ func TestUnmarshalRequest_InvalidTimestamp(t *testing.T) {
 	data, err := MarshalRequest(validReq)
 	require.NoError(t, err)
 
-	// Timestamp bytes are at offset 18 (1 version + 8 userID + 1 type + 8 seqID).
-	const timestampOffset = 18
+	// Timestamp bytes are at offset 10 (1 version + 8 userID + 1 type).
+	const timestampOffset = 10
 	// Set the most-significant bit to make the value exceed maxInt64Value.
 	data[timestampOffset] = 0x80
 
@@ -465,7 +461,7 @@ func TestAmendOrderStepSizeRoundTrip(t *testing.T) {
 
 	for _, step := range []string{"0", "0.0001", "1"} {
 		in := &AmendOrderRequest{
-			BaseCommand: BaseCommand{SeqID: 7, CommandID: "cmd-amend", UserID: 3, MarketID: "BTC-USDT", Timestamp: 99},
+			BaseCommand: BaseCommand{CommandID: "cmd-amend", UserID: 3, MarketID: "BTC-USDT", Timestamp: 99},
 			OrderID:     "order-9",
 			NewPrice:    udecimal.MustParse("101.5"),
 			NewSize:     udecimal.MustParse("2.5"),

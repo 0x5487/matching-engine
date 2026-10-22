@@ -24,13 +24,11 @@ Key properties of the current implementation:
 - `CommandID` is part of the shared request header and is propagated to emitted logs
 - `Type` remains part of the shared request header for binary decoding
 - request bodies are strongly typed rather than caller-defined payload blobs
-- `SeqID` is optional and used when upstream replay / deduplication semantics require it
 
 Illustrative shape:
 
 ```go
 type BaseCommand struct {
-    SeqID     uint64 `json:"seq_id"`
     CommandID string `json:"command_id"`
     UserID    uint64 `json:"user_id"`
     MarketID  string `json:"market_id"`

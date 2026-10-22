@@ -418,7 +418,7 @@ func (h *MyHandler) Publish(logs []*match.OrderBookLog) {
 }
 ```
 
-A user event keeps the upstream message queue's command sequence in `log.CmdSeqID`; its `SeqID` is 0, since a user event has no depth version.
+A user event's `SeqID` is 0, since a user event has no depth version. The book keeps no upstream command sequence: a caller that needs its message queue offset keeps it itself and saves it with its own state.
 
 #### Log quantity fields
 
@@ -489,8 +489,9 @@ restoredBook.Restore(snapshot)
 Persist full multi-market engine state to disk and restore after restarts:
 
 ```go
-// Take disk snapshot with optional authoritative logical timestamp
-meta, err := engine.TakeSnapshot("./snapshot", seqTimestamp)
+// Take disk snapshot. The logical timestamp is required and is stored as given;
+// a call without a positive one returns an error and writes nothing.
+meta, err := engine.TakeSnapshot(ctx, "./snapshot", seqTimestamp)
 if err != nil {
 	panic(err)
 }
@@ -501,7 +502,7 @@ meta, err = restored.RestoreFromSnapshot("./snapshot")
 if err != nil {
 	panic(err)
 }
-_ = meta // contains GlobalLastCmdSeqID for replay positioning
+_ = meta // meta.Timestamp is the timestamp the snapshot was taken with
 ```
 
 ## Benchmark

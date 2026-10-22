@@ -20,20 +20,18 @@ type OrderBookSnapshot struct {
 	// call after recovery reports a jump, which costs a downstream reader one
 	// rebuild. Discard snapshots taken before the upgrade, or reset that reader; see
 	// the CHANGELOG.
-	SeqID        uint64   `json:"seq_id"`
-	LastCmdSeqID uint64   `json:"last_cmd_seq_id"` // Last processed command sequence ID from MQ
-	TradeID      uint64   `json:"trade_id"`        // Current Trade sequence ID
-	Bids         []*Order `json:"bids"`            // Ordered list of bids (best price first)
-	Asks         []*Order `json:"asks"`            // Ordered list of asks (best price first)
+	SeqID   uint64   `json:"seq_id"`
+	TradeID uint64   `json:"trade_id"` // Current Trade sequence ID
+	Bids    []*Order `json:"bids"`     // Ordered list of bids (best price first)
+	Asks    []*Order `json:"asks"`     // Ordered list of asks (best price first)
 }
 
 // SnapshotMetadata holds the global metadata for a snapshot (stored in metadata.json).
 type SnapshotMetadata struct {
-	SchemaVersion      int    `json:"schema_version"`         // Snapshot schema version for backward compatibility
-	Timestamp          int64  `json:"timestamp"`              // Unix Nano
-	GlobalLastCmdSeqID uint64 `json:"global_last_cmd_seq_id"` // Global MQ offset to resume from (max of all markets)
-	EngineVersion      string `json:"engine_version"`         // Engine version
-	SnapshotChecksum   uint32 `json:"snapshot_checksum"`      // CRC32 of the entire snapshot.bin file
+	SchemaVersion    int    `json:"schema_version"`    // Snapshot schema version for backward compatibility
+	Timestamp        int64  `json:"timestamp"`         // Logical timestamp the caller gave; required, never derived
+	EngineVersion    string `json:"engine_version"`    // Engine version
+	SnapshotChecksum uint32 `json:"snapshot_checksum"` // CRC32 of the entire snapshot.bin file
 }
 
 // SnapshotFileFooter is the footer structure stored at the end of snapshot.bin.

@@ -6,7 +6,7 @@
 
 ## 1. Background
 
-Snapshots provide a recovery point for the in-memory matching engine. After restart, the engine can restore from snapshot state and then resume replay from the external command source using the returned `GlobalLastCmdSeqID`.
+Snapshots provide a recovery point for the in-memory matching engine. After restart, the engine can restore from snapshot state. The engine keeps no upstream command sequence; the caller saves its own replay offset together with the snapshot.
 
 The current implementation aims for:
 
@@ -25,7 +25,7 @@ Current flow:
 3. For each managed market, the engine builds an `OrderBookSnapshot` synchronously from current in-memory state.
 4. The snapshots are serialized and written into `snapshot.bin`.
 5. A footer is appended to `snapshot.bin` describing each market segment.
-6. `metadata.json` is written with global metadata, including `GlobalLastCmdSeqID` and whole-file checksum.
+6. `metadata.json` is written with global metadata, including the caller's logical timestamp and whole-file checksum.
 7. A temporary directory is atomically renamed into place.
 
 This gives consistent capture relative to the event loop without introducing a public snapshot command into the replay stream.
@@ -37,8 +37,7 @@ This gives consistent capture relative to the event loop without introducing a p
 `metadata.json` currently stores global metadata:
 
 - `schema_version`
-- `timestamp`
-- `global_last_cmd_seq_id`
+- `timestamp` (the caller's logical timestamp, required; never derived from anything else)
 - `engine_version`
 - `snapshot_checksum`
 
@@ -60,14 +59,13 @@ Current snapshot content includes:
 
 ```go
 type OrderBookSnapshot struct {
-    MarketID     string
-    SeqID        uint64
-    LastCmdSeqID uint64
-    TradeID      uint64
-    Bids         []*Order
-    Asks         []*Order
-    State        protocol.OrderBookState
-    MinLotSize   udecimal.Decimal
+    MarketID   string
+    SeqID      uint64 // book depth version, not a command sequence
+    TradeID    uint64
+    Bids       []*Order
+    Asks       []*Order
+    State      protocol.OrderBookState
+    MinLotSize udecimal.Decimal
 }
 ```
 
@@ -86,12 +84,12 @@ Current restore flow:
 7. rebuild managed order books in memory
 8. return `SnapshotMetadata` to the caller
 
-The engine does not automatically restart replay. The caller is responsible for using `GlobalLastCmdSeqID` as the replay watermark in the external message source.
+The engine does not automatically restart replay. The caller is responsible for its own replay offset in the external message source, saved with the snapshot.
 
 ## 6. Consistency Rules
 
 - snapshots are taken on the same event loop that processes writes
-- `GlobalLastCmdSeqID` is the maximum observed `LastCmdSeqID` across markets
+- `TakeSnapshot` requires a positive logical timestamp; without one it returns `ErrInvalidParam` and writes nothing
 - restored market state includes order book lifecycle state and lot-size configuration
 - malformed footer or segment bounds must fail restore rather than risking invalid reads or excessive allocations
 
@@ -103,7 +101,7 @@ Validate the current implementation with the following checks:
 - restore detects whole-file checksum mismatch
 - restore detects invalid footer length or invalid segment bounds
 - restored engine state matches pre-snapshot order counts and state
-- replay coordinator can resume from `GlobalLastCmdSeqID` returned by restore
+- replay coordinator can resume from the offset the caller saved with the snapshot
 
 ## 8. Notes
 

@@ -11,7 +11,6 @@ import (
 func TestMarshalUnmarshalRequestBench(t *testing.T) {
 	req := &PlaceOrderRequest{
 		BaseCommand: BaseCommand{
-			SeqID:     123,
 			CommandID: "cmd-place",
 			UserID:    789,
 			MarketID:  "BTC-USDT",
@@ -38,7 +37,6 @@ func TestMarshalUnmarshalRequestBench(t *testing.T) {
 func BenchmarkMarshalRequest(b *testing.B) {
 	req := &PlaceOrderRequest{
 		BaseCommand: BaseCommand{
-			SeqID:     123,
 			CommandID: "cmd-place",
 			UserID:    789,
 			MarketID:  "BTC-USDT",
@@ -63,7 +61,6 @@ func BenchmarkMarshalRequest(b *testing.B) {
 func BenchmarkUnmarshalRequest(b *testing.B) {
 	req := &PlaceOrderRequest{
 		BaseCommand: BaseCommand{
-			SeqID:     123,
 			CommandID: "cmd-place",
 			UserID:    789,
 			MarketID:  "BTC-USDT",
