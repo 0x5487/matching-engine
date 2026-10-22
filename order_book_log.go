@@ -92,13 +92,16 @@ type OrderBookLog struct {
 	VisibleRemoved udecimal.Decimal `json:"visible_removed,omitzero"`
 	// QuoteRemaining is the quote a Reject of a quote-sized market order leaves
 	// unspent. Zero on every other log, including a base-sized reject.
-	QuoteRemaining udecimal.Decimal      `json:"quote_remaining,omitzero"`
-	MakerOrderID   string                `json:"maker_order_id,omitempty"`
-	MakerUserID    uint64                `json:"maker_user_id,omitempty"`
-	RejectReason   protocol.RejectReason `json:"reject_reason,omitempty"`
-	EventType      string                `json:"event_type,omitempty"` // For Admin/User events
-	Data           []byte                `json:"data,omitempty"`       // For User events
-	Timestamp      int64                 `json:"timestamp"`
+	QuoteRemaining udecimal.Decimal `json:"quote_remaining,omitzero"`
+	MakerOrderID   string           `json:"maker_order_id,omitempty"`
+	MakerUserID    uint64           `json:"maker_user_id,omitempty"`
+	// MakerOrder is the maker of a Match log as the trade left it: a copy of its routing and of its size, filled and
+	// hidden after this trade and before any replenish it triggers. Zero on every other log.
+	MakerOrder   Order                 `json:"maker_order,omitzero"`
+	RejectReason protocol.RejectReason `json:"reject_reason,omitempty"`
+	EventType    string                `json:"event_type,omitempty"` // For Admin/User events
+	Data         []byte                `json:"data,omitempty"`       // For User events
+	Timestamp    int64                 `json:"timestamp"`
 }
 
 var bookLogPool = sync.Pool{

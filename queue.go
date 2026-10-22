@@ -312,6 +312,12 @@ func (q *queue) toSnapshot() []*Order {
 				Timestamp:    order.Timestamp,
 				VisibleLimit: order.VisibleLimit,
 				HiddenSize:   order.HiddenSize,
+				OmsShard:     order.OmsShard,
+				MakerFeeRate: order.MakerFeeRate,
+				TakerFeeRate: order.TakerFeeRate,
+				BaseAsset:    order.BaseAsset,
+				QuoteAsset:   order.QuoteAsset,
+				FilledSize:   order.FilledSize,
 			}
 			snapshots = append(snapshots, o)
 			order = order.next

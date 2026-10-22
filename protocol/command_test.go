@@ -38,6 +38,12 @@ var happyPathRequests = []struct {
 			// difference. StepSize was dropped this way until this test
 			// carried a non-zero one.
 			StepSize: udecimal.MustParse("0.0001"),
+			// The routing travels too: a field the codec drops would round-trip as zero, as StepSize once did.
+			OmsShard:     7,
+			MakerFeeRate: udecimal.MustParse("0.0005"),
+			TakerFeeRate: udecimal.MustParse("0.0012"),
+			BaseAsset:    "BTC",
+			QuoteAsset:   "USDT",
 		},
 	},
 	{

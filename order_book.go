@@ -267,6 +267,11 @@ func (book *OrderBook) PlaceOrder(req *protocol.PlaceOrderRequest) (*LogBatch, e
 	order.Type = req.OrderType
 	order.UserID = req.UserID
 	order.Timestamp = req.Timestamp
+	order.OmsShard = req.OmsShard
+	order.MakerFeeRate = req.MakerFeeRate
+	order.TakerFeeRate = req.TakerFeeRate
+	order.BaseAsset = req.BaseAsset
+	order.QuoteAsset = req.QuoteAsset
 
 	if req.VisibleSize.GreaterThan(udecimal.Zero) && req.VisibleSize.LessThan(req.Size) {
 		order.VisibleLimit = req.VisibleSize
@@ -526,6 +531,28 @@ func (book *OrderBook) BestPrice(side Side) (udecimal.Decimal, bool) {
 		return book.askQueue.bestPrice()
 	}
 	return book.bidQueue.bestPrice()
+}
+
+// Order returns a copy of the order with orderID as the book holds it now, and false when the book holds no such
+// order. The copy is the book's current state: a later call changes the book, not the copy.
+func (book *OrderBook) Order(orderID string) (Order, bool) {
+	order, ok := book.findOrder(orderID)
+	if !ok {
+		return Order{}, false
+	}
+	return copyOrder(order), true
+}
+
+// OrderCount is how many orders rest on the book, on both sides. It does not allocate.
+func (book *OrderBook) OrderCount() int {
+	return int(book.bidQueue.orderCount() + book.askQueue.orderCount())
+}
+
+// copyOrder returns the order's state without its list pointers, which mean nothing outside the book.
+func copyOrder(o *Order) Order {
+	c := *o
+	c.next, c.prev = nil, nil
+	return c
 }
 
 // Remaining returns the total base size an order still has on the book: its
@@ -824,6 +851,9 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 
 		tOrd = targetQueue.popHeadOrder()
 		if order.Size.LessThan(tOrd.Size) {
+			matchSize := order.Size
+			tOrd.Size = tOrd.Size.Sub(matchSize)
+			tOrd.FilledSize = tOrd.FilledSize.Add(matchSize)
 			log := NewMatchLog(
 				book.depthSeq(),
 				commandID,
@@ -837,16 +867,22 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 				tOrd.ID,
 				tOrd.UserID,
 				tOrd.Price,
-				order.Size,
+				matchSize,
 				timestamp,
 			)
+			log.MakerOrder = copyOrder(tOrd)
 			book.batch.Logs = append(book.batch.Logs, log)
-			tOrd.Size = tOrd.Size.Sub(order.Size)
+			order.FilledSize = order.FilledSize.Add(matchSize)
 			targetQueue.pushFront(tOrd)
 			releaseOrder(order)
 			break
 		}
 
+		// The maker is consumed whole: its visible part is gone from the book and its hidden part, if any, is what the
+		// log's maker copy reports. A replenish after the log moves hidden size to visible and changes no total.
+		matchSize := tOrd.Size
+		tOrd.FilledSize = tOrd.FilledSize.Add(matchSize)
+		tOrd.Size = udecimal.Zero
 		log := NewMatchLog(
 			book.depthSeq(),
 			commandID,
@@ -860,11 +896,13 @@ func (book *OrderBook) handleLimitOrder(commandID string, order *Order, timestam
 			tOrd.ID,
 			tOrd.UserID,
 			tOrd.Price,
-			tOrd.Size,
+			matchSize,
 			timestamp,
 		)
+		log.MakerOrder = copyOrder(tOrd)
 		book.batch.Logs = append(book.batch.Logs, log)
-		order.Size = order.Size.Sub(tOrd.Size)
+		order.Size = order.Size.Sub(matchSize)
+		order.FilledSize = order.FilledSize.Add(matchSize)
 
 		if !book.checkReplenish(commandID, tOrd, targetQueue, timestamp) {
 			releaseOrder(tOrd)
@@ -1150,6 +1188,14 @@ func (book *OrderBook) takeLiquidity(
 			break
 		}
 
+		tOrd = targetQueue.popHeadOrder()
+		whole := matchSize.Equal(tOrd.Size)
+		tOrd.FilledSize = tOrd.FilledSize.Add(matchSize)
+		if whole {
+			tOrd.Size = udecimal.Zero
+		} else {
+			tOrd.Size = tOrd.Size.Sub(matchSize)
+		}
 		log := NewMatchLog(
 			book.depthSeq(),
 			commandID,
@@ -1166,6 +1212,7 @@ func (book *OrderBook) takeLiquidity(
 			matchSize,
 			timestamp,
 		)
+		log.MakerOrder = copyOrder(tOrd)
 		book.batch.Logs = append(book.batch.Logs, log)
 
 		if useQuote {
@@ -1173,14 +1220,13 @@ func (book *OrderBook) takeLiquidity(
 		} else {
 			order.Size = order.Size.Sub(matchSize)
 		}
+		order.FilledSize = order.FilledSize.Add(matchSize)
 
-		tOrd = targetQueue.popHeadOrder()
-		if matchSize.Equal(tOrd.Size) {
+		if whole {
 			if !book.checkReplenish(commandID, tOrd, targetQueue, timestamp) {
 				releaseOrder(tOrd)
 			}
 		} else {
-			tOrd.Size = tOrd.Size.Sub(matchSize)
 			targetQueue.pushFront(tOrd)
 		}
 

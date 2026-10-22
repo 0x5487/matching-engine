@@ -61,6 +61,17 @@ type Order struct {
 	VisibleLimit udecimal.Decimal `json:"visible_limit,omitzero"`
 	HiddenSize   udecimal.Decimal `json:"hidden_size,omitzero"`
 
+	// Routing fields. The caller of PlaceOrder sets them and the book never reads them: it keeps them with the order
+	// so that whoever settles a fill of this order can find its shard, fee rates and assets from the book alone.
+	OmsShard     uint32           `json:"oms_shard"`
+	MakerFeeRate udecimal.Decimal `json:"maker_fee_rate,omitzero"`
+	TakerFeeRate udecimal.Decimal `json:"taker_fee_rate,omitzero"`
+	BaseAsset    string           `json:"base_asset,omitempty"`
+	QuoteAsset   string           `json:"quote_asset,omitempty"`
+	// FilledSize is the base size this order has traded so far, over its whole life: each match adds to it, and an
+	// amend does not change it.
+	FilledSize udecimal.Decimal `json:"filled_size,omitzero"`
+
 	// Intrusive linked list pointers (ignored by JSON)
 	next *Order
 	prev *Order

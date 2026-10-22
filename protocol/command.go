@@ -26,6 +26,7 @@ const (
 
 const (
 	stringLenSize    = 2
+	omsShardSize     = 4
 	payloadLenSize   = 4
 	versionSize      = 1
 	userIDSize       = 8
@@ -106,6 +107,13 @@ type PlaceOrderRequest struct {
 	// about which unit was in force, and so that no producer can choose a unit the
 	// market does not use.
 	StepSize udecimal.Decimal `json:"step_size"`
+	// OmsShard, MakerFeeRate, TakerFeeRate, BaseAsset and QuoteAsset are the order's routing. The book stores them on
+	// the order and reports them back on every match and from Order; it never reads them.
+	OmsShard     uint32           `json:"oms_shard"`
+	MakerFeeRate udecimal.Decimal `json:"maker_fee_rate"`
+	TakerFeeRate udecimal.Decimal `json:"taker_fee_rate"`
+	BaseAsset    string           `json:"base_asset"`
+	QuoteAsset   string           `json:"quote_asset"`
 }
 
 // Base returns the embedded BaseCommand.
@@ -173,12 +181,15 @@ func MarshalRequest(req any) ([]byte, error) {
 			return nil, errStringTooLong
 		}
 		// side(1) + orderType(1) + orderID(string) + price(string) + size(string) + visibleSize(string) + quoteSize(string) + stepSize(string)
+		// + omsShard(uint32) + makerFeeRate(string) + takerFeeRate(string) + baseAsset(string) + quoteAsset(string)
 		priceStr := r.Price.String()
 		sizeStr := r.Size.String()
 		visStr := r.VisibleSize.String()
 		quoteStr := r.QuoteSize.String()
 		stepStr := r.StepSize.String()
-		pSize := sideFieldSize + orderTypeSize + stringLenSize*6 + len(
+		makerRateStr := r.MakerFeeRate.String()
+		takerRateStr := r.TakerFeeRate.String()
+		pSize := sideFieldSize + orderTypeSize + stringLenSize*10 + len(
 			r.OrderID,
 		) + len(
 			priceStr,
@@ -190,7 +201,7 @@ func MarshalRequest(req any) ([]byte, error) {
 			quoteStr,
 		) + len(
 			stepStr,
-		)
+		) + omsShardSize + len(makerRateStr) + len(takerRateStr) + len(r.BaseAsset) + len(r.QuoteAsset)
 		buf := make([]byte, pSize)
 		offset := 0
 		buf[offset] = sideToUint8(r.Side)
@@ -222,7 +233,29 @@ func MarshalRequest(req any) ([]byte, error) {
 			return nil, err
 		}
 		offset += n
-		_, err = writeString(buf[offset:], stepStr)
+		n, err = writeString(buf[offset:], stepStr)
+		if err != nil {
+			return nil, err
+		}
+		offset += n
+		binary.BigEndian.PutUint32(buf[offset:], r.OmsShard)
+		offset += omsShardSize
+		n, err = writeString(buf[offset:], makerRateStr)
+		if err != nil {
+			return nil, err
+		}
+		offset += n
+		n, err = writeString(buf[offset:], takerRateStr)
+		if err != nil {
+			return nil, err
+		}
+		offset += n
+		n, err = writeString(buf[offset:], r.BaseAsset)
+		if err != nil {
+			return nil, err
+		}
+		offset += n
+		_, err = writeString(buf[offset:], r.QuoteAsset)
 		if err != nil {
 			return nil, err
 		}
@@ -455,7 +488,7 @@ func UnmarshalRequest(data []byte) (any, error) {
 			return nil, errInvalidDecimal
 		}
 		pOffset += n
-		stepStr, _, err := readString(pData[pOffset:])
+		stepStr, n, err := readString(pData[pOffset:])
 		if err != nil {
 			return nil, err
 		}
@@ -463,17 +496,55 @@ func UnmarshalRequest(data []byte) (any, error) {
 		if err != nil {
 			return nil, errInvalidDecimal
 		}
+		pOffset += n
+		if len(pData[pOffset:]) < omsShardSize {
+			return nil, io.ErrUnexpectedEOF
+		}
+		omsShard := binary.BigEndian.Uint32(pData[pOffset:])
+		pOffset += omsShardSize
+		makerRateStr, n, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		makerRate, err := udecimal.Parse(makerRateStr)
+		if err != nil {
+			return nil, errInvalidDecimal
+		}
+		pOffset += n
+		takerRateStr, n, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		takerRate, err := udecimal.Parse(takerRateStr)
+		if err != nil {
+			return nil, errInvalidDecimal
+		}
+		pOffset += n
+		baseAsset, n, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
+		pOffset += n
+		quoteAsset, _, err := readString(pData[pOffset:])
+		if err != nil {
+			return nil, err
+		}
 
 		return &PlaceOrderRequest{
-			BaseCommand: base,
-			OrderID:     orderID,
-			Side:        side,
-			OrderType:   orderType,
-			Price:       price,
-			Size:        size,
-			VisibleSize: visibleSize,
-			QuoteSize:   quoteSize,
-			StepSize:    stepSize,
+			BaseCommand:  base,
+			OrderID:      orderID,
+			Side:         side,
+			OrderType:    orderType,
+			Price:        price,
+			Size:         size,
+			VisibleSize:  visibleSize,
+			QuoteSize:    quoteSize,
+			StepSize:     stepSize,
+			OmsShard:     omsShard,
+			MakerFeeRate: makerRate,
+			TakerFeeRate: takerRate,
+			BaseAsset:    baseAsset,
+			QuoteAsset:   quoteAsset,
 		}, nil
 	case CmdCancelOrder:
 		orderID, _, err := readString(pData)
